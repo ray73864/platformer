@@ -1,21 +1,60 @@
-import { test } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import {
+    startServer, openGame, startGame, abEvalJSON, screenshot, elementState,
+    closeSession
+} from "./helpers.js";
 
-// Browser E2E scenarios for game start. Skipped until agent-browser and a
-// running dev server are wired into the test harness (Task 11). These must
-// not run as vacuous passing assertions of game behaviour.
+const SESSION = "t11-game-start";
+let server;
 
-const SKIP_REASON = "requires agent-browser + running server; wire at Task 11";
+beforeAll(async () => {
+    server = await startServer();
+}, 60000);
 
-test.skip(`Game starts with menu screen (${SKIP_REASON})`, async () => {
-    // Intended steps (not yet executable):
-    // 1. Open the game page in a browser via agent-browser
-    // 2. Verify the menu screen is visible
+afterAll(() => {
+    server?.stop();
+    closeSession(SESSION);
 });
 
-test.skip(`Start button navigates to gameplay (${SKIP_REASON})`, async () => {
-    // Intended steps (not yet executable):
-    // 1. Open the game page
-    // 2. Verify menu screen is visible
-    // 3. Click start button
-    // 4. Verify gameplay screen is visible
-});
+test("Game starts with menu screen", async () => {
+    openGame(SESSION, server.url);
+
+    const initial = abEvalJSON(
+        SESSION,
+        `{ state: window.game.state,
+           canvas: !!document.getElementById('game-canvas'),
+           title: document.querySelector('#menu-screen h1').textContent }`
+    );
+    expect(initial.state).toBe("MENU");
+    expect(initial.canvas).toBe(true);
+    expect(initial.title).toContain("Platformer");
+
+    const menu = elementState(SESSION, "menu-screen");
+    expect(menu.hidden).toBe(false);
+
+    screenshot(SESSION, "task-11-menu.png");
+}, 60000);
+
+test("Start button navigates to gameplay", async () => {
+    openGame(SESSION, server.url);
+
+    startGame(SESSION);
+    await Bun.sleep(300);
+
+    const after = abEvalJSON(
+        SESSION,
+        `{ state: window.game.state,
+           hasPlayer: !!window.game.player,
+           hasLevel: !!window.game.level,
+           hudDisplay: getComputedStyle(document.getElementById('hud')).display }`
+    );
+    expect(after.state).toBe("PLAYING");
+    expect(after.hasPlayer).toBe(true);
+    expect(after.hasLevel).toBe(true);
+    expect(after.hudDisplay).not.toBe("none");
+
+    const menu = elementState(SESSION, "menu-screen");
+    expect(menu.hidden).toBe(true);
+
+    screenshot(SESSION, "task-11-gameplay.png");
+}, 60000);

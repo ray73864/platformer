@@ -1,21 +1,57 @@
-import { test } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import {
+    startServer, openGame, startGame, ab, abEvalJSON, screenshot, closeSession
+} from "./helpers.js";
 
-// Browser E2E scenarios for player movement. Skipped until agent-browser and
-// a running dev server are wired into the test harness (Task 11). These must
-// not run as vacuous passing assertions of game behaviour.
+const SESSION = "t11-player-movement";
+let server;
 
-const SKIP_REASON = "requires agent-browser + running server; wire at Task 11";
+beforeAll(async () => {
+    server = await startServer();
+}, 60000);
 
-test.skip(`Player moves left with arrow key (${SKIP_REASON})`, async () => {
-    // Intended steps (not yet executable):
-    // 1. Start the game
-    // 2. Press left arrow key
-    // 3. Verify player moves left
+afterAll(() => {
+    server?.stop();
+    closeSession(SESSION);
 });
 
-test.skip(`Player jumps with spacebar (${SKIP_REASON})`, async () => {
-    // Intended steps (not yet executable):
-    // 1. Start the game
-    // 2. Press spacebar
-    // 3. Verify player jumps
-});
+// The player spawns at (100, 100) and falls onto the flat spawn ground.
+// Settle before measuring so physics is not mid-fall during assertions.
+function startAndSettle() {
+    startGame(SESSION);
+    Bun.sleepSync(1000);
+}
+
+test("Player moves left with arrow key", () => {
+    openGame(SESSION, server.url);
+    startAndSettle();
+
+    const before = abEvalJSON(SESSION, "window.game.player.x");
+
+    // Trusted key events through the browser input pipeline; held down so
+    // the game loop sees isLeft() across frames.
+    ab(SESSION, "keydown", "ArrowLeft");
+    Bun.sleepSync(400);
+    const during = abEvalJSON(SESSION, "window.game.player.x");
+    screenshot(SESSION, "task-11-movement.png");
+    ab(SESSION, "keyup", "ArrowLeft");
+
+    expect(during).toBeLessThan(before - 20);
+}, 60000);
+
+test("Player jumps with spacebar", () => {
+    openGame(SESSION, server.url);
+    startAndSettle();
+
+    const before = abEvalJSON(SESSION, "window.game.player.y");
+
+    ab(SESSION, "press", "Space");
+    const launch = abEvalJSON(SESSION, "window.game.player.vy");
+    expect(launch).toBeLessThan(0);
+
+    Bun.sleepSync(150);
+    const peak = abEvalJSON(SESSION, "window.game.player.y");
+    screenshot(SESSION, "task-11-jump.png");
+
+    expect(peak).toBeLessThan(before - 10);
+}, 60000);
