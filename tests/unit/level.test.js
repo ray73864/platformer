@@ -106,6 +106,32 @@ test("pathfinder rejects a walled-off portal and accepts an open route", () => {
     expect(canReach(open, width, height, spawnTile, portalTile)).toBe(true);
 });
 
+test("pathfinder crosses a 2-wide bottomless pit but not one beyond jump range", () => {
+    // Two ground shelves over a solid floor row, separated by a bottomless
+    // pit (columns with no tiles at all). Standing surface is y=6.
+    const width = 18;
+    const height = 8;
+
+    const makeShelves = (pitStart, pitEnd) => {
+        const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+        for (let x = 0; x < width; x++) {
+            if (x >= pitStart && x <= pitEnd) continue; // bottomless columns
+            tiles[height - 1][x] = 1;
+        }
+        return tiles;
+    };
+
+    const spawnTile = { x: 3, y: height - 2 };
+    const portalTile = { x: 14, y: height - 2 };
+
+    // Pit spanning columns 7-8 (width 2): jumpable within the scan bound.
+    expect(canReach(makeShelves(7, 8), width, height, spawnTile, portalTile)).toBe(true);
+
+    // Pit spanning columns 6-10 (width 5): nearest landing is 6 columns from
+    // the last standable edge tile, beyond the ~4-tile physical jump range.
+    expect(canReach(makeShelves(6, 10), width, height, spawnTile, portalTile)).toBe(false);
+});
+
 test("generated levels are always reachable across level numbers", () => {
     for (let n = 1; n <= 8; n++) {
         const level = new Level(n, 32);

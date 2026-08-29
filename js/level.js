@@ -1,13 +1,20 @@
 const MAX_GENERATION_ATTEMPTS = 200;
 const SPAWN_TILE_X = 2;
+// Horizontal jump scan bound in tiles: hang time 2*350/980 ≈ 0.71s at speed
+// 200 px/s covers ~143px, i.e. ~4 tiles of 32px. Conservative integer bound.
+const MAX_H_JUMP = 4;
 
 // Movement model for the reachability check, matching the game's physics:
 // JUMP_FORCE=350 / GRAVITY=980 gives a max jump rise of ~62px (< 2 tiles at
 // tileSize 32), so climbing more than one tile in a single jump is not
-// possible. Horizontal reach per grounded jump is up to 2 tiles. From any
-// standing tile (air with solid below) the player can:
-//   - walk or fall left/right, including crossing gaps up to 2 tiles wide at
-//     same-or-lower height;
+// possible. Horizontal range per grounded jump: total hang time returning to
+// launch height is t = 2*JUMP_FORCE/GRAVITY ≈ 0.71s; at PLAYER_SPEED=200 that
+// is ~143px ≈ 4 tiles (tileSize 32), so we scan landings up to 4 columns away
+// for same-or-lower targets. From any standing tile (air with solid below)
+// the player can:
+//   - walk or fall left/right, including jumping across bottomless pits up
+//     to 3 tiles wide (landing column at most 4 away); every intermediate
+//     column must be passable at the current row;
 //   - jump up exactly one tile onto a step, straight across or over a gap of
 //     one intermediate column.
 // Out-of-bounds: side walls are solid, the sky is open, and falling below the
@@ -34,12 +41,21 @@ export function computeReachable(tiles, width, height, startTile) {
         const [x, y] = queue.shift();
 
         for (const dir of [-1, 1]) {
-            // Walk or fall along/across columns at current row height. A
-            // distance-2 move models a flat jump across a gap up to 2 tiles;
-            // the intermediate column must be passable at the current row.
-            for (const dist of [1, 2]) {
-                const mid = x + dir;
-                if (solid(mid, y)) continue; // Blocked at current row
+            // Walk or fall along/across columns at current row height. A move
+            // of distance d models a flat jump: every column between start and
+            // landing must be air at the current row, and the landing column
+            // is scanned downward from y for any standable tile (same-or-
+            // lower target). Scan bound MAX_H_JUMP = physical jump range
+            // ~143px / 32px.
+            for (let dist = 1; dist <= MAX_H_JUMP; dist++) {
+                let blocked = false;
+                for (let m = 1; m < dist; m++) {
+                    if (solid(x + dir * m, y)) {
+                        blocked = true;
+                        break;
+                    }
+                }
+                if (blocked) continue;
 
                 const c = x + dir * dist;
                 for (let ly = y; ly < height; ly++) {
