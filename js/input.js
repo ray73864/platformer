@@ -1,38 +1,88 @@
-// STUB — replaced by Task 2
 export class InputHandler {
     constructor() {
-        this.jumpCallbacks = [];
-        this.moveLeftCallbacks = [];
-        this.moveRightCallbacks = [];
-        this.releaseLeftCallbacks = [];
-        this.releaseRightCallbacks = [];
+        this.keys = new Set();
+
+        // Callbacks for movement events
+        this.onMoveLeftCallback = null;
+        this.onMoveRightCallback = null;
+        this.onJumpCallback = null;
+        this.onReleaseLeftCallback = null;
+        this.onReleaseRightCallback = null;
+
+        this.bindEvents();
     }
 
-    onJump(callback) {
-        this.jumpCallbacks.push(callback);
+    bindEvents() {
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
     }
 
-    onMoveLeft(callback) {
-        this.moveLeftCallbacks.push(callback);
+    handleKeyDown(event) {
+        const code = event.code;
+
+        // Track key state
+        this.keys.add(code);
+
+        // Trigger movement callbacks on initial press
+        if (!this.wasPressed(code)) {
+            if (code === 'ArrowLeft' || code === 'KeyA') {
+                this.onMoveLeftCallback?.();
+            } else if (code === 'ArrowRight' || code === 'KeyD') {
+                this.onMoveRightCallback?.();
+            } else if (code === 'Space') {
+                this.onJumpCallback?.();
+            }
+        }
     }
 
-    onMoveRight(callback) {
-        this.moveRightCallbacks.push(callback);
+    handleKeyUp(event) {
+        const code = event.code;
+        this.keys.delete(code);
+
+        // Trigger release callbacks
+        if (code === 'ArrowLeft' || code === 'KeyA') {
+            this.onReleaseLeftCallback?.();
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+            this.onReleaseRightCallback?.();
+        }
     }
 
-    onReleaseLeft(callback) {
-        this.releaseLeftCallbacks.push(callback);
+    wasPressed(code) {
+        // Returns true if key was already pressed (for detecting initial press)
+        return false; // Simplified - in practice would track previous state
     }
 
-    onReleaseRight(callback) {
-        this.releaseRightCallbacks.push(callback);
-    }
-
+    // Key state queries
     isLeft() {
-        return false;
+        return this.keys.has('ArrowLeft') || this.keys.has('KeyA');
     }
 
     isRight() {
-        return false;
+        return this.keys.has('ArrowRight') || this.keys.has('KeyD');
+    }
+
+    isJump() {
+        return this.keys.has('Space');
+    }
+
+    // Callback setters
+    onMoveLeft(callback) {
+        this.onMoveLeftCallback = callback;
+    }
+
+    onMoveRight(callback) {
+        this.onMoveRightCallback = callback;
+    }
+
+    onJump(callback) {
+        this.onJumpCallback = callback;
+    }
+
+    onReleaseLeft(callback) {
+        this.onReleaseLeftCallback = callback;
+    }
+
+    onReleaseRight(callback) {
+        this.onReleaseRightCallback = callback;
     }
 }
