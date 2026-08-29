@@ -1,6 +1,7 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
-    startServer, openGame, startGame, ab, abEvalJSON, screenshot, closeSession
+    startServer, openGame, startGame, ab, abEvalJSON, abWaitFn, waitLanded,
+    screenshot, closeSession
 } from "./helpers.js";
 
 const SESSION = "t11-player-movement";
@@ -16,10 +17,11 @@ afterAll(() => {
 });
 
 // The player spawns at (100, 100) and falls onto the flat spawn ground.
-// Settle before measuring so physics is not mid-fall during assertions.
+// Poll to PLAYING, then until landing settles physics before measuring.
 function startAndSettle() {
     startGame(SESSION);
-    Bun.sleepSync(1000);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+    waitLanded(SESSION);
 }
 
 test("Player moves left with arrow key", () => {

@@ -100,6 +100,22 @@ export function startGame(session) {
     ab(session, "click", "#start-btn");
 }
 
+export function abWaitFn(session, expression, timeoutMs = 15000) {
+    ab(session, "wait", "--fn", expression, "--timeout", String(timeoutMs));
+}
+
+// Polls until the player has completed at least one falling frame and come
+// to rest (vy === 0 between frames), replacing fixed settle sleeps. The
+// sticky flag guards the pre-physics vy === 0 at spawn.
+export function waitLanded(session) {
+    abWaitFn(
+        session,
+        "(() => { const p = window.game.player;" +
+        " if (p.vy > 0) window.__fellOnce = true;" +
+        " return window.__fellOnce === true && p.vy === 0; })()"
+    );
+}
+
 export function screenshot(session, name) {
     const path = join(SCREENSHOT_DIR, name);
     ab(session, "screenshot", path);

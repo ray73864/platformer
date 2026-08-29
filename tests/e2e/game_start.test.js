@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
-    startServer, openGame, startGame, abEvalJSON, screenshot, elementState,
-    closeSession
+    startServer, openGame, startGame, abEvalJSON, abWaitFn, screenshot,
+    elementState, closeSession
 } from "./helpers.js";
 
 const SESSION = "t11-game-start";
@@ -39,7 +39,11 @@ test("Start button navigates to gameplay", async () => {
     openGame(SESSION, server.url);
 
     startGame(SESSION);
-    await Bun.sleep(300);
+    abWaitFn(
+        SESSION,
+        "window.game.state === 'PLAYING' && !!window.game.player &&" +
+        " !!window.game.level"
+    );
 
     const after = abEvalJSON(
         SESSION,

@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
-    startServer, openGame, startGame, abEvalJSON, screenshot, elementState,
-    closeSession
+    startServer, openGame, startGame, abEvalJSON, abWaitFn, waitLanded,
+    screenshot, elementState, closeSession
 } from "./helpers.js";
 
 const SESSION = "t11-level-complete";
@@ -21,7 +21,7 @@ test("Player reaches portal to complete level", async () => {
     // room to pan and camera-follow is observable.
     openGame(SESSION, server.url, 480, 360);
     startGame(SESSION);
-    await Bun.sleep(500);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
 
     // Drop the player above a reachable tile in the right half of the level
     // (position is not observable from the DOM; terrain comes from the
@@ -34,12 +34,13 @@ test("Player reaches portal to complete level", async () => {
                       const px = (key % l.width) * l.tileSize;
                       if (px >= 320 && px <= l.portal.x - 96) best = px;
                   }
+                  window.__fellOnce = false;
                   window.game.player.x = best;
                   window.game.player.y = 40;
                   return best; })()`
     );
     expect(drop).toBeGreaterThanOrEqual(320);
-    await Bun.sleep(1200);
+    waitLanded(SESSION);
 
     const mid = abEvalJSON(
         SESSION,
@@ -59,7 +60,7 @@ test("Player reaches portal to complete level", async () => {
                   window.game.player.y = p.y - 60;
                   return true; })()`
     );
-    await Bun.sleep(400);
+    abWaitFn(SESSION, "window.game.state === 'LEVEL_COMPLETE'");
 
     const complete = abEvalJSON(
         SESSION,
@@ -70,8 +71,15 @@ test("Player reaches portal to complete level", async () => {
     expect(elementState(SESSION, "level-complete-screen").hidden).toBe(false);
     screenshot(SESSION, "task-11-level-complete.png");
 
-    // The 2s transition timer advances to the next level on its own.
-    await Bun.sleep(2500);
+    // The 2s transition advances to the next level on its own (either the
+    // update-timer path or the setTimeout in handleWin); poll until the HUD
+    // reflects it, which happens on the first PLAYING tick of level 2.
+    abWaitFn(
+        SESSION,
+        "window.game.currentLevel === 2 && window.game.state === 'PLAYING' &&" +
+        " document.getElementById('level-display').textContent === 'Level: 2'",
+        30000
+    );
     const advanced = abEvalJSON(
         SESSION,
         `{ state: window.game.state,
