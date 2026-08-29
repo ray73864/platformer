@@ -136,7 +136,7 @@ export class Game {
             }
 
             // Update camera
-            this.camera.follow(this.player, this.level.width);
+            this.camera.follow(this.player, this.level.width * this.level.tileSize);
 
             // Update UI
             this.ui.updateScore(this.score);
