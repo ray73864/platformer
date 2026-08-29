@@ -1,0 +1,7 @@
+node_modules/
+dist/
+assets/*.zip
+assets/*.psd
+assets/*.ai
+assets/*.eps
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "name": "game",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "happy-dom": "^20.11.15",
+    "prettier": "^3.9.6",
+    "serve": "^14.2.6"
+  }
+}
