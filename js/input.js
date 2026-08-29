@@ -55,7 +55,7 @@ export class InputHandler {
         }
     }
 
-    wasPressed(code) {
+    wasPressed(_code) {
         // Returns true if key was already pressed (for detecting initial press)
         return false; // Simplified - in practice would track previous state
     }

@@ -9,7 +9,7 @@ export class Entity {
         this.grounded = false;
     }
 
-    update(dt, moveLeft = false, moveRight = false) {
+    update(dt, _moveLeft = false, _moveRight = false) {
         // Apply velocity to position
         this.x += this.vx * dt;
         this.y += this.vy * dt;
