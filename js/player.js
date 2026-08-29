@@ -12,11 +12,17 @@ export class Player extends Entity {
         // Apply velocity to position and grounded friction (Entity base)
         super.update(dt, left, right);
 
-        // Deviation from brief reference: the reference only decelerates when
-        // grounded, but a fresh player is not grounded (physics has not run), so
-        // its tests require stopping whenever neither move direction is active.
-        const decel = 10; // Matches the base friction coefficient
-        if (!left && !right) {
+        // Held-direction keys re-assert speed each frame: base friction is
+        // live now that physics maintains `grounded`, so a single keydown's
+        // vx would otherwise decay away while the key is still held.
+        if (left && !right) {
+            this.vx = -this.speed;
+        } else if (right && !left) {
+            this.vx = this.speed;
+        } else {
+            // Decelerate when neither direction is active. The base friction
+            // only runs while grounded, so also decay in the air.
+            const decel = 10; // Matches the base friction coefficient
             this.vx -= this.vx * decel * dt;
 
             if (Math.abs(this.vx) < 0.1) {
@@ -45,9 +51,8 @@ export class Player extends Entity {
         // Deviation from brief reference: the gate `if (this.grounded)` is removed
         // because "Player jumps" calls jump() on a fresh player whose grounded is
         // false, while "Player has state tracking" requires that initial value.
-        // Grounded-gating returns at integration: physics will set `grounded` from
-        // Task 5+. Known gameplay consequence (held-key autorepeat could cause
-        // mid-air repeat jumps) is intentional and deferred.
+        // Grounded-gating lives at the input wiring in main.js instead, so
+        // autorepeat keydowns cannot extend flight.
         this.vy = -this.jumpForce;
         this.grounded = false;
     }

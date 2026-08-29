@@ -101,6 +101,42 @@ test("keyboard events drive the player through physics", () => {
     window.dispatchEvent(new KeyboardEvent('keyup', { code: 'ArrowRight' }));
 });
 
+test("autorepeat Space keydowns in flight cannot extend the jump", () => {
+    const game = startPlaying();
+
+    // Stand the player on its spawn ground and let physics run until it is
+    // actually grounded, so the single-press baseline jump is legitimate.
+    const spawn = game.level.getSpawnPoint();
+    game.player.x = spawn.x;
+    game.player.y = spawn.y - game.player.height;
+    for (let i = 0; i < 120 && !game.player.grounded; i++) {
+        game.update(1 / 60);
+    }
+    expect(game.player.grounded).toBe(true);
+
+    // A single Space press from the ground must still launch the player.
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    expect(game.player.vy).toBeLessThan(0);
+    expect(game.player.grounded).toBe(false);
+
+    // Fall until vy is positive (apex passed, genuinely airborne and sinking).
+    for (let i = 0; i < 300 && game.player.vy <= 0; i++) {
+        game.update(1 / 60);
+    }
+    expect(game.player.vy).toBeGreaterThan(0);
+
+    // Autorepeat keydowns (wasPressed never suppresses them) must not reset
+    // vy upward: the grounded gate at the input wiring rejects them.
+    const vyBefore = game.player.vy;
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    expect(game.player.vy).toBe(vyBefore);
+
+    // And gravity keeps winning: flight is not extended, the player falls.
+    game.update(1 / 60);
+    expect(game.player.vy).toBeGreaterThan(vyBefore);
+});
+
 test("dying and retrying through #retry-btn restarts play on a fresh level instance", () => {
     const game = startPlaying();
 
@@ -134,8 +170,8 @@ test("completing a level advances the HUD to the next level via the update-timer
     game.update(0.016);
     expect(game.state).toBe(STATE.LEVEL_COMPLETE);
 
-    // Progress on the deterministic dt path only (the real-clock setTimeout in
-    // handleWin is guarded by state and stays inert once we exit LEVEL_COMPLETE).
+    // Progress on the deterministic dt path only; handleWin has no parallel
+    // setTimeout, so the update-timer path is the sole advance mechanism.
     let ticks = 0;
     while (game.state === STATE.LEVEL_COMPLETE && ticks < 100) {
         game.update(0.1);
@@ -174,4 +210,8 @@ test("a completed level is itself playable to another portal", () => {
     game.player.markPortalReached();
     game.update(0.016);
     expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+
+    // Exit LEVEL_COMPLETE deterministically (mirrors state_transitions.test.js)
+    // so the armed 2s transition timer can never cross into a later file.
+    game.update(2.1);
 });

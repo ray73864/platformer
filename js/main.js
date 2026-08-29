@@ -32,7 +32,8 @@ export class Game {
         // Initialize systems
         this.input = new InputHandler();
         this.physics = new Physics(GRAVITY, MAX_FALL_SPEED);
-        this.camera = new Camera(this.canvas.width, this.canvas.height);
+        // Camera viewport is in CSS pixels, not the device-pixel backing store.
+        this.camera = new Camera(window.innerWidth, window.innerHeight);
         this.ui = new UI();
 
         // Game state
@@ -53,9 +54,25 @@ export class Game {
 
     resize() {
         const dpr = window.devicePixelRatio || 1;
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
+        // Backing store in device pixels, CSS size in CSS pixels: ctx is
+        // scaled by dpr below, so a CSS-pixel backing store would magnify
+        // the frame and clip everything past the top-left quarter.
+        this.canvas.width = window.innerWidth * dpr;
+        this.canvas.height = window.innerHeight * dpr;
+        this.canvas.style.width = window.innerWidth + 'px';
+        this.canvas.style.height = window.innerHeight + 'px';
+        // Assigning canvas.width resets the 2D context transform, which is
+        // why scale() must be re-applied after every resize and does not
+        // stack across resizes.
         this.ctx.scale(dpr, dpr);
+
+        // The camera works in CSS pixels; keep its viewport current so the
+        // follow/clamp math matches the resized window. Guard for the first
+        // call from the constructor, before this.camera exists.
+        if (this.camera) {
+            this.camera.width = window.innerWidth;
+            this.camera.height = window.innerHeight;
+        }
     }
 
     bindEvents() {
@@ -64,7 +81,14 @@ export class Game {
         document.getElementById('retry-btn').addEventListener('click', () => this.retryLevel());
 
         // Input listener
-        this.input.onJump(() => this.player?.jump());
+        // Input listener. Grounded-gated here (not inside Player.jump(), whose
+        // unit test requires an ungated jump()) so autorepeat keydowns cannot
+        // re-fire the jump mid-flight.
+        this.input.onJump(() => {
+            if (this.player?.grounded) {
+                this.player.jump();
+            }
+        });
         this.input.onMoveLeft(() => this.player?.moveLeft());
         this.input.onMoveRight(() => this.player?.moveRight());
         this.input.onReleaseLeft(() => this.player?.stopLeft());
@@ -98,13 +122,8 @@ export class Game {
 
         this.ui.showOverlay('level-complete-screen');
 
-        setTimeout(() => {
-            if (this.state === STATE.LEVEL_COMPLETE) {
-                this.currentLevel++;
-                this.startLevel();
-                this.ui.hideOverlay('level-complete-screen');
-            }
-        }, 2000);
+        // Level advance is driven solely by the update-timer path in update();
+        // a parallel setTimeout here used to double-advance and leak timers.
     }
 
     handleGameOver() {

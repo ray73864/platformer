@@ -71,9 +71,9 @@ test("Player reaches portal to complete level", async () => {
     expect(elementState(SESSION, "level-complete-screen").hidden).toBe(false);
     screenshot(SESSION, "task-11-level-complete.png");
 
-    // The 2s transition advances to the next level on its own (either the
-    // update-timer path or the setTimeout in handleWin); poll until the HUD
-    // reflects it, which happens on the first PLAYING tick of level 2.
+    // The 2s transition advances to the next level on its own via the
+    // update-timer path; poll until the HUD reflects it, which happens on
+    // the first PLAYING tick of level 2.
     abWaitFn(
         SESSION,
         "window.game.currentLevel === 2 && window.game.state === 'PLAYING' &&" +

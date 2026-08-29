@@ -155,8 +155,8 @@ test("reaching the portal transitions to LEVEL_COMPLETE and arms the transition 
     expect(game.levelCompleteTimer).toBeLessThanOrEqual(2);
     expect(document.getElementById('level-complete-screen').classList.contains('hidden')).toBe(false);
 
-    // Exit LEVEL_COMPLETE deterministically so the setTimeout armed by
-    // handleWin() can never fire against a live state in a later test.
+    // Exit LEVEL_COMPLETE deterministically so the armed update-timer
+    // transition can never fire against a live state in a later test.
     game.update(2.1);
 });
 

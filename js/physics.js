@@ -36,6 +36,11 @@ export class Physics {
     }
 
     resolveCollisions(player, collisions) {
+        // Floor contact is re-derived every frame: clear before resolution and
+        // let the landing branch below set it, so grounded reflects current
+        // contact instead of a latch from the last time the player touched a
+        // platform.
+        player.grounded = false;
         this.resolveYCollision(player, collisions);
         this.resolveXCollision(player, collisions);
     }
@@ -80,6 +85,7 @@ export class Physics {
                         // Player center is above platform center, push up (landing)
                         player.y -= overlap;
                         player.vy = 0;
+                        player.grounded = true;
                     }
                 }
             }
