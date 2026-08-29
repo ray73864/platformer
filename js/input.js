@@ -17,8 +17,16 @@ export class InputHandler {
         window.addEventListener('keyup', (e) => this.handleKeyUp(e));
     }
 
+    resolveCode(event) {
+        // Some harnesses (e.g. CDP raw key events) deliver `key` with an empty
+        // `code`; fall back to the equivalent physical-code spelling.
+        if (event.code) return event.code;
+        if (event.key === ' ') return 'Space';
+        return event.key || '';
+    }
+
     handleKeyDown(event) {
-        const code = event.code;
+        const code = this.resolveCode(event);
 
         // Track key state
         this.keys.add(code);
@@ -36,7 +44,7 @@ export class InputHandler {
     }
 
     handleKeyUp(event) {
-        const code = event.code;
+        const code = this.resolveCode(event);
         this.keys.delete(code);
 
         // Trigger release callbacks

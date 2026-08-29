@@ -130,6 +130,13 @@ export class Game {
                 this.handleGameOver();
             }
 
+            // Check portal contact
+            const portal = this.level.getPortal();
+            if (portal && !this.player.hasReachedPortal() &&
+                this.physics.checkAABB(this.player, portal)) {
+                this.player.markPortalReached();
+            }
+
             // Check level completion
             if (this.player.hasReachedPortal()) {
                 this.handleWin();
@@ -191,7 +198,11 @@ export class Game {
 }
 
 export function init() {
-    new Game();
+    const game = new Game();
+    // Debug seam for E2E tests (read-only from the test's perspective).
+    if (typeof window !== 'undefined') {
+        window.game = game;
+    }
 }
 
 // Initialize game when DOM is ready
