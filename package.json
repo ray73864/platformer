@@ -1,7 +1,27 @@
 {
-  "name": "game",
+  "name": "procedural-platformer",
   "private": true,
+  "version": "1.0.0",
+  "description": "A procedurally generated 2D platformer game",
+  "main": "js/main.js",
   "type": "module",
+  "scripts": {
+    "start": "bunx serve .",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:coverage": "bun test --coverage",
+    "lint": "bunx eslint js/",
+    "format": "bunx prettier --write js/ css/ index.html",
+    "build": "bun build --target=browser --outfile=dist/bundle.js js/main.js",
+    "verify-assets": "bun scripts/verify-assets.js"
+  },
+  "keywords": [
+    "game",
+    "platformer",
+    "procedural"
+  ],
+  "author": "",
+  "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.9.1",
