@@ -136,7 +136,11 @@ export class Game {
             }
 
             // Update camera
-            this.camera.follow(this.player, this.level.width * this.level.tileSize);
+            this.camera.follow(
+                this.player,
+                this.level.width * this.level.tileSize,
+                this.level.height * this.level.tileSize
+            );
 
             // Update UI
             this.ui.updateScore(this.score);
@@ -159,8 +163,8 @@ export class Game {
         if (this.state === STATE.PLAYING || this.state === STATE.LEVEL_COMPLETE) {
             this.ctx.save();
 
-            // Apply camera transform
-            this.ctx.translate(-this.camera.x, -this.camera.y);
+            // Apply camera transform (camera.y is negative of the world-top offset)
+            this.ctx.translate(-this.camera.x, this.camera.y);
 
             // Draw level
             this.level.draw(this.ctx);

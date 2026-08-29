@@ -51,3 +51,13 @@ test("Camera handles different screen sizes", () => {
     expect(camera2.width).toBe(1024);
     expect(camera2.height).toBe(768);
 });
+
+test("Camera vertical clamp bounds the world-top offset by level height", () => {
+    const camera = new Camera(800, 300);
+    const player = { x: 500, y: 2000, width: 32, height: 32 };
+
+    // Level is 480px tall; view top can never exceed 480 - 300 = 180.
+    camera.follow(player, 1000, 480);
+
+    expect(camera.y).toBe(-180);
+});
