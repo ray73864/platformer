@@ -22,9 +22,9 @@ afterAll(() => {
     closeSession(SESSION);
 });
 
-// Regenerates level 5 through the seam and reports what the generated level
-// contains, plus pre-computed safe anchors so each scenario can act without
-// tripping the other element types:
+// Regenerates the given level through the seam and reports what the generated
+// level contains, plus pre-computed safe anchors so each scenario can act
+// without tripping the other element types:
 // - safeTileX: standable tile outside every enemy's patrol span, so a parked
 //   player cannot be touched while observers sample enemy motion.
 // - safeCoinIdx: uncollected coin no active enemy is within ~2s of (96px at
@@ -32,11 +32,11 @@ afterAll(() => {
 //   enemy kill.
 // - safeSpike: spike likewise clear of enemies, so a spike death is
 //   attributable to the spike.
-// - portalClear: no enemy's current body comes within 96px of the portal,
-//   i.e. the portal band is not swept by a patrol right now.
-const PHASE2_SUMMARY = `(() => {
+// - portalClear: no enemy on the portal's row (or a body-height of it) comes
+//   within 96px horizontally, i.e. no patrol can touch the portal right now.
+const phase2Summary = (levelNumber) => `(() => {
     const g = window.game;
-    g.currentLevel = 5;
+    g.currentLevel = ${levelNumber};
     g.startLevel();
     let safeTileX = null;
     for (const key of g.level.reachableTiles) {
@@ -53,9 +53,17 @@ const PHASE2_SUMMARY = `(() => {
     const spike = g.hazards.getSpikes().find(s =>
         g.enemyManager.enemies.every(e => Math.abs(e.x - s.x) > 128));
     const portal = g.level.portal;
+    // Threat needs real collision possibility: same-row proximity (a body
+    // fills its tile row, so |dy| >= 64 means no contact is possible —
+    // same convention as safeCoinIdx above) AND horizontal closeness. On
+    // vertical levels every patrol sits rows below the top-band portal, so
+    // an x-only test would demand impossible terrain.
     const portalClear = g.enemyManager.enemies.every(
-        e => e.x + e.width < portal.x - 96 || e.x > portal.x + portal.width + 96);
+        e => Math.abs(e.y - portal.y) >= 64 ||
+             e.x + e.width < portal.x - 96 ||
+             e.x > portal.x + portal.width + 96);
     return {
+        direction: g.level.direction,
         width: g.level.width,
         height: g.level.height,
         coins: g.level.coins.length,
@@ -70,21 +78,21 @@ const PHASE2_SUMMARY = `(() => {
 
 const MAX_REGENERATIONS = 12;
 
-// Opens the game, starts it, then jumps to level 5 via the seam and keeps
-// regenerating until the generated level satisfies the scenario's
+// Opens the game, starts it, then jumps to the given level via the seam and
+// keeps regenerating until the generated level satisfies the scenario's
 // requirement (random terrain occasionally lacks spikes/enemies or a safe
 // anchor; regenerating is the harness's job, not a test failure).
-function openAtPhase2Level(requirement) {
+function openAtLevel(levelNumber, requirement) {
     openGame(SESSION, server.url);
     startGame(SESSION);
     abWaitFn(SESSION, "window.game.state === 'PLAYING'");
     let summary;
     for (let attempt = 0; attempt < MAX_REGENERATIONS; attempt++) {
-        summary = abEvalJSON(SESSION, PHASE2_SUMMARY);
+        summary = abEvalJSON(SESSION, phase2Summary(levelNumber));
         if (requirement(summary)) return summary;
     }
     throw new Error(
-        `no generated level 5 satisfied the requirement after ` +
+        `no generated level ${levelNumber} satisfied the requirement after ` +
         `${MAX_REGENERATIONS} regenerations (last summary: ` +
         `${JSON.stringify(summary)})`
     );
@@ -107,8 +115,53 @@ const ENEMY_SNAPSHOT =
     `window.game.enemyManager.enemies.map(e =>` +
     ` ({ x: e.x, minX: e.minX, maxX: e.maxX, w: e.width }))`;
 
+// Drops the player onto the live portal and drives the game to
+// LEVEL_COMPLETE. The drop itself is hazard-free (every direction's portal
+// band excludes spikes and enemy markers), but an enemy may have walked into
+// range since any earlier summary; clearance is re-checked at the moment of
+// the drop and stale terrain regenerated through the seam. A stray patrol
+// that still wins the race is recovered via the retry button. Bounded;
+// returns the final state string.
+function completeViaPortal() {
+    let outcome = null;
+    for (let attempt = 0; attempt < 6 && outcome !== "LEVEL_COMPLETE"; attempt++) {
+        if (outcome === "GAME_OVER") {
+            ab(SESSION, "click", "#retry-btn");
+            abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+        }
+        const dropped = abEvalJSON(
+            SESSION,
+            `(() => { const g = window.game;
+                      const portal = g.level.portal;
+                      const clear = g.enemyManager.enemies.every(
+                          e => Math.abs(e.y - portal.y) >= 64 ||
+                               e.x + e.width < portal.x - 96 ||
+                               e.x > portal.x + portal.width + 96);
+                      if (!clear) return false;
+                      const p = g.player;
+                      p.x = portal.x; p.y = portal.y - 60;
+                      p.vx = 0; p.vy = 0; p.grounded = false;
+                      return true; })()`
+        );
+        if (!dropped) {
+            abEvalJSON(
+                SESSION,
+                `(() => { window.game.startLevel(); return true; })()`
+            );
+            continue;
+        }
+        abWaitFn(
+            SESSION,
+            "window.game.state === 'LEVEL_COMPLETE' ||" +
+            " window.game.state === 'GAME_OVER'"
+        );
+        outcome = abEvalJSON(SESSION, "window.game.state");
+    }
+    return outcome;
+}
+
 test("Level 5 generates phase 2 elements at the larger footprint", async () => {
-    const summary = openAtPhase2Level(
+    const summary = openAtLevel(5,
         s => s.coins >= 5 && s.spikes >= 1 && s.enemies >= 1
     );
     expect(summary.width).toBe(24);
@@ -128,7 +181,7 @@ test("Level 5 generates phase 2 elements at the larger footprint", async () => {
 }, 90000);
 
 test("Collecting a coin raises score by tens and syncs the HUD", async () => {
-    const summary = openAtPhase2Level(s => s.safeCoinIdx >= 0);
+    const summary = openAtLevel(5, s => s.safeCoinIdx >= 0);
     const idx = summary.safeCoinIdx;
     waitLanded(SESSION);
 
@@ -169,7 +222,7 @@ test("Collecting a coin raises score by tens and syncs the HUD", async () => {
 }, 90000);
 
 test("Spike contact ends the game and shows the game-over overlay", async () => {
-    const summary = openAtPhase2Level(s => s.safeSpike !== null);
+    const summary = openAtLevel(5, s => s.safeSpike !== null);
     waitLanded(SESSION);
 
     // Land the player squarely on the spike tile: the 32x32 body fully
@@ -193,7 +246,7 @@ test("Spike contact ends the game and shows the game-over overlay", async () => 
 }, 90000);
 
 test("Enemies patrol within their bounds while the player stays clear", async () => {
-    const summary = openAtPhase2Level(
+    const summary = openAtLevel(5,
         s => s.enemies >= 1 && s.safeTileX !== null
     );
 
@@ -234,48 +287,10 @@ test("Reaching the portal on level 5 completes the level", async () => {
     // A patrol span can sweep into the portal band (bounds follow the solid
     // run under the marker's row), which would make a clear drop impossible
     // on that terrain; require a level whose portal starts clear.
-    openAtPhase2Level(s => s.portalClear);
+    openAtLevel(5, s => s.portalClear);
     waitLanded(SESSION);
 
-    // The drop itself is hazard-free (the portal band excludes spikes and
-    // enemy markers), but an enemy may have walked into range since the
-    // summary ran; re-check clearance at the moment of the drop and
-    // regenerate through the seam when stale. A stray patrol that still
-    // wins the race is recovered via the retry button.
-    let outcome = null;
-    for (let attempt = 0; attempt < 6 && outcome !== "LEVEL_COMPLETE"; attempt++) {
-        if (outcome === "GAME_OVER") {
-            ab(SESSION, "click", "#retry-btn");
-            abWaitFn(SESSION, "window.game.state === 'PLAYING'");
-        }
-        const dropped = abEvalJSON(
-            SESSION,
-            `(() => { const g = window.game;
-                      const portal = g.level.portal;
-                      const clear = g.enemyManager.enemies.every(
-                          e => e.x + e.width < portal.x - 96 ||
-                               e.x > portal.x + portal.width + 96);
-                      if (!clear) return false;
-                      const p = g.player;
-                      p.x = portal.x; p.y = portal.y - 60;
-                      p.vx = 0; p.vy = 0; p.grounded = false;
-                      return true; })()`
-        );
-        if (!dropped) {
-            abEvalJSON(
-                SESSION,
-                `(() => { window.game.startLevel(); return true; })()`
-            );
-            continue;
-        }
-        abWaitFn(
-            SESSION,
-            "window.game.state === 'LEVEL_COMPLETE' ||" +
-            " window.game.state === 'GAME_OVER'"
-        );
-        outcome = abEvalJSON(SESSION, "window.game.state");
-    }
-    expect(outcome).toBe("LEVEL_COMPLETE");
+    expect(completeViaPortal()).toBe("LEVEL_COMPLETE");
 
     const done = abEvalJSON(
         SESSION,
@@ -286,4 +301,55 @@ test("Reaching the portal on level 5 completes the level", async () => {
     expect(done.hud).toBe("Level: 5");
     expect(elementState(SESSION, "level-complete-screen").hidden).toBe(false);
     screenshot(SESSION, "phase2-level5-complete.png");
+}, 90000);
+
+test("Reaching the portal on level 6 (left-facing) completes the level", async () => {
+    // Level 6 mirrors the canonical generation: spawn on the right edge,
+    // portal band on the left. Same seam-driven traversal as level 5; the
+    // direction assertion documents that the mirrored map is what ran.
+    const summary = openAtLevel(6,
+        s => s.direction === "left" && s.portalClear
+    );
+    expect(summary.width).toBe(24);
+    expect(summary.height).toBe(18);
+    waitLanded(SESSION);
+
+    expect(completeViaPortal()).toBe("LEVEL_COMPLETE");
+
+    const done = abEvalJSON(
+        SESSION,
+        `{ level: window.game.currentLevel,
+           hud: document.getElementById('level-display').textContent }`
+    );
+    expect(done.level).toBe(6);
+    expect(done.hud).toBe("Level: 6");
+    expect(elementState(SESSION, "level-complete-screen").hidden).toBe(false);
+    screenshot(SESSION, "phase2-level6-complete.png");
+}, 90000);
+
+test("Reaching the portal on level 7 (vertical) completes the level", async () => {
+    // Level 7 climbs the 15x24 grid from the bottom-center spawn to a
+    // top-band portal (y <= 4). The drop lands on the portal's validated
+    // standable tile inside the spike/marker-free top band; enemy patrols
+    // live below it, so clearance re-check plus retry recovery cover races.
+    const summary = openAtLevel(7,
+        s => s.direction === "vertical" && s.portalClear
+    );
+    expect(summary.width).toBe(15);
+    expect(summary.height).toBe(24);
+    waitLanded(SESSION);
+
+    expect(completeViaPortal()).toBe("LEVEL_COMPLETE");
+
+    const done = abEvalJSON(
+        SESSION,
+        `{ level: window.game.currentLevel,
+           portalY: window.game.level.portal.y / window.game.level.tileSize,
+           hud: document.getElementById('level-display').textContent }`
+    );
+    expect(done.level).toBe(7);
+    expect(done.portalY).toBeLessThanOrEqual(4);
+    expect(done.hud).toBe("Level: 7");
+    expect(elementState(SESSION, "level-complete-screen").hidden).toBe(false);
+    screenshot(SESSION, "phase2-level7-complete.png");
 }, 90000);
