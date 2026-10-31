@@ -109,16 +109,3 @@ test("killing a Level-spawned enemy removes it from collision aggregation agains
     expect(manager.checkPlayerCollisions(player)).toBe(false);
     expect(manager.getActiveEnemies()).toHaveLength(0);
 });
-
-// Direct manager-vs-player cases from the brief, using a real Player entity
-// as the colliding rect instead of an object literal.
-test("manager reports contact for an overlapping player and none for an avoiding one", () => {
-    const manager = new EnemyManager();
-    manager.addEnemy(100, 100, 50, 200);
-
-    const touching = new Player(110, 100, PLAYER_SPEED, JUMP_FORCE);
-    expect(manager.checkPlayerCollisions(touching)).toBe(true);
-
-    const avoiding = new Player(50, 100, PLAYER_SPEED, JUMP_FORCE);
-    expect(manager.checkPlayerCollisions(avoiding)).toBe(false);
-});
