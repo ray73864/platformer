@@ -14,7 +14,8 @@
     "test:coverage": "bun test --coverage tests/unit tests/integration",
     "lint": "bunx eslint js/ tests/ scripts/",
     "format": "bunx prettier --write js/ css/ index.html",
-    "build": "bun build --target=browser --outfile=dist/bundle.js js/main.js",
+    "build": "bun run verify && bun build --target=browser --outfile=dist/bundle.js js/main.js",
+    "verify": "bun scripts/verify-assets.js",
     "verify-assets": "bun scripts/verify-assets.js"
   },
   "keywords": [
