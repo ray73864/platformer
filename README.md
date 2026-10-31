@@ -4,10 +4,12 @@ A procedurally generated 2D platformer game built with vanilla JavaScript.
 
 ## Features
 
-- Procedural level generation with pathfinding-verified portal reachability
+- Procedural level generation with BFS-verified portal reachability
+- Variable travel direction: levels 1-4 run right, then levels cycle right / left / vertical climb from level 5
 - Physics-based player movement
 - Level progression with increasing platform difficulty
 - Score tracking and level progression
+- **Phase 2:** coins, spike hazards, and patrolling enemies
 
 ## Controls
 
@@ -86,14 +88,49 @@ game/
 │   ├── level.js           # Level generation
 │   ├── entities.js        # Base entity class
 │   ├── camera.js          # Camera tracking
-│   └── ui.js              # UI management
+│   ├── ui.js              # UI management
+│   ├── enemies.js         # Patrolling enemy AI (Phase 2)
+│   ├── collectibles.js    # Coin collection and scoring (Phase 2)
+│   └── hazards.js         # Spike hazard detection (Phase 2)
 ├── tests/
 │   ├── setup/             # Test setup helpers
 │   ├── unit/              # Unit tests
 │   ├── integration/       # Integration tests
 │   └── e2e/               # E2E tests
+├── assets/                # Game assets (declared in manifest.json)
 └── scripts/               # Utility scripts
 ```
+
+## Phase 2 Features
+
+### Collectibles
+
+- Coins appear on every level (at least 5, scaling with level number)
+- Placement is restricted to BFS-reachable tiles, so every coin is collectible
+- 10 points per coin; re-collecting an already-taken coin never scores twice
+
+### Hazards
+
+- Spikes kill the player on contact (from level 5 onward)
+- Collision uses an inset hitbox, so brushing a spike tile's decorative edge is fair
+- Falling off the bottom of the level kills the player
+
+### Enemies
+
+- Simple patrol AI (from level 5 onward, up to 5 per level)
+- Each enemy walks back and forth along bounds derived from the solid ground beneath it
+- Contact kills the player
+
+### Level sizing and direction
+
+- Horizontal levels are 20x15 tiles for levels 1-4 and grow to 24x18 from level 5
+- Vertical levels are 15x24 climb layouts; the player starts at the bottom and reaches the portal band at the top
+- Every generated level — horizontal or vertical — is validated with a BFS reachability check before it ships
+
+### Scoring
+
+- Score accumulates across levels within a run
+- Retrying a level restores the score to what it was when that level started, so die-and-retry runs cannot farm coins
 
 ## License
 
