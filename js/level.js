@@ -1,3 +1,5 @@
+import { Collectibles } from './collectibles.js';
+
 const MAX_GENERATION_ATTEMPTS = 200;
 const SPAWN_TILE_X = 2;
 // Horizontal jump scan bound in tiles: hang time 2*350/980 ≈ 0.71s at speed
@@ -145,7 +147,12 @@ export class Level {
                 height: 48
             }
             : null;
-        this.coins = this.extractCoins();
+        // Reachability-verified coins stay the generation source of truth;
+        // Collectibles owns the collection bookkeeping over them. Both point
+        // at the same array so draw() and getCoins() see collected flags.
+        this.collectibles = new Collectibles();
+        this.collectibles.loadCoins(this.extractCoins());
+        this.coins = this.collectibles.getCoins();
     }
 
     generateLevel() {
@@ -306,7 +313,11 @@ export class Level {
     }
 
     getCoins() {
-        return this.coins;
+        return this.collectibles.getCoins();
+    }
+
+    getCollectibles() {
+        return this.collectibles;
     }
 
     getPortal() {
