@@ -11,6 +11,11 @@ const GRAVITY = 980;
 const PLAYER_SPEED = 200;
 const JUMP_FORCE = 350;
 const MAX_FALL_SPEED = 600;
+// Jump feel windows: a Space press is honoured for this long after it lands
+// (buffer), and ground contact is remembered for this long after it ends
+// (coyote), so presses straddling the grounded transition are not dropped.
+const JUMP_BUFFER_TIME = 0.12;
+const COYOTE_TIME = 0.1;
 
 // Game states
 export const STATE = {
@@ -22,7 +27,13 @@ export const STATE = {
 
 export class Game {
     constructor() {
+        // Game-owned structural nodes must exist: fail loudly rather than
+        // fabricating invisible stand-ins (UI.ensureElement self-healing is
+        // for UI display elements only).
         this.canvas = document.getElementById('game-canvas');
+        if (!this.canvas) {
+            throw new Error('Game requires a #game-canvas element in the page');
+        }
         this.ctx = this.canvas.getContext('2d');
 
         // Set canvas size for high-DPI displays
@@ -44,6 +55,8 @@ export class Game {
         this.currentLevel = 1;
         this.lastTime = 0;
         this.levelCompleteTimer = 0;
+        this.jumpBufferTimer = 0;
+        this.coyoteTimer = 0;
 
         // Bind event listeners
         this.bindEvents();
@@ -76,17 +89,27 @@ export class Game {
     }
 
     bindEvents() {
-        // Button listeners
-        document.getElementById('start-btn').addEventListener('click', () => this.startGame());
-        document.getElementById('retry-btn').addEventListener('click', () => this.retryLevel());
+        // Button listeners (Game-owned: required, see constructor note).
+        const startBtn = document.getElementById('start-btn');
+        const retryBtn = document.getElementById('retry-btn');
+        if (!startBtn || !retryBtn) {
+            throw new Error('Game requires #start-btn and #retry-btn elements in the page');
+        }
+        startBtn.addEventListener('click', () => this.startGame());
+        retryBtn.addEventListener('click', () => this.retryLevel());
 
-        // Input listener
-        // Input listener. Grounded-gated here (not inside Player.jump(), whose
-        // unit test requires an ungated jump()) so autorepeat keydowns cannot
-        // re-fire the jump mid-flight.
+        // Input listener.
+        // Immediate jump while grounded (or within coyote reach of the ground
+        // it just left); otherwise buffer the press so a landing inside the
+        // window still jumps. The initial-press filter lives in InputHandler
+        // (wasDown captured before keys.add), so autorepeat keydowns neither
+        // re-jump nor refresh the buffer.
         this.input.onJump(() => {
-            if (this.player?.grounded) {
+            if (!this.player) return;
+            if (this.player.grounded || this.coyoteTimer > 0) {
                 this.player.jump();
+            } else {
+                this.jumpBufferTimer = JUMP_BUFFER_TIME;
             }
         });
         this.input.onMoveLeft(() => this.player?.moveLeft());
@@ -106,9 +129,22 @@ export class Game {
     startLevel() {
         this.state = STATE.PLAYING;
         this.level = new Level(this.currentLevel, TILE_SIZE);
-        this.player = new Player(100, 100, PLAYER_SPEED, JUMP_FORCE);
-        this.camera.reset();
+        // Spawn from the level's reachability-verified spawn tile: its y is
+        // already a Player top-left origin standing on the forced flat ground.
+        const spawn = this.level.getSpawnPoint();
+        this.player = new Player(spawn.x, spawn.y, PLAYER_SPEED, JUMP_FORCE);
+        this.jumpBufferTimer = 0;
+        this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
+        this.camera.reset();
+        // Snap the camera onto the new level immediately: reset() alone would
+        // render one frame of fresh terrain through the default origin on
+        // short/narrow viewports before follow() catches up.
+        this.camera.follow(
+            this.player,
+            this.level.width * this.level.tileSize,
+            this.level.height * this.level.tileSize
+        );
     }
 
     retryLevel() {
@@ -128,8 +164,9 @@ export class Game {
 
     handleGameOver() {
         this.state = STATE.GAME_OVER;
-        this.ui.showOverlay('game-over-screen');
-        document.getElementById('final-score').textContent = `Score: ${this.score}`;
+        // Single game-over presentation path: UI.showGameOver writes the
+        // #final-score node and reveals the overlay.
+        this.ui.showGameOver(this.score);
     }
 
     update(dt) {
@@ -144,8 +181,26 @@ export class Game {
             const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
             this.physics.resolveCollisions(this.player, collisions);
 
-            // Check for falling off screen
-            if (this.player.y > this.canvas.height + 100) {
+            // Coyote time: remember ground contact briefly after it ends, so a
+            // jump pressed just after walking off a ledge still fires.
+            this.coyoteTimer = this.player.grounded
+                ? COYOTE_TIME
+                : this.coyoteTimer - dt;
+
+            // Consume a buffered jump press as soon as the player is grounded.
+            if (this.jumpBufferTimer > 0) {
+                this.jumpBufferTimer -= dt;
+                if (this.player.grounded) {
+                    this.player.jump();
+                    this.jumpBufferTimer = 0;
+                }
+            }
+
+            // Check for falling off the world. The threshold is in world/CSS
+            // pixels: canvas.height is the device-pixel backing store and
+            // drifts with devicePixelRatio, which would move the death line
+            // (and could place it above the spawn ground on short windows).
+            if (this.player.y > this.level.height * this.level.tileSize + 100) {
                 this.handleGameOver();
             }
 
@@ -209,10 +264,16 @@ export class Game {
         // Cap dt to prevent physics issues on lag spikes
         const cappedDt = Math.min(dt, 0.05);
 
-        this.update(cappedDt);
-        this.draw();
-
+        // Schedule the next frame before running fallible work: a throw in
+        // update/draw must not permanently freeze the game. The error is
+        // surfaced on the console rather than silently killing the loop.
         requestAnimationFrame((t) => this.loop(t));
+        try {
+            this.update(cappedDt);
+            this.draw();
+        } catch (error) {
+            console.error('Game loop error:', error);
+        }
     }
 }
 

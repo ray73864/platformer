@@ -19,9 +19,11 @@ export class Player extends Entity {
             this.vx = -this.speed;
         } else if (right && !left) {
             this.vx = this.speed;
-        } else {
-            // Decelerate when neither direction is active. The base friction
-            // only runs while grounded, so also decay in the air.
+        } else if (!this.grounded) {
+            // Decelerate in the air only, when neither direction is active.
+            // While grounded the base friction in Entity.update already runs;
+            // applying this decay on top doubled it, halting ground stops at
+            // roughly half the air distance despite the parity comment.
             const decel = 10; // Matches the base friction coefficient
             this.vx -= this.vx * decel * dt;
 

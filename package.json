@@ -6,11 +6,13 @@
   "main": "js/main.js",
   "type": "module",
   "scripts": {
-    "start": "bunx serve .",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
-    "test:coverage": "bun test --coverage",
-    "lint": "bunx eslint js/",
+    "start": "bunx serve -l tcp://127.0.0.1:3000 .",
+    "test": "bun test tests/unit tests/integration",
+    "test:e2e": "bun test tests/e2e",
+    "test:all": "bun test",
+    "test:watch": "bun test --watch tests/unit tests/integration",
+    "test:coverage": "bun test --coverage tests/unit tests/integration",
+    "lint": "bunx eslint js/ tests/ scripts/",
     "format": "bunx prettier --write js/ css/ index.html",
     "build": "bun build --target=browser --outfile=dist/bundle.js js/main.js",
     "verify-assets": "bun scripts/verify-assets.js"
@@ -24,10 +26,10 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.9.1",
-    "globals": "^17.11.0",
-    "happy-dom": "^20.11.15",
-    "prettier": "^3.9.6",
+    "eslint": "^10.14.0",
+    "globals": "^17.13.0",
+    "happy-dom": "^21.0.4",
+    "prettier": "^3.9.10",
     "serve": "^14.2.6"
   }
 }

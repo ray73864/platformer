@@ -1,46 +1,7 @@
-import { test, expect, afterAll } from "bun:test";
+import { test, expect } from "bun:test";
+import { installGameTestScaffolding, mountFixture } from "./setup.js";
 
-// --- Test scaffolding -------------------------------------------------------
-// The Game constructor touches real DOM nodes (#game-canvas, #start-btn,
-// #retry-btn) and a 2d canvas context before any state exists, so every test
-// installs the same fixture. UI-owned ids self-heal via ensureElement; these
-// four do not (see main.js bindEvents/handleGameOver).
-
-globalThis.requestAnimationFrame = () => {};
-globalThis.cancelAnimationFrame = () => {};
-
-const realGetContext = HTMLCanvasElement.prototype.getContext;
-HTMLCanvasElement.prototype.getContext = function () {
-    return {
-        fillStyle: null,
-        strokeStyle: null,
-        lineWidth: null,
-        scale: () => {},
-        save: () => {},
-        restore: () => {},
-        translate: () => {},
-        fillRect: () => {},
-        strokeRect: () => {},
-        beginPath: () => {},
-        arc: () => {},
-        fill: () => {}
-    };
-};
-
-afterAll(() => {
-    HTMLCanvasElement.prototype.getContext = realGetContext;
-});
-
-function mountFixture() {
-    window.innerWidth = 800;
-    window.innerHeight = 600;
-    document.body.innerHTML = `
-        <canvas id="game-canvas"></canvas>
-        <button id="start-btn">Start</button>
-        <button id="retry-btn">Retry</button>
-        <div id="final-score"></div>
-    `;
-}
+installGameTestScaffolding();
 
 import { Game, STATE } from "../../js/main.js";
 import { Level } from "../../js/level.js";
@@ -95,7 +56,7 @@ test("clicking #start-btn starts the game through the bound DOM listener", () =>
     expect(game.level).toBeInstanceOf(Level);
 });
 
-test("falling past canvas.height + 100 transitions to GAME_OVER and writes the final score", () => {
+test("falling past the world bottom transitions to GAME_OVER and writes the final score", () => {
     mountFixture();
     const game = new Game();
     document.getElementById('start-btn').click();
@@ -103,13 +64,43 @@ test("falling past canvas.height + 100 transitions to GAME_OVER and writes the f
 
     expect(document.getElementById('final-score').textContent).toBe("");
 
-    // Teleport below the death line, then one update tick.
-    game.player.y = game.canvas.height + 200;
+    // Teleport below the death line, then one update tick. The bound is an
+    // independent world-space number (level height + margin), NOT derived
+    // from canvas.height — anchoring to canvas.height made the assertion
+    // tautological and blind to device-pixel/CSS-pixel confusion.
+    const worldBottom = game.level.height * game.level.tileSize;
+    expect(game.player.y).toBeLessThan(worldBottom); // sanity: alive above it
+    game.player.y = worldBottom + 200;
     game.update(0.016);
 
     expect(game.state).toBe(STATE.GAME_OVER);
     expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(false);
     expect(document.getElementById('final-score').textContent).toBe(`Score: ${game.score}`);
+});
+
+test("the death line stays in world pixels when devicePixelRatio doubles", () => {
+    // Regression for the device-pixel backing-store bug: at dpr=2 the canvas
+    // height doubles but the death threshold must not, so a player just past
+    // the world bottom dies even though it is far above canvas.height.
+    mountFixture();
+    Object.defineProperty(window, 'devicePixelRatio', {
+        value: 2, configurable: true, writable: true
+    });
+    try {
+        const game = new Game();
+        document.getElementById('start-btn').click();
+        hideOverlays(game);
+
+        expect(game.canvas.height).toBe(1200); // device pixels (600 * 2)
+
+        const worldBottom = game.level.height * game.level.tileSize;
+        game.player.y = worldBottom + 140; // > threshold, < old canvas-based line
+        game.update(0.016);
+
+        expect(game.state).toBe(STATE.GAME_OVER);
+    } finally {
+        delete window.devicePixelRatio;
+    }
 });
 
 test("update() is inert outside PLAYING and LEVEL_COMPLETE", () => {
@@ -118,7 +109,7 @@ test("update() is inert outside PLAYING and LEVEL_COMPLETE", () => {
     document.getElementById('start-btn').click();
 
     // Kill the run, then confirm no physics or state machine runs afterwards.
-    game.player.y = game.canvas.height + 200;
+    game.player.y = game.level.height * game.level.tileSize + 200;
     game.update(0.016);
     expect(game.state).toBe(STATE.GAME_OVER);
 
@@ -183,9 +174,9 @@ test("from LEVEL_COMPLETE, more than 2s of update time advances to the next leve
     expect(game.currentLevel).toBe(2);
     expect(game.level).not.toBe(previousLevel);
     expect(game.level).toBeInstanceOf(Level);
-    // startLevel() constructs the player at its fixed spawn point.
-    expect(game.player.x).toBe(100);
-    expect(game.player.y).toBe(100);
+    // startLevel() constructs the player at the level's verified spawn point.
+    expect(game.player.x).toBe(game.level.spawnPoint.x);
+    expect(game.player.y).toBe(game.level.spawnPoint.y);
     expect(document.getElementById('level-complete-screen').classList.contains('hidden')).toBe(true);
 
     // The LEVEL_COMPLETE exit must have left a fresh, fully playable level.

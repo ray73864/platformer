@@ -39,6 +39,12 @@ test("UI updates level display", () => {
 test("UI shows and hides overlays", () => {
     const ui = new UI();
 
+    // Baseline the overlay as hidden first: an ensureElement-created element
+    // never had the class, so asserting "not hidden" straight after
+    // showOverlay() could never fail (vacuous assertion).
+    ui.hideOverlay('menu-screen');
+    expect(document.getElementById('menu-screen')).toHaveClass('hidden');
+
     ui.showOverlay('menu-screen');
     expect(document.getElementById('menu-screen')).not.toHaveClass('hidden');
 

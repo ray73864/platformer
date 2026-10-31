@@ -1,45 +1,11 @@
-import { test, expect, afterAll } from "bun:test";
+import { test, expect } from "bun:test";
+import { installGameTestScaffolding, mountFixture } from "./setup.js";
+
+installGameTestScaffolding();
+
 import { Game, STATE } from "../../js/main.js";
 import { Level } from "../../js/level.js";
 import { Player } from "../../js/player.js";
-
-// --- Test scaffolding (mirrors state_transitions.test.js; see its header) ---
-
-globalThis.requestAnimationFrame = () => {};
-globalThis.cancelAnimationFrame = () => {};
-
-const realGetContext = HTMLCanvasElement.prototype.getContext;
-HTMLCanvasElement.prototype.getContext = function () {
-    return {
-        fillStyle: null,
-        strokeStyle: null,
-        lineWidth: null,
-        scale: () => {},
-        save: () => {},
-        restore: () => {},
-        translate: () => {},
-        fillRect: () => {},
-        strokeRect: () => {},
-        beginPath: () => {},
-        arc: () => {},
-        fill: () => {}
-    };
-};
-
-afterAll(() => {
-    HTMLCanvasElement.prototype.getContext = realGetContext;
-});
-
-function mountFixture() {
-    window.innerWidth = 800;
-    window.innerHeight = 600;
-    document.body.innerHTML = `
-        <canvas id="game-canvas"></canvas>
-        <button id="start-btn">Start</button>
-        <button id="retry-btn">Retry</button>
-        <div id="final-score"></div>
-    `;
-}
 
 function startPlaying() {
     mountFixture();
@@ -71,10 +37,11 @@ test("keyboard events drive the player through physics", () => {
     const game = startPlaying();
 
     // Stand the player on the forced flat spawn ground so motion is not
-    // immediately eaten by collision resolution.
+    // immediately eaten by collision resolution. getSpawnPoint() returns a
+    // Player top-left origin standing exactly on that ground.
     const spawn = game.level.getSpawnPoint();
     game.player.x = spawn.x;
-    game.player.y = spawn.y - game.player.height;
+    game.player.y = spawn.y;
 
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight' }));
     expect(game.input.isRight()).toBe(true);
@@ -108,7 +75,7 @@ test("autorepeat Space keydowns in flight cannot extend the jump", () => {
     // actually grounded, so the single-press baseline jump is legitimate.
     const spawn = game.level.getSpawnPoint();
     game.player.x = spawn.x;
-    game.player.y = spawn.y - game.player.height;
+    game.player.y = spawn.y;
     for (let i = 0; i < 120 && !game.player.grounded; i++) {
         game.update(1 / 60);
     }
@@ -125,8 +92,9 @@ test("autorepeat Space keydowns in flight cannot extend the jump", () => {
     }
     expect(game.player.vy).toBeGreaterThan(0);
 
-    // Autorepeat keydowns (wasPressed never suppresses them) must not reset
-    // vy upward: the grounded gate at the input wiring rejects them.
+    // Autorepeat keydowns must not reset vy upward: the InputHandler's
+    // initial-press filter suppresses them outright, and the grounded gate at
+    // the input wiring is a second line of defence.
     const vyBefore = game.player.vy;
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
@@ -140,7 +108,7 @@ test("autorepeat Space keydowns in flight cannot extend the jump", () => {
 test("dying and retrying through #retry-btn restarts play on a fresh level instance", () => {
     const game = startPlaying();
 
-    game.player.y = game.canvas.height + 200;
+    game.player.y = game.level.height * game.level.tileSize + 200;
     game.update(0.016);
     expect(game.state).toBe(STATE.GAME_OVER);
     expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(false);
@@ -149,10 +117,11 @@ test("dying and retrying through #retry-btn restarts play on a fresh level insta
 
     expect(game.state).toBe(STATE.PLAYING);
     expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(true);
-    // retryLevel() -> startLevel(): new level object and a player at the fixed spawn.
+    // retryLevel() -> startLevel(): new level object and a player at the
+    // level's reachability-verified spawn point.
     expect(game.level).toBeInstanceOf(Level);
-    expect(game.player.x).toBe(100);
-    expect(game.player.y).toBe(100);
+    expect(game.player.x).toBe(game.level.spawnPoint.x);
+    expect(game.player.y).toBe(game.level.spawnPoint.y);
 
     game.update(0.016);
     expect(game.state).toBe(STATE.PLAYING);

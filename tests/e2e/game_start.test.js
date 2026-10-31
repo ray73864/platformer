@@ -1,10 +1,10 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
     startServer, openGame, startGame, abEvalJSON, abWaitFn, screenshot,
-    elementState, closeSession
+    elementState, closeSession, sessionName
 } from "./helpers.js";
 
-const SESSION = "t11-game-start";
+const SESSION = sessionName("t11-game-start");
 let server;
 
 beforeAll(async () => {

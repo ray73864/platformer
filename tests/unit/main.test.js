@@ -24,6 +24,11 @@ describe("main.js module", () => {
   });
 
   test("importing main.js does not auto-construct a Game", async () => {
+    // Defensive: this file shares one happy-dom Window with every other test
+    // file in the process, so start from a known-empty document regardless
+    // of what ran before us.
+    document.body.innerHTML = "";
+
     // No #game-canvas element exists in the bare happy-dom document, so if any
     // module-scope code had constructed a Game it would have thrown during the
     // import above. A second dynamic import returns the cached module and must

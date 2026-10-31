@@ -20,5 +20,8 @@ test("Entity updates position correctly", () => {
 
     entity.update(0.016); // ~60 FPS
     expect(entity.x).toBeCloseTo(100 + 50 * 0.016, 2);
-    expect(entity.y).toBeCloseTo(100 + 30 * 0.016, 2);
+    // Single-integration contract: y is owned by Physics.applyGravity. If
+    // Entity.update integrated y too, every gravity/jump displacement would
+    // double once both run on the same frame in Game.update().
+    expect(entity.y).toBe(100);
 });

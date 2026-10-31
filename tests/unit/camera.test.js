@@ -7,7 +7,10 @@ test("Camera follows player horizontally", () => {
 
     camera.follow(player, 1000);
 
-    // Camera should center on player
+    // Follow contract (ratified deviation from the plan reference): the
+    // player's top-left is placed at the view centre, so its box centre sits
+    // half a sprite to the right. Tests govern this behaviour; see S27 in
+    // paad/code-reviews/feature-phase1-core-engine-2026-10-31-13-00-39-cbbb3eb.md.
     expect(camera.x).toBeCloseTo(500 - 800 / 2, 0);
 });
 

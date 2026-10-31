@@ -5,15 +5,21 @@ export class UI {
         this.finalScoreElement = this.ensureElement('final-score');
         this.hudElement = this.ensureElement('hud');
         for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen']) {
-            this.ensureElement(id);
+            this.ensureElement(id, 'overlay');
         }
     }
 
-    ensureElement(id) {
+    ensureElement(id, className) {
         let element = document.getElementById(id);
         if (!element) {
             element = document.createElement('div');
             element.id = id;
+            // Fabricated overlays must carry the `overlay` class: the CSS only
+            // hides via `.overlay.hidden`, so an overlay created without it
+            // could never be visually hidden.
+            if (className) {
+                element.className = className;
+            }
             document.body.appendChild(element);
         }
         return element;
@@ -56,7 +62,11 @@ export class UI {
     }
 
     showGameOver(score) {
-        this.updateScore(score);
+        // The game-over overlay reads its score from #final-score, not the
+        // HUD counter (the HUD is hidden behind the overlay).
+        if (this.finalScoreElement) {
+            this.finalScoreElement.textContent = `Score: ${score}`;
+        }
         this.showOverlay('game-over-screen');
     }
 

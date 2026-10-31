@@ -64,3 +64,56 @@ test("InputHandler handles WASD keys", () => {
     expect(input.isRight()).toBe(true);
     expect(input.isJump()).toBe(true);
 });
+
+test("autorepeat keydowns do not re-fire callbacks", () => {
+    // Regression for the dead wasPressed stub: OS autorepeat re-fires keydown
+    // without an intervening keyup; only the INITIAL press may fire a
+    // callback (holding Space must not re-jump on every landing).
+    const input = new InputHandler();
+    let jumpCount = 0;
+    let leftCount = 0;
+    input.onJump(() => { jumpCount++; });
+    input.onMoveLeft(() => { leftCount++; });
+
+    input.handleKeyDown({ code: "Space" });
+    input.handleKeyDown({ code: "Space" }); // autorepeat
+    input.handleKeyDown({ code: "ArrowLeft" });
+    input.handleKeyDown({ code: "ArrowLeft" }); // autorepeat
+
+    expect(jumpCount).toBe(1);
+    expect(leftCount).toBe(1);
+
+    // A real release + press fires again.
+    input.handleKeyUp({ code: "Space" });
+    input.handleKeyDown({ code: "Space" });
+    expect(jumpCount).toBe(2);
+});
+
+test("key-only events (no code) resolve to physical-code spellings", () => {
+    // Regression for the CDP-harness case: with event.code absent, letters
+    // must map to 'KeyX' so consumers comparing 'KeyA'/'KeyD' still match.
+    const input = new InputHandler();
+
+    input.handleKeyDown({ key: "a" });
+    input.handleKeyDown({ key: "d" });
+    input.handleKeyDown({ key: " " });
+
+    expect(input.isLeft()).toBe(true);
+    expect(input.isRight()).toBe(true);
+    expect(input.isJump()).toBe(true);
+
+    input.handleKeyUp({ key: "a" });
+    expect(input.isLeft()).toBe(false);
+});
+
+test("held keys are released when the window loses focus", () => {
+    // Regression for stuck-key driving after alt-tab: blur must clear the
+    // pressed-key set (browsers swallow the held key's keyup).
+    const input = new InputHandler();
+
+    input.handleKeyDown({ code: "ArrowRight" });
+    expect(input.isRight()).toBe(true);
+
+    window.dispatchEvent(new Event("blur"));
+    expect(input.isRight()).toBe(false);
+});

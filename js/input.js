@@ -15,24 +15,44 @@ export class InputHandler {
     bindEvents() {
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
         window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+
+        // Browsers drop the keyup of a held key when the window loses focus,
+        // which would leave the key latched in `keys` forever: alt-tab while
+        // holding a direction and the player drives on until that exact key
+        // is pressed-and-released again. Clearing the set is enough — held
+        // speed is re-derived from isLeft()/isRight() every frame.
+        window.addEventListener('blur', () => this.keys.clear());
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) this.keys.clear();
+        });
     }
 
     resolveCode(event) {
         // Some harnesses (e.g. CDP raw key events) deliver `key` with an empty
-        // `code`; fall back to the equivalent physical-code spelling.
+        // `code`; fall back to the equivalent physical-code spelling. Letters
+        // must map to 'KeyX' explicitly: consumers compare against code
+        // spellings, and a bare 'a' would never match 'KeyA'.
         if (event.code) return event.code;
-        if (event.key === ' ') return 'Space';
-        return event.key || '';
+        const key = event.key;
+        if (!key) return '';
+        if (key === ' ') return 'Space';
+        if (/^[a-zA-Z]$/.test(key)) return `Key${key.toUpperCase()}`;
+        return key;
     }
 
     handleKeyDown(event) {
         const code = this.resolveCode(event);
 
+        // Capture prior state BEFORE adding: OS autorepeat re-fires keydown
+        // without an intervening keyup, so checking after keys.add would
+        // report every repeat as an initial press.
+        const wasDown = this.keys.has(code);
+
         // Track key state
         this.keys.add(code);
 
-        // Trigger movement callbacks on initial press
-        if (!this.wasPressed(code)) {
+        // Trigger movement callbacks on initial press only
+        if (!wasDown) {
             if (code === 'ArrowLeft' || code === 'KeyA') {
                 this.onMoveLeftCallback?.();
             } else if (code === 'ArrowRight' || code === 'KeyD') {
@@ -53,11 +73,6 @@ export class InputHandler {
         } else if (code === 'ArrowRight' || code === 'KeyD') {
             this.onReleaseRightCallback?.();
         }
-    }
-
-    wasPressed(_code) {
-        // Returns true if key was already pressed (for detecting initial press)
-        return false; // Simplified - in practice would track previous state
     }
 
     // Key state queries

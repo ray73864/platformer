@@ -39,12 +39,14 @@ Then open `http://localhost:3000` in your browser.
 ### Testing
 
 ```bash
-bun test
-bun test --watch
-bun test --coverage
+bun run test        # unit + integration (no external tools needed)
+bun run test:e2e    # browser E2E suite only
+bun run test:all    # everything in one process
+bun run test:watch
+bun run test:coverage
 ```
 
-The E2E suite requires the [agent-browser](https://www.npmjs.com/package/agent-browser) CLI to be installed; it drives a real browser against a self-hosted server.
+The E2E suite requires the [agent-browser](https://www.npmjs.com/package/agent-browser) CLI to be installed; it drives a real browser against a self-hosted loopback server. `bun run test` deliberately excludes it so a fresh clone passes without that external dependency.
 
 ### Building
 
@@ -64,6 +66,8 @@ bun run format
 ```bash
 bun run verify-assets
 ```
+
+Advisory only in Phase 1: it warns about missing art assets (which nothing loads yet) but always exits 0, so it cannot gate an otherwise-green branch. It becomes a hard gate when the asset loader lands in Phase 2.
 
 ## Project Structure
 

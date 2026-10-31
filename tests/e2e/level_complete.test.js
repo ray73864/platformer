@@ -1,10 +1,10 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
     startServer, openGame, startGame, abEvalJSON, abWaitFn, waitLanded,
-    screenshot, elementState, closeSession
+    screenshot, elementState, closeSession, sessionName
 } from "./helpers.js";
 
-const SESSION = "t11-level-complete";
+const SESSION = sessionName("t11-level-complete");
 let server;
 
 beforeAll(async () => {
@@ -34,7 +34,9 @@ test("Player reaches portal to complete level", async () => {
                       const px = (key % l.width) * l.tileSize;
                       if (px >= 320 && px <= l.portal.x - 96) best = px;
                   }
-                  window.__fellOnce = false;
+                  // grounded=false alongside the teleport: physics only
+                  // refreshes it on the next tick, and waitLanded reads it.
+                  window.game.player.grounded = false;
                   window.game.player.x = best;
                   window.game.player.y = 40;
                   return best; })()`

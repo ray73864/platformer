@@ -10,9 +10,10 @@ export class Entity {
     }
 
     update(dt, _moveLeft = false, _moveRight = false) {
-        // Apply velocity to position
+        // Apply horizontal velocity to position. Vertical integration belongs
+        // solely to Physics.applyGravity: integrating y here as well doubled
+        // gravity/jump displacement every frame.
         this.x += this.vx * dt;
-        this.y += this.vy * dt;
 
         // Apply ground friction if grounded
         if (this.grounded) {

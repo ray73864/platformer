@@ -123,6 +123,17 @@ export class Level {
             attempt++;
         }
 
+        // Fail fast rather than hand back a soft-locked level: without a
+        // portal the player can never finish, and the run would silently
+        // stall. Reaching 200 failed attempts means the generator itself is
+        // broken, not merely unlucky.
+        if (!valid) {
+            throw new Error(
+                `Level ${levelNumber}: no reachable portal position after ` +
+                `${MAX_GENERATION_ATTEMPTS} generation attempts`
+            );
+        }
+
         // Pixel-space spawn point sits on the forced flat ground near x=2.
         this.spawnPoint = { x: tileSize * 2, y: tileSize * (this.height - 4) };
         this.platforms = this.extractPlatforms();
@@ -172,7 +183,10 @@ export class Level {
             if (isSpawnZone) {
                 currentY = this.height - 3;
             } else {
-                const delta = Math.floor(Math.random() * (maxRise + maxDrop + 1)) - maxDrop;
+                // delta > 0 lowers the surface (drop), delta < 0 raises it.
+                // Range [-maxRise, +maxDrop] keeps rises within the verified
+                // one-tile climb and drops within two.
+                const delta = Math.floor(Math.random() * (maxRise + maxDrop + 1)) - maxRise;
                 currentY = Math.min(
                     this.height - 3,
                     Math.max(3, currentY + delta)
@@ -192,7 +206,10 @@ export class Level {
         for (const key of this.reachableTiles) {
             const x = key % this.width;
             const y = Math.floor(key / this.width);
-            if (x >= this.width - 4 && !(x === this.spawnTile.x && y === this.spawnTile.y)) {
+            // Right-hand band, but never the extreme edge column (design doc:
+            // portal is "not placed at extreme edges").
+            if (x >= this.width - 4 && x <= this.width - 2 &&
+                !(x === this.spawnTile.x && y === this.spawnTile.y)) {
                 candidates.push({ x, y });
             }
         }
