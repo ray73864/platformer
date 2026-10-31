@@ -249,6 +249,7 @@ test("Phase 2 levels place surface spikes within density and safe zones", () => 
 test("enemy markers sit on standable tiles atop runs at least 3 wide", () => {
     for (const n of [5, 7, 9]) {
         const level = new Level(n, 32);
+        const w = level.width;
         const target = Math.min(5, Math.floor(n / 2));
         const markers = tilesOfType(level.tiles, 4);
 
@@ -256,6 +257,9 @@ test("enemy markers sit on standable tiles atop runs at least 3 wide", () => {
         expect(markers.length).toBeLessThanOrEqual(target);
 
         for (const m of markers) {
+            // Never inside the spawn zone (x < 6) or portal band (x >= w-4).
+            expect(m.x).toBeGreaterThanOrEqual(6);
+            expect(m.x).toBeLessThanOrEqual(w - 5);
             // Standable: air tile with solid ground beneath.
             expect(level.tiles[m.y + 1][m.x]).toBe(1);
             // Patrol exists: contiguous solid run under the walk row >= 3.

@@ -321,11 +321,12 @@ export class Level {
 
         // Markers need a standable air tile whose contiguous solid run
         // beneath is at least 3 columns wide, so every spawned enemy gets a
-        // real patrol. Spawn zone excluded like spikes; markers never
-        // overwrite spike tiles (those are no longer air).
+        // real patrol. Spawn zone (x < 6) and portal band (x >= width - 4)
+        // both excluded; markers never overwrite spike tiles (those are no
+        // longer air).
         const candidates = [];
         for (let y = 0; y < this.height - 1; y++) {
-            for (let x = 6; x < this.width; x++) {
+            for (let x = 6; x <= this.width - 5; x++) {
                 if (tiles[y][x] !== 0 || !solidAt(x, y + 1)) continue;
                 let left = x;
                 while (solidAt(left - 1, y + 1)) left--;
