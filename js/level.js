@@ -1,4 +1,5 @@
 import { Collectibles } from './collectibles.js';
+import { Hazards } from './hazards.js';
 
 const MAX_GENERATION_ATTEMPTS = 200;
 const SPAWN_TILE_X = 2;
@@ -153,6 +154,11 @@ export class Level {
         this.collectibles = new Collectibles();
         this.collectibles.loadCoins(this.extractCoins());
         this.coins = this.collectibles.getCoins();
+        // Hazards scan the tile grid for spike tiles (type 2). The generator
+        // does not emit any yet (Task 5 introduces them), so this extracts an
+        // empty list today; the wiring is live either way.
+        this.hazards = new Hazards();
+        this.extractHazards();
     }
 
     generateLevel() {
@@ -304,6 +310,19 @@ export class Level {
         return coins;
     }
 
+    extractHazards() {
+        // Re-extraction replaces the list so repeated calls stay idempotent.
+        this.hazards.clear();
+
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.tiles[y][x] === 2) {
+                    this.hazards.addSpike(x * this.tileSize, y * this.tileSize);
+                }
+            }
+        }
+    }
+
     getSpawnPoint() {
         return this.spawnPoint;
     }
@@ -318,6 +337,10 @@ export class Level {
 
     getCollectibles() {
         return this.collectibles;
+    }
+
+    getHazards() {
+        return this.hazards;
     }
 
     getPortal() {
