@@ -1,4 +1,5 @@
 import { Collectibles } from './collectibles.js';
+import { EnemyManager } from './enemies.js';
 import { Hazards } from './hazards.js';
 
 const MAX_GENERATION_ATTEMPTS = 200;
@@ -159,6 +160,11 @@ export class Level {
         // empty list today; the wiring is live either way.
         this.hazards = new Hazards();
         this.extractHazards();
+        // Enemies scan the tile grid for enemy spawn tiles (type 4). The
+        // generator does not emit any yet (Task 5 introduces them), so this
+        // spawns none today; the wiring is live either way.
+        this.enemyManager = new EnemyManager();
+        this.spawnEnemies();
     }
 
     generateLevel() {
@@ -323,6 +329,51 @@ export class Level {
         }
     }
 
+    spawnEnemies() {
+        // Re-spawning replaces the list so repeated calls stay idempotent.
+        this.enemyManager.clear();
+
+        // Solidity convention matches computeReachable: only type 1 is solid.
+        const solidAt = (x, y) =>
+            x >= 0 && x < this.width && y >= 0 && y < this.height &&
+            this.tiles[y][x] === 1;
+
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.tiles[y][x] !== 4) continue;
+
+                // Spawn validation: the tile must be standable (air with a
+                // solid tile below) AND reachable from the player spawn;
+                // anything else is skipped entirely.
+                if (!solidAt(x, y + 1)) continue;
+                if (!this.reachableTiles.has(y * this.width + x)) continue;
+
+                // Patrol bounds from real geometry: the contiguous run of
+                // solid columns under the walk row, extending outward from
+                // the spawn column, clamped within the level.
+                let left = x;
+                while (solidAt(left - 1, y + 1)) left--;
+                let right = x;
+                while (solidAt(right + 1, y + 1)) right++;
+                const minX = Math.max(0, left * this.tileSize);
+                const maxX = Math.min(
+                    (right + 1) * this.tileSize,
+                    this.width * this.tileSize
+                );
+
+                // Same placement convention as the player spawn point: the
+                // body rests inside the standable air tile, its bottom edge
+                // on the solid tile below.
+                this.enemyManager.addEnemy(
+                    x * this.tileSize,
+                    y * this.tileSize,
+                    minX,
+                    maxX
+                );
+            }
+        }
+    }
+
     getSpawnPoint() {
         return this.spawnPoint;
     }
@@ -341,6 +392,10 @@ export class Level {
 
     getHazards() {
         return this.hazards;
+    }
+
+    getEnemyManager() {
+        return this.enemyManager;
     }
 
     getPortal() {
