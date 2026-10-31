@@ -441,6 +441,53 @@ test("left-facing levels spawn right, portal on the left band, path valid", () =
     }
 });
 
+test("requireOpenHead excludes standable cells with a solid ceiling", () => {
+    // Fixture grid: 8 wide x 6 tall, solid bottom row (standing surface
+    // row 4), plus one floating block at (5,3). The cell (5,4) is air over
+    // solid ground — standable under the default model — but capped by the
+    // block, so a 32px body there could never jump. requireOpenHead must
+    // drop it from the reachable set while leaving uncapped cells intact.
+    const width = 8;
+    const height = 6;
+    const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+    for (let x = 0; x < width; x++) {
+        tiles[height - 1][x] = 1;
+    }
+    tiles[3][5] = 1;
+
+    const spawnTile = { x: 1, y: height - 2 };
+    const cappedKey = 4 * width + 5;
+    const openKey = 4 * width + 2;
+
+    // Default (horizontal validation): unchanged behaviour, capped cell
+    // included — walking beneath the overhang stays modelled either way.
+    const open = computeReachable(tiles, width, height, spawnTile);
+    expect(open.has(cappedKey)).toBe(true);
+    expect(open.has(openKey)).toBe(true);
+
+    // requireOpenHead (vertical validation): capped cell excluded, the rest
+    // of the floor still reachable.
+    const strict = computeReachable(tiles, width, height, spawnTile, true);
+    expect(strict.has(cappedKey)).toBe(false);
+    expect(strict.has(openKey)).toBe(true);
+});
+
+test("vertical BFS marks zero standable cells with a ceiling", () => {
+    // Headroom-aware validation (I-A): across many vertical constructions,
+    // no BFS-reachable tile may have solid rock directly overhead — every
+    // validated standing spot must leave the 32x32 body room to jump.
+    for (let i = 0; i < 50; i++) {
+        const level = new Level(7, 32);
+        expect(level.direction).toBe("vertical");
+        for (const key of level.reachableTiles) {
+            const x = key % level.width;
+            const y = Math.floor(key / level.width);
+            const hasCeiling = y > 0 && level.tiles[y - 1][x] === 1;
+            expect(hasCeiling).toBe(false);
+        }
+    }
+});
+
 test("vertical levels climb 15x24 from bottom spawn to a top-band portal", () => {
     for (let i = 0; i < 20; i++) {
         const level = new Level(7, 32);

@@ -65,7 +65,25 @@ function shuffle(items) {
 // budget.) Consequence: reachability of coins, portal, and enemy spawns
 // never routes THROUGH death. Grids without type-2 tiles behave bit-
 // identically to the pre-hazard model (hazard() is constant false there).
-export function computeReachable(tiles, width, height, startTile) {
+//
+// requireOpenHead (used by the vertical validation): additionally reject any
+// standable cell with a solid tile directly overhead. The 32x32 body fills a
+// 32px tile exactly, so a ceiling leaves zero jump clearance — every rise the
+// BFS would model from that cell is a head-butt. The vertical generator's
+// ledges can hang over lower ledge tops (a bounce extends a ledge back over
+// the columns two rows down), so without this rule those cells become
+// validated launch/landing points and unfair coin/portal placements. Walking
+// beneath an overhang stays modelled: the horizontal scans only test the body
+// row for solidity. Horizontal heightmaps structurally never put a ceiling
+// over a standable cell, so their callers keep the default (false) and
+// byte-identical behaviour.
+export function computeReachable(
+    tiles,
+    width,
+    height,
+    startTile,
+    requireOpenHead = false
+) {
     const solid = (x, y) => {
         if (x < 0 || x >= width) return true;
         if (y < 0 || y >= height) return false;
@@ -77,7 +95,9 @@ export function computeReachable(tiles, width, height, startTile) {
     };
     // A cell you could occupy: neither solid rock nor a spike.
     const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
-    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
+    const standable = (x, y) =>
+        freeCell(x, y) && solid(x, y + 1) &&
+        (!requireOpenHead || !solid(x, y - 1));
 
     const key = (x, y) => y * width + x;
     const reachable = new Set();
@@ -148,8 +168,21 @@ export function computeReachable(tiles, width, height, startTile) {
     return reachable;
 }
 
-export function canReach(tiles, width, height, startTile, goalTile) {
-    const reachable = computeReachable(tiles, width, height, startTile);
+export function canReach(
+    tiles,
+    width,
+    height,
+    startTile,
+    goalTile,
+    requireOpenHead = false
+) {
+    const reachable = computeReachable(
+        tiles,
+        width,
+        height,
+        startTile,
+        requireOpenHead
+    );
     return reachable.has(goalTile.y * width + goalTile.x);
 }
 
@@ -184,7 +217,11 @@ export class Level {
                 this.tiles,
                 this.width,
                 this.height,
-                this.spawnTile
+                this.spawnTile,
+                // Vertical ledges create overhangs a 32px body cannot jump
+                // out of; validate those maps headroom-aware (see
+                // computeReachable). Horizontal heightmaps keep the default.
+                this.direction === 'vertical'
             );
             this.portalTile = this.pickPortalTile();
             valid = this.portalTile !== null;
@@ -322,6 +359,16 @@ export class Level {
             const lo = dir === 1 ? c : c - ext;
             const hi = dir === 1 ? c + ext : c;
             for (let cx = Math.max(0, lo); cx <= Math.min(w - 1, hi); cx++) {
+                // Never cap a route cell: painting (row, cx) directly above
+                // a recorded jump-off/landing ((row + 1, cx) carries the
+                // route) gives that stand cell a ceiling, and the
+                // headroom-aware vertical BFS (computeReachable's
+                // requireOpenHead) refuses every jump from a capped cell —
+                // the chain link would be validated out of existence. Only
+                // decorative run can be punched: a ledge's own landing
+                // support (row, c) is never a cell-above-route (the route
+                // column always moved), so the chain stays intact.
+                if (this.pathCells.has((row + 1) * w + cx)) continue;
                 tiles[row][cx] = 1;
             }
             // Jump-off and landing cells carry the route: protect them from
