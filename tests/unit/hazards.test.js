@@ -114,14 +114,31 @@ test("checkPitFall is false while the player is on screen", () => {
     expect(hazards.checkPitFall({ y: 100 }, 480)).toBe(false);
 });
 
-test("Level wires a Hazards instance and exposes it via getHazards", () => {
-    const level = new Level(1, 32);
-    const hazards = level.getHazards();
+test("Level wires a Hazards instance and extraction mirrors the tile grid", () => {
+    // Low band (no Phase 2 elements) and high band (spikes possible): in
+    // both, extracted spikes must correspond exactly to type-2 tiles.
+    for (const n of [1, 7]) {
+        const level = new Level(n, 32);
+        const hazards = level.getHazards();
 
-    expect(hazards).toBeInstanceOf(Hazards);
-    // The tile generator does not emit type-2 spike tiles until Task 5, so
-    // extraction finds none today; the wiring itself must still hold.
-    expect(hazards.getSpikes()).toEqual([]);
+        expect(hazards).toBeInstanceOf(Hazards);
+
+        const gridRects = [];
+        for (let y = 0; y < level.height; y++) {
+            for (let x = 0; x < level.width; x++) {
+                if (level.tiles[y][x] === 2) {
+                    gridRects.push({ x: x * 32, y: y * 32, width: 32, height: 32 });
+                }
+            }
+        }
+        expect(hazards.getSpikes()).toEqual(gridRects);
+
+        // Early levels never emit spike tiles, so there the list is empty;
+        // Phase 2 levels may place some, covered by the mirror above.
+        if (n <= 4) {
+            expect(hazards.getSpikes()).toEqual([]);
+        }
+    }
 });
 
 test("extractHazards picks up type-2 spike tiles from the grid", () => {

@@ -199,8 +199,8 @@ test("Level wires an EnemyManager instance and exposes it via getEnemyManager", 
     const manager = level.getEnemyManager();
 
     expect(manager).toBeInstanceOf(EnemyManager);
-    // The tile generator does not emit type-4 enemy tiles until Task 5, so
-    // spawning finds none today; the wiring itself must still hold.
+    // The generator only emits type-4 enemy tiles from level 5 on, so an
+    // early level spawns none; the wiring itself must still hold.
     expect(manager.enemies).toEqual([]);
 });
 

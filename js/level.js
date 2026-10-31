@@ -8,6 +8,15 @@ const SPAWN_TILE_X = 2;
 // 200 px/s covers ~143px, i.e. ~4 tiles of 32px. Conservative integer bound.
 const MAX_H_JUMP = 4;
 
+// In-place Fisher-Yates shuffle: bounded, no unbounded random retry loops.
+function shuffle(items) {
+    for (let i = items.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+}
+
 // Movement model for the reachability check, matching the game's physics:
 // JUMP_FORCE=350 / GRAVITY=980 gives a max jump rise of ~62px (< 2 tiles at
 // tileSize 32), so climbing more than one tile in a single jump is not
@@ -23,13 +32,32 @@ const MAX_H_JUMP = 4;
 //     one intermediate column.
 // Out-of-bounds: side walls are solid, the sky is open, and falling below the
 // grid bottom (a pit with no floor) kills, so it offers no landing.
+//
+// Spike tiles (type 2) are treated conservatively as death, never as terrain:
+// they are NOT standable, they provide no support (standing on a spike tip
+// is impossible), and they terminate downward landing scans (falling into a
+// spike column kills rather than passing through). They do not block aerial
+// pass-through: a grounded jump rises ~62px and clears a 32px surface spike,
+// so a validated route may arc over short spike strips but never rests on or
+// inside one. (Modelling spikes as full walls instead would make generation
+// unsatisfiable: every level-5+ map places surface spikes, and any single
+// spike would sever the heightmap's only corridor, exhausting the retry
+// budget.) Consequence: reachability of coins, portal, and enemy spawns
+// never routes THROUGH death. Grids without type-2 tiles behave bit-
+// identically to the pre-hazard model (hazard() is constant false there).
 export function computeReachable(tiles, width, height, startTile) {
     const solid = (x, y) => {
         if (x < 0 || x >= width) return true;
         if (y < 0 || y >= height) return false;
         return tiles[y][x] === 1;
     };
-    const standable = (x, y) => !solid(x, y) && solid(x, y + 1);
+    const hazard = (x, y) => {
+        if (x < 0 || x >= width || y < 0 || y >= height) return false;
+        return tiles[y][x] === 2;
+    };
+    // A cell you could occupy: neither solid rock nor a spike.
+    const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
+    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
 
     const key = (x, y) => y * width + x;
     const reachable = new Set();
@@ -63,6 +91,9 @@ export function computeReachable(tiles, width, height, startTile) {
 
                 const c = x + dir * dist;
                 for (let ly = y; ly < height; ly++) {
+                    // Falling into a spike cell is death: no landing here
+                    // and nothing further down the column either.
+                    if (hazard(c, ly)) break;
                     if (standable(c, ly) && !reachable.has(key(c, ly))) {
                         reachable.add(key(c, ly));
                         queue.push([c, ly]);
@@ -107,13 +138,18 @@ export class Level {
         this.levelNumber = levelNumber;
         this.tileSize = tileSize;
 
-        // Level dimensions
-        this.width = 20;  // tiles
-        this.height = 15; // tiles
+        // Phase 2: larger maps from level 5 onward; early levels keep the
+        // shipped 20x15 footprint.
+        this.width = levelNumber >= 5 ? 24 : 20;  // tiles
+        this.height = levelNumber >= 5 ? 18 : 15; // tiles
 
         let attempt = 0;
         let valid = false;
         while (attempt < MAX_GENERATION_ATTEMPTS && !valid) {
+            // Terrain, spike tiles (type 2), and enemy markers (type 4) are
+            // all laid down before computeReachable runs, so the validation
+            // BFS sees the final geometry. If spikes wall off the map, no
+            // portal candidate survives and the retry regenerates.
             this.tiles = this.generateLevel();
             this.spawnTile = { x: SPAWN_TILE_X, y: this.height - 4 };
             this.reachableTiles = computeReachable(
@@ -155,14 +191,13 @@ export class Level {
         this.collectibles = new Collectibles();
         this.collectibles.loadCoins(this.extractCoins());
         this.coins = this.collectibles.getCoins();
-        // Hazards scan the tile grid for spike tiles (type 2). The generator
-        // does not emit any yet (Task 5 introduces them), so this extracts an
-        // empty list today; the wiring is live either way.
+        // Hazards scan the tile grid for spike tiles (type 2), which the
+        // Phase 2 generator places at level >= 5.
         this.hazards = new Hazards();
         this.extractHazards();
-        // Enemies scan the tile grid for enemy spawn tiles (type 4). The
-        // generator does not emit any yet (Task 5 introduces them), so this
-        // spawns none today; the wiring is live either way.
+        // Enemies scan the tile grid for enemy spawn tiles (type 4), which
+        // the Phase 2 generator places at level >= 5; unreachable markers
+        // are skipped by the spawn validation.
         this.enemyManager = new EnemyManager();
         this.spawnEnemies();
     }
@@ -173,17 +208,28 @@ export class Level {
         );
 
         this.generatePlatforms(tiles);
+        // Order matters: hazards and enemy markers exist in the grid before
+        // the constructor's computeReachable pass validates the level.
+        this.placeSpikes(tiles);
+        this.placeEnemyMarkers(tiles);
 
         return tiles;
     }
 
     generatePlatforms(tiles) {
-        const difficulty = Math.min(this.levelNumber, 4);
-        const maxGap = 2;
-        // Rise between adjacent ground columns is capped at 1 tile so every
-        // step stays within the verified jump height; drops are capped at 2.
+        const isPhase2 = this.levelNumber >= 5;
+        // Difficulty scales past the old cap of 4 into the Phase 2 band;
+        // the game tops out at level 9. The early-level ramp is unchanged.
+        const difficulty = Math.min(this.levelNumber, 9);
+        // Phase 2 widens gaps and drops. Rise stays capped at 1 tile because
+        // the verified jump rise (~62px) cannot clear a 2-tile climb; the
+        // spec's "max height difference 3" is satisfied through drops.
+        const maxGap = isPhase2 ? 3 : 2;
         const maxRise = 1;
-        const maxDrop = 2;
+        const maxDrop = isPhase2 ? 3 : 2;
+        const gapChance = isPhase2
+            ? 0.22 + 0.02 * (this.levelNumber - 4) // .24 at lvl 5 .. .32 at 9
+            : 0.18 + 0.04 * difficulty;            // shipped early-game ramp
 
         let currentY = this.height - 3; // Top solid row of the ground column
         let gapStreak = 0;
@@ -193,7 +239,7 @@ export class Level {
             const isEndZone = x >= this.width - 5;
 
             if (!isSpawnZone && !isEndZone && gapStreak < maxGap &&
-                Math.random() < 0.18 + 0.04 * difficulty) {
+                Math.random() < gapChance) {
                 gapStreak++;
                 continue; // Air column (pit); at most maxGap in a row
             }
@@ -204,7 +250,7 @@ export class Level {
             } else {
                 // delta > 0 lowers the surface (drop), delta < 0 raises it.
                 // Range [-maxRise, +maxDrop] keeps rises within the verified
-                // one-tile climb and drops within two.
+                // one-tile climb and drops within the band's cap.
                 const delta = Math.floor(Math.random() * (maxRise + maxDrop + 1)) - maxRise;
                 currentY = Math.min(
                     this.height - 3,
@@ -218,6 +264,84 @@ export class Level {
         }
 
         return tiles;
+    }
+
+    placeSpikes(tiles) {
+        // Phase 2 elements appear only at level >= 5: the early-game ramp
+        // and existing E2E flows stay untouched below that line.
+        if (this.levelNumber < 5) return;
+
+        // Mild count scaling with level number, hard-capped far below the
+        // spec's 10%-of-all-tiles density limit.
+        const target = Math.min(
+            2 + Math.floor((this.levelNumber - 5) / 2),
+            Math.floor(this.width * this.height * 0.1)
+        );
+
+        // Surface hazards only: air tiles directly above solid ground, never
+        // inside the spawn zone (x < 6) or the portal band (x >= width - 4).
+        const candidates = [];
+        for (let x = 6; x <= this.width - 5; x++) {
+            for (let y = 0; y < this.height - 1; y++) {
+                if (tiles[y][x] === 0 && tiles[y + 1][x] === 1) {
+                    candidates.push({ x, y });
+                }
+            }
+        }
+        shuffle(candidates);
+
+        let placed = 0;
+        const usedColumns = new Set();
+        for (const c of candidates) {
+            if (placed >= target) break;
+            // Keep spikes at least two columns apart: each hazard stays a
+            // comfortable single hop within verified jump range, so spikes
+            // can never combine into an unjumpable barrier. The BFS portal
+            // validation remains the backstop safety net either way.
+            if (usedColumns.has(c.x - 1) ||
+                usedColumns.has(c.x) ||
+                usedColumns.has(c.x + 1)) {
+                continue;
+            }
+            tiles[c.y][c.x] = 2;
+            usedColumns.add(c.x);
+            placed++;
+        }
+    }
+
+    placeEnemyMarkers(tiles) {
+        // Same Phase 2 gate as spikes: no enemies before level 5.
+        if (this.levelNumber < 5) return;
+
+        const target = Math.min(5, Math.floor(this.levelNumber / 2));
+
+        const solidAt = (x, y) =>
+            x >= 0 && x < this.width && y >= 0 && y < this.height &&
+            tiles[y][x] === 1;
+
+        // Markers need a standable air tile whose contiguous solid run
+        // beneath is at least 3 columns wide, so every spawned enemy gets a
+        // real patrol. Spawn zone excluded like spikes; markers never
+        // overwrite spike tiles (those are no longer air).
+        const candidates = [];
+        for (let y = 0; y < this.height - 1; y++) {
+            for (let x = 6; x < this.width; x++) {
+                if (tiles[y][x] !== 0 || !solidAt(x, y + 1)) continue;
+                let left = x;
+                while (solidAt(left - 1, y + 1)) left--;
+                let right = x;
+                while (solidAt(right + 1, y + 1)) right++;
+                if (right - left + 1 >= 3) candidates.push({ x, y });
+            }
+        }
+        shuffle(candidates);
+
+        let placed = 0;
+        for (const c of candidates) {
+            if (placed >= target) break;
+            tiles[c.y][c.x] = 4;
+            placed++;
+        }
     }
 
     pickPortalTile() {
@@ -279,10 +403,7 @@ export class Level {
         }
 
         // Fisher-Yates shuffle: bounded, no unbounded random retry loop.
-        for (let i = candidates.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-        }
+        shuffle(candidates);
 
         const addCoin = (x, y) => {
             const key = y * this.width + x;
@@ -433,6 +554,21 @@ export class Level {
                 ctx.fill();
             }
         }
+
+        // Draw hazards (spikes) as red triangles filling the tile: sharp
+        // silhouette keeps them visually distinct from platforms and coins.
+        ctx.fillStyle = '#ff4444';
+
+        for (const spike of this.hazards.getSpikes()) {
+            ctx.beginPath();
+            ctx.moveTo(spike.x, spike.y + spike.height);
+            ctx.lineTo(spike.x + spike.width / 2, spike.y);
+            ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
+            ctx.fill();
+        }
+
+        // Draw enemies (EnemyManager owns per-enemy drawing).
+        this.enemyManager.drawAll(ctx);
 
         // Draw portal
         ctx.fillStyle = '#9400D3'; // Purple
