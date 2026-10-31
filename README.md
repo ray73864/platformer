@@ -64,10 +64,10 @@ bun run format
 ### Asset Verification
 
 ```bash
-bun run verify-assets
+bun run verify
 ```
 
-Advisory only in Phase 1: it warns about missing art assets (which nothing loads yet) but always exits 0, so it cannot gate an otherwise-green branch. It becomes a hard gate when the asset loader lands in Phase 2.
+Hard gate driven by [`assets/manifest.json`](assets/manifest.json). Each entry declares `{ "path", "source", "license", "required" }`: an entry with `"required": true` that is missing, not a regular file, or zero-byte fails verification (exit 1); absent optional entries (`"required": false`) only print warnings. The `build` script runs `verify` first, so a required-asset violation blocks the build. An unreadable or malformed manifest is itself a hard failure. Art assets are currently all optional (procedural placeholders remain the source of truth), so `verify` passes with warnings until entries are promoted.
 
 ## Project Structure
 
