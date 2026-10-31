@@ -1,5 +1,36 @@
 import { test, expect } from "bun:test";
 import { Level, canReach, computeReachable } from "../../js/level.js";
+import { Hazards } from "../../js/hazards.js";
+
+// Deterministic PRNG (mulberry32) so a generation can be replayed exactly.
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// Per-direction band where spike (type 2) and enemy-marker (type 4) tiles
+// are allowed during generation:
+// - 'right': canonical columns x ∈ [6, w-5] (spawn zone x < 6, portal band
+//   x >= w-4 excluded).
+// - 'left': the same canonical placement mirrored (x -> w-1-x), so the
+//   allowed band mirrors to x ∈ [4, w-7].
+// - 'vertical': rows between the bottom spawn neighborhood (y >= h-6) and
+//   the top portal band (y <= 4) excluded, leaving y ∈ [5, h-7].
+function allowedHazardRange(level) {
+    if (level.direction === "vertical") {
+        return { axis: "y", min: 5, max: level.height - 7 };
+    }
+    if (level.direction === "left") {
+        return { axis: "x", min: 4, max: level.width - 7 };
+    }
+    return { axis: "x", min: 6, max: level.width - 5 };
+}
 
 function countType(tiles, type) {
     let n = 0;
@@ -30,17 +61,26 @@ test("Level generates with correct dimensions", () => {
     expect(level.tileSize).toBe(32);
 });
 
-test("Phase 2 levels are larger; early levels keep 20x15", () => {
+test("Phase 2 levels are larger; vertical direction uses a 15x24 grid", () => {
+    // Early levels keep the shipped footprint and face right.
     for (const n of [1, 4]) {
         const level = new Level(n, 32);
+        expect(level.direction).toBe("right");
         expect(level.width).toBe(20);
         expect(level.height).toBe(15);
     }
-    for (const n of [5, 7, 9]) {
+    // Phase 2 horizontal directions keep the larger footprint...
+    for (const n of [5, 6, 8, 9]) {
         const level = new Level(n, 32);
+        expect(["right", "left"]).toContain(level.direction);
         expect(level.width).toBe(24);
         expect(level.height).toBe(18);
     }
+    // ...while vertical levels climb a taller, narrower grid.
+    const vertical = new Level(7, 32);
+    expect(vertical.direction).toBe("vertical");
+    expect(vertical.width).toBe(15);
+    expect(vertical.height).toBe(24);
 });
 
 test("Level generates platforms", () => {
@@ -212,10 +252,11 @@ test("levels 1-4 emit no spike or enemy marker tiles", () => {
 });
 
 test("Phase 2 levels place surface spikes within density and safe zones", () => {
-    for (const n of [5, 7, 9]) {
+    for (const n of [5, 6, 7, 8, 9]) {
         const level = new Level(n, 32);
         const w = level.width;
         const h = level.height;
+        const range = allowedHazardRange(level);
         const spikes = tilesOfType(level.tiles, 2);
 
         expect(spikes.length).toBeGreaterThan(0);
@@ -223,9 +264,9 @@ test("Phase 2 levels place surface spikes within density and safe zones", () => 
         expect(spikes.length).toBeLessThanOrEqual(Math.floor(w * h * 0.1));
 
         for (const s of spikes) {
-            // Never inside the spawn zone (x < 6) or portal band (x >= w-4).
-            expect(s.x).toBeGreaterThanOrEqual(6);
-            expect(s.x).toBeLessThanOrEqual(w - 5);
+            // Never inside the direction's spawn zone or portal band.
+            expect(s[range.axis]).toBeGreaterThanOrEqual(range.min);
+            expect(s[range.axis]).toBeLessThanOrEqual(range.max);
             // Surface hazard only: air tile directly above solid ground.
             expect(s.y).toBeLessThan(h - 1);
             expect(level.tiles[s.y + 1][s.x]).toBe(1);
@@ -247,19 +288,19 @@ test("Phase 2 levels place surface spikes within density and safe zones", () => 
 });
 
 test("enemy markers sit on standable tiles atop runs at least 3 wide", () => {
-    for (const n of [5, 7, 9]) {
+    for (const n of [5, 6, 7, 8, 9]) {
         const level = new Level(n, 32);
-        const w = level.width;
         const target = Math.min(5, Math.floor(n / 2));
+        const range = allowedHazardRange(level);
         const markers = tilesOfType(level.tiles, 4);
 
         expect(markers.length).toBeGreaterThan(0);
         expect(markers.length).toBeLessThanOrEqual(target);
 
         for (const m of markers) {
-            // Never inside the spawn zone (x < 6) or portal band (x >= w-4).
-            expect(m.x).toBeGreaterThanOrEqual(6);
-            expect(m.x).toBeLessThanOrEqual(w - 5);
+            // Never inside the direction's spawn zone or portal band.
+            expect(m[range.axis]).toBeGreaterThanOrEqual(range.min);
+            expect(m[range.axis]).toBeLessThanOrEqual(range.max);
             // Standable: air tile with solid ground beneath.
             expect(level.tiles[m.y + 1][m.x]).toBe(1);
             // Patrol exists: contiguous solid run under the walk row >= 3.
@@ -334,10 +375,156 @@ test("BFS never marks spike tiles or their tips as reachable", () => {
 
 test("50 constructions of level 7 stay valid", () => {
     // Bounded stress: generation plus conservative validation must reliably
-    // produce solvable levels once Phase 2 elements are in play.
+    // produce solvable levels once Phase 2 elements are in play. Level 7 is
+    // 'vertical' under the direction mapping, so this hammers the vertical
+    // generator specifically.
     for (let i = 0; i < 50; i++) {
         const level = new Level(7, 32);
         expect(level.hasValidPath()).toBe(true);
         expect(level.getCoins().length).toBeGreaterThanOrEqual(5);
     }
+});
+
+// --- Task 9: per-level direction ------------------------------------------
+
+test("direction varies deterministically from level number", () => {
+    // Controller ruling: 'right' below level 5 (shipped ramp untouched),
+    // then ['right','left','vertical'] cycling from level 5.
+    const expected = {
+        1: "right", 2: "right", 3: "right", 4: "right",
+        5: "right", 6: "left", 7: "vertical", 8: "right", 9: "left"
+    };
+    for (const [n, dir] of Object.entries(expected)) {
+        expect(new Level(Number(n), 32).direction).toBe(dir);
+    }
+});
+
+test("left-facing levels spawn right, portal on the left band, path valid", () => {
+    for (let i = 0; i < 20; i++) {
+        const level = new Level(6, 32);
+        const w = level.width;
+        const h = level.height;
+        expect(level.direction).toBe("left");
+
+        // Spawn mirrors the canonical {2, h-4} tile to the right side.
+        expect(level.spawnTile.x).toBe(w - 3);
+        expect(level.spawnTile.y).toBe(h - 4);
+        expect(level.getSpawnPoint()).toEqual({ x: (w - 3) * 32, y: (h - 4) * 32 });
+
+        // Portal candidate band mirrors to columns 2..4.
+        const portalX = level.getPortal().x / 32;
+        expect(portalX).toBeGreaterThanOrEqual(2);
+        expect(portalX).toBeLessThanOrEqual(4);
+
+        expect(level.hasValidPath()).toBe(true);
+        expect(level.getCoins().length).toBeGreaterThanOrEqual(5);
+
+        // Mirrored forced-flat spawn zone: the RIGHT six columns stand solid
+        // from row h-3 down at the ground height.
+        for (let x = w - 6; x < w; x++) {
+            for (let y = h - 3; y < h; y++) {
+                expect(level.tiles[y][x]).toBe(1);
+            }
+        }
+        // Mirrored end zone: the LEFT five columns are never gap columns.
+        for (let x = 0; x <= 4; x++) {
+            expect(level.tiles[h - 1][x]).toBe(1);
+        }
+        // Pit runs never exceed the generator's cap of 3 empty columns
+        // (a column with no solid tile at all).
+        let run = 0;
+        for (let x = 0; x < w; x++) {
+            const emptyCol = level.tiles.every(row => row[x] !== 1);
+            run = emptyCol ? run + 1 : 0;
+            expect(run).toBeLessThanOrEqual(3);
+        }
+    }
+});
+
+test("vertical levels climb 15x24 from bottom spawn to a top-band portal", () => {
+    for (let i = 0; i < 20; i++) {
+        const level = new Level(7, 32);
+        expect(level.direction).toBe("vertical");
+        expect(level.width).toBe(15);
+        expect(level.height).toBe(24);
+
+        // Spawn near bottom-center on the ground band's standing row.
+        expect(level.spawnTile).toEqual({ x: 7, y: 20 });
+        expect(level.getSpawnPoint()).toEqual({ x: 7 * 32, y: 20 * 32 });
+        for (let x = 0; x < 15; x++) {
+            expect(level.tiles[21][x]).toBe(1);
+        }
+
+        // Portal sits in the top band: reachable tile with y <= 4.
+        expect(level.getPortal().y / 32).toBeLessThanOrEqual(4);
+
+        expect(level.hasValidPath()).toBe(true);
+        expect(level.getCoins().length).toBeGreaterThanOrEqual(5);
+    }
+});
+
+test("left-facing terrain is the canonical generation mirrored (seeded)", () => {
+    // placeEnemyMarkers is the final canonical-space mutation before the
+    // mirror flip, so snapshotting there captures the pre-flip grid of the
+    // accepted attempt regardless of how many retries the constructor took.
+    const realRandom = Math.random;
+    const proto = Level.prototype;
+    const origMarkers = proto.placeEnemyMarkers;
+    try {
+        Math.random = mulberry32(20261031);
+        let canonical = null;
+        proto.placeEnemyMarkers = function (tiles) {
+            origMarkers.call(this, tiles);
+            canonical = tiles.map(row => [...row]);
+        };
+        const level = new Level(6, 32);
+        expect(level.direction).toBe("left");
+
+        // Final grid equals the canonical grid with every column flipped.
+        const mirroredBack = canonical.map(row => [...row].reverse());
+        expect(level.tiles).toEqual(mirroredBack);
+
+        // Column-solidity histogram preserved by the mirror.
+        const colSolid = tiles => tiles[0].map((_, x) =>
+            tiles.reduce((n, row) => n + (row[x] === 1 ? 1 : 0), 0));
+        expect(colSolid(level.tiles)).toEqual(colSolid(canonical).reverse());
+    } finally {
+        proto.placeEnemyMarkers = origMarkers;
+        Math.random = realRandom;
+    }
+});
+
+test("spikes and markers respect each direction's exclusion zones", () => {
+    for (const n of [5, 6, 7, 8, 9]) {
+        for (let i = 0; i < 10; i++) {
+            const level = new Level(n, 32);
+            const range = allowedHazardRange(level);
+            const placed = [
+                ...tilesOfType(level.tiles, 2),
+                ...tilesOfType(level.tiles, 4)
+            ];
+            for (const t of placed) {
+                expect(t[range.axis]).toBeGreaterThanOrEqual(range.min);
+                expect(t[range.axis]).toBeLessThanOrEqual(range.max);
+            }
+        }
+    }
+});
+
+test("fall-death threshold tracks level height on vertical levels", () => {
+    // main.js passes level.height * tileSize into checkPitFall; verify the
+    // taller vertical grid moves the death line with it (no rewrite needed).
+    const level = new Level(7, 32);
+    expect(level.direction).toBe("vertical");
+    const worldHeightPx = level.height * level.tileSize; // 24 * 32 = 768
+    expect(worldHeightPx).toBe(768);
+
+    const hazards = new Hazards();
+    // Shipped semantics (strict >): alive exactly at height + 100 margin...
+    expect(hazards.checkPitFall({ y: worldHeightPx + 100 }, worldHeightPx)).toBe(false);
+    // ...dead one pixel past it.
+    expect(hazards.checkPitFall({ y: worldHeightPx + 101 }, worldHeightPx)).toBe(true);
+    // A fall depth that kills on the old 15-row grid stays alive inside the
+    // 24-row vertical grid: the threshold genuinely tracks level.height.
+    expect(hazards.checkPitFall({ y: 15 * 32 + 101 }, worldHeightPx)).toBe(false);
 });

@@ -7,6 +7,26 @@ const SPAWN_TILE_X = 2;
 // Horizontal jump scan bound in tiles: hang time 2*350/980 ≈ 0.71s at speed
 // 200 px/s covers ~143px, i.e. ~4 tiles of 32px. Conservative integer bound.
 const MAX_H_JUMP = 4;
+// Vertical levels (Task 9) climb a taller, narrower grid. Physics constants
+// are unchanged; the grid simply gives the documented one-tile-per-jump
+// climb more rows to spend, and death/camera already scale with
+// level.height * tileSize.
+const VERTICAL_WIDTH = 15;
+const VERTICAL_HEIGHT = 24;
+// Portal candidate band on vertical levels: reachable tiles at or above
+// this row. Hazard/marker placement additionally keeps the bottom spawn
+// neighborhood (y >= height - VERTICAL_SPAWN_EXCL_ROWS) clear.
+const VERTICAL_PORTAL_MAX_Y = 4;
+const VERTICAL_SPAWN_EXCL_ROWS = 6;
+
+// Travel direction is deterministic from the level number so tests and E2E
+// flows can rely on it: the shipped Phase 1 ramp (levels 1-4) stays
+// right-facing, then right/left/vertical cycle from level 5 onward
+// (L5 right, L6 left, L7 vertical, L8 right, L9 left).
+function directionForLevel(levelNumber) {
+    if (levelNumber < 5) return 'right';
+    return ['right', 'left', 'vertical'][(levelNumber - 5) % 3];
+}
 
 // In-place Fisher-Yates shuffle: bounded, no unbounded random retry loops.
 function shuffle(items) {
@@ -138,10 +158,18 @@ export class Level {
         this.levelNumber = levelNumber;
         this.tileSize = tileSize;
 
+        // Task 9: travel direction varies per level (deterministic mapping).
+        this.direction = directionForLevel(levelNumber);
+
         // Phase 2: larger maps from level 5 onward; early levels keep the
-        // shipped 20x15 footprint.
-        this.width = levelNumber >= 5 ? 24 : 20;  // tiles
-        this.height = levelNumber >= 5 ? 18 : 15; // tiles
+        // shipped 20x15 footprint. Vertical levels climb a 15x24 grid.
+        if (this.direction === 'vertical') {
+            this.width = VERTICAL_WIDTH;   // tiles
+            this.height = VERTICAL_HEIGHT; // tiles
+        } else {
+            this.width = levelNumber >= 5 ? 24 : 20;  // tiles
+            this.height = levelNumber >= 5 ? 18 : 15; // tiles
+        }
 
         let attempt = 0;
         let valid = false;
@@ -151,7 +179,7 @@ export class Level {
             // BFS sees the final geometry. If spikes wall off the map, no
             // portal candidate survives and the retry regenerates.
             this.tiles = this.generateLevel();
-            this.spawnTile = { x: SPAWN_TILE_X, y: this.height - 4 };
+            this.spawnTile = this.getSpawnTile();
             this.reachableTiles = computeReachable(
                 this.tiles,
                 this.width,
@@ -174,8 +202,13 @@ export class Level {
             );
         }
 
-        // Pixel-space spawn point sits on the forced flat ground near x=2.
-        this.spawnPoint = { x: tileSize * 2, y: tileSize * (this.height - 4) };
+        // Pixel-space spawn point sits on the forced flat ground at the
+        // direction's spawn tile (left-facing mirrors it to the right edge,
+        // vertical drops the player bottom-center on the ground band).
+        this.spawnPoint = {
+            x: this.spawnTile.x * tileSize,
+            y: this.spawnTile.y * tileSize
+        };
         this.platforms = this.extractPlatforms();
         this.portal = this.portalTile
             ? {
@@ -202,18 +235,101 @@ export class Level {
         this.spawnEnemies();
     }
 
+    // Standing tile per direction on the forced flat ground band: canonical
+    // left spawn for 'right', mirrored right spawn for 'left' (mirror of
+    // x=2 is width-3), bottom-center for 'vertical'.
+    getSpawnTile() {
+        const y = this.height - 4;
+        switch (this.direction) {
+            case 'left':
+                return { x: this.width - 3, y };
+            case 'vertical':
+                return { x: Math.floor(this.width / 2), y };
+            default:
+                return { x: SPAWN_TILE_X, y };
+        }
+    }
+
     generateLevel() {
         const tiles = Array(this.height).fill(null).map(() =>
             Array(this.width).fill(0)
         );
 
-        this.generatePlatforms(tiles);
+        // Cells carrying the validated vertical route (jump-off/landing);
+        // spikes must never cover them. Null for horizontal generation.
+        this.pathCells = null;
+
+        if (this.direction === 'vertical') {
+            this.generateVertical(tiles);
+        } else {
+            this.generatePlatforms(tiles);
+        }
         // Order matters: hazards and enemy markers exist in the grid before
         // the constructor's computeReachable pass validates the level.
         this.placeSpikes(tiles);
         this.placeEnemyMarkers(tiles);
 
+        // 'left' generates entirely in canonical right-facing space — spawn
+        // zone, end zone, portal band and hazard exclusions are all written
+        // for that space — and mirrors afterwards. The column flip maps the
+        // terrain, the spike/marker exclusion bands, and the movement model
+        // (symmetric in x) onto exact mirrored counterparts.
+        if (this.direction === 'left') {
+            for (const row of tiles) row.reverse();
+        }
+
         return tiles;
+    }
+
+    generateVertical(tiles) {
+        const w = this.width;
+        const h = this.height;
+
+        // Ground band along the bottom: full-width solid from row h-3 down,
+        // so the standing surface is row h-4 across the whole floor and the
+        // bottom-center spawn always stands on solid ground.
+        for (let x = 0; x < w; x++) {
+            for (let y = h - 3; y < h; y++) {
+                tiles[y][x] = 1;
+            }
+        }
+
+        // Ascending chain of floating ledges, each exactly one row above the
+        // last: rise <= 1 per jump is the only climb the movement model
+        // allows (see computeReachable), so the chain steps up from the
+        // ground's standing row to the top portal band (y <= 4). Every link
+        // is a single dist-1 or dist-2 rise-jump from the previous standing
+        // spot, and each ledge extends FORWARD (direction of travel) from
+        // its landing tile. Forward-only extension is what keeps the route
+        // provably intact in the final grid: a ledge's solid row equals the
+        // previous ledge's standing row, so painting backwards would bury
+        // the very cells the validated route stands on. Direction bounces
+        // off the side walls; the constructor's BFS stays the safety net.
+        this.pathCells = new Set();
+        let x = Math.floor(w / 2); // current standing column
+        let dir = Math.random() < 0.5 ? 1 : -1;
+        for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
+            let c = x + dir * (Math.random() < 0.4 ? 2 : 1);
+            if (c < 1 || c > w - 2) {
+                // Bounce off the wall; the flipped step always fits since
+                // every standing column stays inside [1, w-2].
+                dir = -dir;
+                c = x + dir;
+            }
+            // Decorative forward run (>= 2 tiles): gives the ledge body a
+            // contiguous top at least 3 columns wide for enemy patrols.
+            const ext = 2 + Math.floor(Math.random() * 4);
+            const lo = dir === 1 ? c : c - ext;
+            const hi = dir === 1 ? c + ext : c;
+            for (let cx = Math.max(0, lo); cx <= Math.min(w - 1, hi); cx++) {
+                tiles[row][cx] = 1;
+            }
+            // Jump-off and landing cells carry the route: protect them from
+            // spikes. Markers are plain air to the BFS and harmless there.
+            this.pathCells.add(row * w + x);
+            this.pathCells.add((row - 1) * w + c);
+            x = c;
+        }
     }
 
     generatePlatforms(tiles) {
@@ -266,6 +382,21 @@ export class Level {
         return tiles;
     }
 
+    // Generation-space exclusion for spikes and enemy markers. Canonical
+    // right-facing space keeps the spawn zone (x < 6) and portal band
+    // (x >= width - 4) clear; 'left' generates in that same space and
+    // mirrors afterwards, which maps its allowed band x ∈ [6, w-5] exactly
+    // onto x ∈ [4, w-7]. Vertical space keeps the bottom spawn neighborhood
+    // (y >= height - VERTICAL_SPAWN_EXCL_ROWS) and the top portal band
+    // (y <= VERTICAL_PORTAL_MAX_Y) clear.
+    hazardPlacementAllowed(coord) {
+        if (this.direction === 'vertical') {
+            return coord > VERTICAL_PORTAL_MAX_Y &&
+                coord < this.height - VERTICAL_SPAWN_EXCL_ROWS;
+        }
+        return coord >= 6 && coord <= this.width - 5;
+    }
+
     placeSpikes(tiles) {
         // Phase 2 elements appear only at level >= 5: the early-game ramp
         // and existing E2E flows stay untouched below that line.
@@ -279,13 +410,22 @@ export class Level {
         );
 
         // Surface hazards only: air tiles directly above solid ground, never
-        // inside the spawn zone (x < 6) or the portal band (x >= width - 4).
+        // inside the direction's exclusion zones, and never on a vertical
+        // route's jump-off/landing cells (a spike there would sever the one
+        // constructed climb and burn retries).
         const candidates = [];
-        for (let x = 6; x <= this.width - 5; x++) {
-            for (let y = 0; y < this.height - 1; y++) {
-                if (tiles[y][x] === 0 && tiles[y + 1][x] === 1) {
-                    candidates.push({ x, y });
+        for (let y = 0; y < this.height - 1; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1) continue;
+                if (!this.hazardPlacementAllowed(
+                    this.direction === 'vertical' ? y : x)) {
+                    continue;
                 }
+                if (this.pathCells &&
+                    this.pathCells.has(y * this.width + x)) {
+                    continue;
+                }
+                candidates.push({ x, y });
             }
         }
         shuffle(candidates);
@@ -321,12 +461,16 @@ export class Level {
 
         // Markers need a standable air tile whose contiguous solid run
         // beneath is at least 3 columns wide, so every spawned enemy gets a
-        // real patrol. Spawn zone (x < 6) and portal band (x >= width - 4)
-        // both excluded; markers never overwrite spike tiles (those are no
-        // longer air).
+        // real patrol. The direction's spawn zone and portal band are both
+        // excluded (see hazardPlacementAllowed); markers never overwrite
+        // spike tiles (those are no longer air).
         const candidates = [];
         for (let y = 0; y < this.height - 1; y++) {
-            for (let x = 6; x <= this.width - 5; x++) {
+            for (let x = 0; x < this.width; x++) {
+                if (!this.hazardPlacementAllowed(
+                    this.direction === 'vertical' ? y : x)) {
+                    continue;
+                }
                 if (tiles[y][x] !== 0 || !solidAt(x, y + 1)) continue;
                 let left = x;
                 while (solidAt(left - 1, y + 1)) left--;
@@ -345,15 +489,31 @@ export class Level {
         }
     }
 
+    // Portal candidate band per direction. Horizontal bands avoid the
+    // extreme edge column (design doc: portal is "not placed at extreme
+    // edges"); 'left' mirrors [w-4, w-2] to [2, 4]. The vertical band is
+    // the top rows (y <= VERTICAL_PORTAL_MAX_Y), reachable only via the
+    // constructed ledge chain.
+    inPortalBand(x, y) {
+        switch (this.direction) {
+            case 'left':
+                return x >= 2 && x <= 4;
+            case 'vertical':
+                return y <= VERTICAL_PORTAL_MAX_Y;
+            default:
+                return x >= this.width - 4 && x <= this.width - 2;
+        }
+    }
+
     pickPortalTile() {
         const candidates = [];
         for (const key of this.reachableTiles) {
             const x = key % this.width;
             const y = Math.floor(key / this.width);
-            // Right-hand band, but never the extreme edge column (design doc:
-            // portal is "not placed at extreme edges").
-            if (x >= this.width - 4 && x <= this.width - 2 &&
-                !(x === this.spawnTile.x && y === this.spawnTile.y)) {
+            if (x === this.spawnTile.x && y === this.spawnTile.y) {
+                continue;
+            }
+            if (this.inPortalBand(x, y)) {
                 candidates.push({ x, y });
             }
         }
