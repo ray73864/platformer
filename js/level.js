@@ -632,16 +632,15 @@ export class Level {
             addCoin(tile.x, tile.y);
         }
 
-        // Fallback so every level has at least 5 coins even in the unlikely
-        // case fewer reachable tiles exist than the minimum.
-        for (let y = 0; coins.length < 5 && y < this.height; y++) {
-            for (let x = 0; coins.length < 5 && x < this.width; x++) {
-                if (this.tiles[y][x] === 0) {
-                    addCoin(x, y);
-                }
-            }
-        }
-
+        // No unreachable-tile fallback: it was unreachable-by-construction
+        // dead code. Every direction forces a walk-connected band of at
+        // least six standable tiles (the x < 6 flat spawn zone on
+        // horizontal maps; the full-width standing row above the ground
+        // band on vertical maps), and the constructor only accepts a level
+        // once pickPortalTile found a reachable tile distinct from spawn.
+        // Candidates therefore always number >= 6, past the 5-coin floor —
+        // anything the old fallback could add would sit outside
+        // reachableTiles, i.e. an uncollectable coin.
         return coins;
     }
 
