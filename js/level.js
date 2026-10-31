@@ -56,15 +56,25 @@ function shuffle(items) {
 // Spike tiles (type 2) are treated conservatively as death, never as terrain:
 // they are NOT standable, they provide no support (standing on a spike tip
 // is impossible), and they terminate downward landing scans (falling into a
-// spike column kills rather than passing through). They do not block aerial
-// pass-through: a grounded jump rises ~62px and clears a 32px surface spike,
-// so a validated route may arc over short spike strips but never rests on or
-// inside one. (Modelling spikes as full walls instead would make generation
-// unsatisfiable: every level-5+ map places surface spikes, and any single
-// spike would sever the heightmap's only corridor, exhausting the retry
-// budget.) Consequence: reachability of coins, portal, and enemy spawns
-// never routes THROUGH death. Grids without type-2 tiles behave bit-
-// identically to the pre-hazard model (hazard() is constant false there).
+// spike column kills rather than passing through). Aerial pass-through is
+// bounded by simulation against Physics + Hazards, not assumed: the inset
+// 24px lethal core of a ground-level spike forces feet ≥28px above the launch
+// row, leaving ~0.54s of hang time ≈ 108px at speed 200 — enough to cross ONE
+// core (32px body + 24px core = 56px sweep) with margin, and two adjacent
+// cores only barely; three or more consecutive spikes cannot be crossed at
+// all. So a flat jump may arc over strips of at most two adjacent surface
+// spikes but never rests on or inside one, and a run of ≥3 adjacent spikes is
+// modelled as a wall. A spike CAPPING a riser (sitting on a column whose top
+// is one tile above the launch row) is worse: its core then forces feet ≥60px
+// above launch — with max rise ~62.5px that leaves only ~28.6px of travel,
+// less than the 56px sweep, so the crossing is physically impossible in every
+// takeoff/timing combination (simulated: 0/4539 survived). Such capped risers
+// are modelled as full wall height for step-up jumps. Generation keeps spikes
+// ≥2 columns apart, so these stricter rules cost no accepted layouts; they
+// only stop the BFS from validating routes the shipped physics cannot fly.
+// Consequence: reachability of coins, portal, and enemy spawns never routes
+// THROUGH death. Grids without type-2 tiles behave bit-identically to the
+// pre-hazard model (hazard() is constant false there).
 //
 // requireOpenHead (used by the vertical validation): additionally reject any
 // standable cell with a solid tile directly overhead. The 32x32 body fills a
@@ -121,10 +131,26 @@ export function computeReachable(
             // ~143px / 32px.
             for (let dist = 1; dist <= MAX_H_JUMP; dist++) {
                 let blocked = false;
+                let hazardRun = 0;
                 for (let m = 1; m < dist; m++) {
-                    if (solid(x + dir * m, y)) {
+                    const midX = x + dir * m;
+                    if (solid(midX, y)) {
                         blocked = true;
                         break;
+                    }
+                    // Physics-verified boundary (see header): three or more
+                    // adjacent surface spikes cannot be cleared by a grounded
+                    // jump, so the strip is a wall to this scan. Generation
+                    // keeps spikes ≥2 columns apart; this only models what
+                    // simulation showed, never rejecting generated layouts.
+                    if (hazard(midX, y)) {
+                        hazardRun++;
+                        if (hazardRun >= 3) {
+                            blocked = true;
+                            break;
+                        }
+                    } else {
+                        hazardRun = 0;
                     }
                 }
                 if (blocked) continue;
@@ -151,9 +177,14 @@ export function computeReachable(
                 let clear = true;
                 if (dist === 2) {
                     // The intermediate column must not be a >=2-tile-high
-                    // wall: its top has to sit within jump rise (~62px).
+                    // wall: its top has to sit within jump rise (~62px). A
+                    // spike capping a one-tile riser counts as that wall:
+                    // clearing its inset core demands feet ≥60px above the
+                    // launch row, leaving ~28.6px of travel against a 56px
+                    // overlap sweep — impossible (see header).
                     const midX = x + dir;
-                    if (solid(midX, ty) && solid(midX, y)) {
+                    if ((solid(midX, ty) || hazard(midX, ty)) &&
+                        solid(midX, y)) {
                         clear = false;
                     }
                 }

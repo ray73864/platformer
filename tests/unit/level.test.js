@@ -317,9 +317,12 @@ test("enemy markers sit on standable tiles atop runs at least 3 wide", () => {
     }
 });
 
-test("BFS treats a spike strip wider than jump range as a barrier, and jumps shorter strips", () => {
+test("BFS treats spike strips at the physics-verified crossing boundary", () => {
     // Fixture grid: 14 wide x 8 tall, solid bottom row so the standing
     // surface is row 6. Spikes sit on that surface (air above solid).
+    // The asserted boundary comes from simulating Physics + Hazards, not
+    // from the BFS itself: one core (56px sweep) crosses with margin, two
+    // adjacent cores are marginal-but-survivable, three never cross.
     const width = 14;
     const height = 8;
 
@@ -337,14 +340,53 @@ test("BFS treats a spike strip wider than jump range as a barrier, and jumps sho
     const spawnTile = { x: 1, y: height - 2 };
     const portalTile = { x: 12, y: height - 2 };
 
-    // 4-wide strip (columns 6-9): every landing column within the 4-column
-    // scan bound is either a spike tile (never standable, breaks the
-    // downward scan) or unreachable; the strip cannot be crossed.
+    // 4-wide strip (columns 6-9): beyond the model's wall rule either way.
     expect(canReach(makeGrid([6, 7, 8, 9]), width, height, spawnTile, portalTile)).toBe(false);
 
-    // 3-wide strip (columns 6-8): a flat jump clears it onto column 9
-    // (distance 4), so the route survives.
-    expect(canReach(makeGrid([6, 7, 8]), width, height, spawnTile, portalTile)).toBe(true);
+    // 3-wide strip (columns 6-8): simulation shows no takeoff/timing clears
+    // three adjacent lethal cores, so the strip is a wall.
+    expect(canReach(makeGrid([6, 7, 8]), width, height, spawnTile, portalTile)).toBe(false);
+
+    // 2-wide strip (columns 6-7): the verified crossing boundary — a flat
+    // jump arcs both cores and lands on column 9.
+    expect(canReach(makeGrid([6, 7]), width, height, spawnTile, portalTile)).toBe(true);
+
+    // Single spike: comfortably cleared.
+    expect(canReach(makeGrid([6]), width, height, spawnTile, portalTile)).toBe(true);
+});
+
+test("BFS refuses step-up jumps over a spike-capped riser", () => {
+    // A spike capping a one-tile riser cannot be jumped: clearing its inset
+    // core needs feet ≥60px above the launch row (max rise ~62.5px), giving
+    // ~28.6px of travel against the 56px overlap sweep — simulated 0/4539
+    // takeoff/timing combos survive. The dist-2 step-up check must count the
+    // spike as wall height, or hasValidPath() green-lights soft-locked maps.
+    const width = 12;
+    const height = 8;
+
+    const makeGrid = (withSpike) => {
+        const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+        for (let x = 0; x < width; x++) {
+            tiles[height - 1][x] = 1; // bottom row: standing surface is row 6
+        }
+        for (let x = 6; x < width; x++) {
+            tiles[6][x] = 1; // riser: columns 6+ stand one tile higher (row 5)
+        }
+        if (withSpike) {
+            tiles[5][6] = 2; // spike capping the riser's first column
+        }
+        return tiles;
+    };
+
+    const spawnTile = { x: 4, y: height - 2 };
+    const portalTile = { x: 9, y: height - 3 }; // on the raised surface
+
+    // Capped riser: the only route is a dist-2 step-up over the spiked
+    // column — physically impossible, so the BFS must not validate it.
+    expect(canReach(makeGrid(true), width, height, spawnTile, portalTile)).toBe(false);
+
+    // Identical grid minus the spike: the step-up is a plain one-tile climb.
+    expect(canReach(makeGrid(false), width, height, spawnTile, portalTile)).toBe(true);
 });
 
 test("BFS never marks spike tiles or their tips as reachable", () => {
