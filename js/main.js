@@ -4,6 +4,7 @@ import { Player } from './player.js';
 import { Level } from './level.js';
 import { Camera } from './camera.js';
 import { UI } from './ui.js';
+import { COIN_POINTS } from './collectibles.js';
 
 // Game constants
 export const TILE_SIZE = 32;
@@ -51,7 +52,17 @@ export class Game {
         this.state = STATE.MENU;
         this.level = null;
         this.player = null;
+        // Per-level element systems: assigned from the Level's getters in
+        // startLevel(), null until a level exists (MENU stays safe because
+        // update() only touches them inside the PLAYING branch).
+        this.enemyManager = null;
+        this.collectibles = null;
+        this.hazards = null;
         this.score = 0;
+        // Score at the moment the current level started; retryLevel() rolls
+        // back to it so repeated retries of a regenerated level cannot farm
+        // coins.
+        this.levelStartScore = 0;
         this.currentLevel = 1;
         this.lastTime = 0;
         this.levelCompleteTimer = 0;
@@ -133,6 +144,13 @@ export class Game {
         // already a Player top-left origin standing on the forced flat ground.
         const spawn = this.level.getSpawnPoint();
         this.player = new Player(spawn.x, spawn.y, PLAYER_SPEED, JUMP_FORCE);
+        // Adopt the very system instances this level generated its content
+        // into, so the loop sees exactly what the renderer draws.
+        this.enemyManager = this.level.getEnemyManager();
+        this.collectibles = this.level.getCollectibles();
+        this.hazards = this.level.getHazards();
+        // Snapshot before any of this level's coins can be collected.
+        this.levelStartScore = this.score;
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
@@ -148,6 +166,10 @@ export class Game {
     }
 
     retryLevel() {
+        // Roll the score back to the level-start snapshot first: the level
+        // regenerates on retry, so keeping mid-level pickups would let
+        // repeated die-and-retry runs farm coins.
+        this.score = this.levelStartScore;
         this.ui.hideOverlay('game-over-screen');
         this.startLevel();
     }
@@ -196,12 +218,36 @@ export class Game {
                 }
             }
 
-            // Check for falling off the world. The threshold is in world/CSS
-            // pixels: canvas.height is the device-pixel backing store and
-            // drifts with devicePixelRatio, which would move the death line
-            // (and could place it above the spawn ground on short windows).
-            if (this.player.y > this.level.height * this.level.tileSize + 100) {
+            // Phase 2 elements. Death checks run in a fixed order (enemies,
+            // spikes, pit) and stop the tick at the first hit, so several
+            // simultaneous contacts produce exactly one game over.
+            this.enemyManager.updateAll(dt);
+            if (this.enemyManager.checkPlayerCollisions(this.player)) {
                 this.handleGameOver();
+                return;
+            }
+
+            if (this.hazards.checkPlayerSpikes(this.player)) {
+                this.handleGameOver();
+                return;
+            }
+
+            // Check for falling off the world, delegated to Hazards. The
+            // height passed is in world/CSS pixels: canvas.height is the
+            // device-pixel backing store and drifts with devicePixelRatio,
+            // which would move the death line (and could place it above the
+            // spawn ground on short windows).
+            if (this.hazards.checkPitFall(this.player, this.level.height * this.level.tileSize)) {
+                this.handleGameOver();
+                return;
+            }
+
+            // Coins add onto the running total, which accumulates across
+            // levels; the per-collectibles getScore() is this level's score
+            // only and must never be assigned over the total.
+            const collectedCoins = this.collectibles.checkCollection(this.player);
+            if (collectedCoins > 0) {
+                this.score += collectedCoins * COIN_POINTS;
             }
 
             // Check portal contact

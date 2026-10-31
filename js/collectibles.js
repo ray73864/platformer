@@ -14,7 +14,9 @@
  */
 const COIN_WIDTH = 16;
 const COIN_HEIGHT = 16;
-const COIN_POINTS = 10;
+// Exported so the game loop scores collections through the same constant
+// rather than mirroring a magic number (the running total lives in Game).
+export const COIN_POINTS = 10;
 
 export class Collectibles {
     constructor() {
