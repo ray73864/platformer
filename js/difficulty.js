@@ -2,8 +2,6 @@
 // Generation internals (gap widths, platform heights, enemy placement
 // geometry) are deliberately not wired here; only size, enemy caps, and the
 // timer flag are a contract. Moving platforms are deferred to a later phase.
-// shortcut: hasTimer is descriptive only, no gameplay consumer yet; upgrade
-// when the Phase 3 timer UI lands.
 export class Difficulty {
     constructor() {
         this.levelConfigs = {
