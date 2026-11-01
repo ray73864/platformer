@@ -23,7 +23,11 @@ afterAll(() => {
 
 function assertConsoleClean() {
     const out = ab(SESSION, "console");
-    const bad = out.split("\n").filter(l => /\b(error|warn)\b/i.test(l));
+    // Substring on "error" (not \b(error|warn)\b) so exception class names —
+    // TypeError, RangeError, uncaught handler messages — match too; word-
+    // bounded warn forms cover "warning". The game logs nothing at these
+    // levels in a clean run, so breadth costs no false positives here.
+    const bad = out.split("\n").filter(l => /error|warn(?:ing)?\b/i.test(l));
     expect(bad).toEqual([]);
 }
 
@@ -60,6 +64,29 @@ test("Escape pauses with overlay and frozen physics, then resumes", async () => 
     ab(SESSION, "press", "Escape");
     abWaitFn(SESSION, "window.game.state === 'PLAYING'");
     expect(elementState(SESSION, "pause-screen").hidden).toBe(true);
+    assertConsoleClean();
+}, 60000);
+
+test("the HUD pause button pauses and its accessible name toggles", async () => {
+    openGame(SESSION, server.url);
+    startGame(SESSION);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+
+    const ariaLabel = () =>
+        abEvalJSON(
+            SESSION,
+            `document.getElementById('pause-btn').getAttribute('aria-label')`
+        );
+    expect(ariaLabel()).toBe("Pause Game");
+
+    ab(SESSION, "click", "#pause-btn");
+    abWaitFn(SESSION, "window.game.state === 'PAUSED'");
+    expect(ariaLabel()).toBe("Resume Game");
+
+    // Escape must keep the button's name in sync too, not just clicks.
+    ab(SESSION, "press", "Escape");
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+    expect(ariaLabel()).toBe("Pause Game");
     assertConsoleClean();
 }, 60000);
 
