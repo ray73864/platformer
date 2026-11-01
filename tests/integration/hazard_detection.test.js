@@ -2,9 +2,10 @@
 //
 // Unit tests already pin the inset hitbox, aggregation, and pit threshold
 // semantics on hand-built spikes. These tests run hazards extracted from a
-// REAL generated Level's grid (the generator does not emit type-2 tiles until
-// Task 5, so they are injected here) and anchor the pit death line to the
-// Level's own dimensions rather than a magic canvas height. They fail if
+// REAL generated Level's grid plus injected type-2 tiles (the generator emits
+// them itself only at level 5+; injection here keeps fixtures deterministic)
+// and anchor the pit death line to the Level's own dimensions rather than a
+// magic canvas height. They fail if
 // Level stops delegating hazard extraction to its exposed Hazards instance,
 // if the grid->pixel translation drifts, or if callers pass anything other
 // than world-pixel level height for the pit check.
@@ -40,10 +41,10 @@ test("Level extracts injected type-2 tiles into pixel-space spikes on its expose
     const hazards = level.getHazards();
     expect(hazards).toBeInstanceOf(Hazards);
 
-    // The spike must land at the tile's pixel position with the full tile
-    // rect stored (the inset applies at collision time, not storage). Located
-    // by position rather than total count so Task 5's generator spikes cannot
-    // break this seam assertion.
+        // The spike must land at the tile's pixel position with the full tile
+        // rect stored (the inset applies at collision time, not storage). Located
+        // by position rather than total count so level-5+ generator spikes cannot
+        // break this seam assertion.
     const spike = hazards.getSpikes().find(
         s => s.x === 4 * TILE && s.y === (level.height - 3) * TILE
     );

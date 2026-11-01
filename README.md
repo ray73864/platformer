@@ -71,6 +71,8 @@ bun run verify
 
 Hard gate driven by [`assets/manifest.json`](assets/manifest.json). Each entry declares `{ "path", "source", "license", "required" }`: an entry with `"required": true` that is missing, not a regular file, or zero-byte fails verification (exit 1); absent optional entries (`"required": false`) only print warnings. The `build` script runs `verify` first, so a required-asset violation blocks the build. An unreadable or malformed manifest is itself a hard failure. Art assets are currently all optional (procedural placeholders remain the source of truth), so `verify` passes with warnings until entries are promoted.
 
+**Licensing rule:** an entry may only be promoted to `"required": true` (and its art committed under `assets/`) when its license permits redistribution — this repository is MIT-licensed. The current CraftPix-sourced entries are explicitly *not* redistributable and must stay optional with no files committed; promotion additionally requires the verified license recorded in the entry itself.
+
 ## Project Structure
 
 ```

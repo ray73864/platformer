@@ -505,8 +505,9 @@ test("50 constructions of level 7 stay valid", () => {
 // --- Task 9: per-level direction ------------------------------------------
 
 test("direction varies deterministically from level number", () => {
-    // Controller ruling: 'right' below level 5 (shipped ramp untouched),
-    // then ['right','left','vertical'] cycling from level 5.
+    // Owner decision 2026-11-01 (plan Task 9 amendment): 'right' below level 5
+    // keeps the shipped Phase-1 ramp untouched, then ['right','left','vertical']
+    // cycles from level 5.
     const expected = {
         1: "right", 2: "right", 3: "right", 4: "right",
         5: "right", 6: "left", 7: "vertical", 8: "right", 9: "left"

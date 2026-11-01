@@ -3,19 +3,19 @@
     {
       "path": "tilesets/ancient-titan-remains.png",
       "source": "https://craftpix.net/freebies/free-ancient-titan-remains-2d-platformer-tileset/",
-      "license": "CraftPix free license (not CC0; no Kenney equivalent exists — see task-10-report)",
+      "license": "CraftPix free license (not CC0; no Kenney equivalent exists; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
       "required": false
     },
     {
       "path": "characters/seer-chibi.png",
       "source": "https://craftpix.net/freebies/free-seer-chibi-character-sprites/",
-      "license": "CraftPix free license (not CC0; provenance unverified)",
+      "license": "CraftPix free license (not CC0; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
       "required": false
     },
     {
       "path": "enemies/fantasy-enemies.png",
       "source": "https://craftpix.net/freebies/free-fantasy-enemies-pixel-art-sprite-pack/",
-      "license": "CraftPix free license (not CC0; provenance unverified)",
+      "license": "CraftPix free license (not CC0; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
       "required": false
     }
   ]

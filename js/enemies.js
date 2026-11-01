@@ -14,9 +14,10 @@
  *   as collectibles.js and hazards.js).
  * - A dead enemy (`die()`) stops moving, stops being reported by the
  *   manager's collision aggregation, and draws nothing.
- * - Spec's stuck detection (>1s no movement → reset) is deferred by
- *   controller ruling: static terrain plus clamped bounds cannot make these
- *   enemies stuck today.
+ * - Stuck detection (>1s no movement -> reset) is deferred by owner
+ *   ratification 2026-11-01 (plan "Execution notes and ratified deviations"
+ *   item 6): static terrain plus walkable, band-clamped bounds cannot make
+ *   these enemies stuck. Revisit for moving platforms / dynamic terrain.
  */
 const ENEMY_WIDTH = 32;
 const ENEMY_HEIGHT = 32;
