@@ -33,6 +33,26 @@ test("starting from the menu produces a fully wired, playable level", () => {
     expect(() => game.draw()).not.toThrow();
 });
 
+test("the draw pipeline renders a Phase 2 level with spikes and enemies", () => {
+    mountFixture();
+    const game = new Game();
+    game.currentLevel = 5;
+    // Terrain is random: take a construction that actually carries both
+    // element types so the spike (moveTo/lineTo) and enemy draw paths run.
+    let attempts = 0;
+    do {
+        game.startLevel();
+    } while (
+        (game.level.getHazards().getSpikes().length === 0 ||
+         game.level.getEnemyManager().enemies.length === 0) &&
+        ++attempts < 20
+    );
+    expect(game.level.getHazards().getSpikes().length).toBeGreaterThan(0);
+    expect(game.level.getEnemyManager().enemies.length).toBeGreaterThan(0);
+
+    expect(() => game.draw()).not.toThrow();
+});
+
 test("keyboard events drive the player through physics", () => {
     const game = startPlaying();
 

@@ -36,6 +36,11 @@ export function installGameTestScaffolding() {
             strokeRect: () => {},
             beginPath: () => {},
             arc: () => {},
+            // Spike drawing (Level.draw) strokes triangles via moveTo/lineTo;
+            // without these the shared stub only satisfies Level 1's draw
+            // path and any Phase-2 draw check would pass vacuously.
+            moveTo: () => {},
+            lineTo: () => {},
             fill: () => {}
         };
     };
