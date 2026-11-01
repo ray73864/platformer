@@ -138,30 +138,41 @@ export class Game {
     }
 
     startLevel() {
-        this.state = STATE.PLAYING;
-        this.level = new Level(this.currentLevel, TILE_SIZE);
+        // Construct before publishing anything: if generation exhausts and
+        // throws, the game keeps its previous state and system references
+        // instead of being left PLAYING with a null/stale level, where the
+        // loop's catch would log per-frame errors forever.
+        const level = new Level(this.currentLevel, TILE_SIZE);
+        this.publishLevel(level);
+    }
+
+    // Adopts a fully-constructed level: state flip and system references
+    // only change once generation succeeded.
+    publishLevel(level) {
+        this.level = level;
         // Spawn from the level's reachability-verified spawn tile: its y is
         // already a Player top-left origin standing on the forced flat ground.
-        const spawn = this.level.getSpawnPoint();
+        const spawn = level.getSpawnPoint();
         this.player = new Player(spawn.x, spawn.y, PLAYER_SPEED, JUMP_FORCE);
         // Adopt the very system instances this level generated its content
         // into, so the loop sees exactly what the renderer draws.
-        this.enemyManager = this.level.getEnemyManager();
-        this.collectibles = this.level.getCollectibles();
-        this.hazards = this.level.getHazards();
+        this.enemyManager = level.getEnemyManager();
+        this.collectibles = level.getCollectibles();
+        this.hazards = level.getHazards();
         // Snapshot before any of this level's coins can be collected.
         this.levelStartScore = this.score;
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
+        this.state = STATE.PLAYING;
         this.camera.reset();
         // Snap the camera onto the new level immediately: reset() alone would
         // render one frame of fresh terrain through the default origin on
         // short/narrow viewports before follow() catches up.
         this.camera.follow(
             this.player,
-            this.level.width * this.level.tileSize,
-            this.level.height * this.level.tileSize
+            level.width * level.tileSize,
+            level.height * level.tileSize
         );
     }
 
@@ -244,10 +255,15 @@ export class Game {
 
             // Coins add onto the running total, which accumulates across
             // levels; the per-collectibles getScore() is this level's score
-            // only and must never be assigned over the total.
+            // only and must never be assigned over the total. Capped at
+            // MAX_SAFE_INTEGER (spec §Error Handling) so no accumulation
+            // length can wrap the score into negative territory.
             const collectedCoins = this.collectibles.checkCollection(this.player);
             if (collectedCoins > 0) {
-                this.score += collectedCoins * COIN_POINTS;
+                this.score = Math.min(
+                    this.score + collectedCoins * COIN_POINTS,
+                    Number.MAX_SAFE_INTEGER
+                );
             }
 
             // Check portal contact
@@ -275,8 +291,15 @@ export class Game {
         } else if (this.state === STATE.LEVEL_COMPLETE) {
             this.levelCompleteTimer -= dt;
             if (this.levelCompleteTimer <= 0) {
-                this.currentLevel++;
-                this.startLevel();
+                // The fallible construction happens BEFORE currentLevel
+                // advances: on generation exhaustion the game stays
+                // LEVEL_COMPLETE with the finished level intact, instead of
+                // corrupting into a PLAYING state with stale systems or
+                // double-advancing via the stale portal flag.
+                const next = this.currentLevel + 1;
+                const level = new Level(next, TILE_SIZE);
+                this.currentLevel = next;
+                this.publishLevel(level);
                 this.ui.hideOverlay('level-complete-screen');
             }
         }

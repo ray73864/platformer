@@ -475,6 +475,21 @@ test("vertical patrols never sweep a route cell (S10)", () => {
     }
 });
 
+test("generation exhaustion throws fail-fast rather than shipping a soft-locked level", () => {
+    // The constructor's throw is the last line of defence against an
+    // unwinnable map. If a future change swallows it, the suite must go red
+    // right here instead of green-lighting soft-locks into production.
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        expect(() => new Level(5, 32)).toThrow(
+            /no reachable portal position after 200 generation attempts/
+        );
+    } finally {
+        Level.prototype.pickPortalTile = original;
+    }
+});
+
 test("50 constructions of level 7 stay valid", () => {
     // Bounded stress: generation plus conservative validation must reliably
     // produce solvable levels once Phase 2 elements are in play. Level 7 is

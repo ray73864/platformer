@@ -17,6 +17,7 @@ installGameTestScaffolding();
 
 import { Game, STATE } from "../../js/main.js";
 import { Collectibles } from "../../js/collectibles.js";
+import { Level } from "../../js/level.js";
 
 const DT = 0.016;
 // Mirrors GRAVITY in main.js (not exported). Used to cancel one tick of
@@ -257,4 +258,70 @@ test("pit death fires at the exact world-pixel threshold via the delegated check
     game.player.y = worldBottom + 101;
     game.update(DT);
     expect(game.state).toBe(STATE.GAME_OVER);
+});
+
+// --- Generation-failure containment (OOSI1) ---------------------------------
+
+test("startLevel leaves a MENU game untouched when generation exhausts", () => {
+    mountFixture();
+    const game = new Game();
+
+    // Stub the portal pick so every one of the 200 attempts fails and the
+    // constructor throws its fail-fast error.
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        expect(() => game.startLevel()).toThrow(/no reachable portal/);
+        // Containment: no corruption into a PLAYING state with half-adopted
+        // systems — the pre-call state and emptiness survive.
+        expect(game.state).toBe(STATE.MENU);
+        expect(game.level).toBeNull();
+    } finally {
+        Level.prototype.pickPortalTile = original;
+    }
+});
+
+test("level advance keeps currentLevel and LEVEL_COMPLETE intact when generation exhausts", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    const portal = game.level.portal;
+    game.player.x = portal.x;
+    game.player.y = portal.y;
+    game.player.markPortalReached();
+    game.update(DT);
+    expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+    const finishedLevel = game.currentLevel;
+
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        // The countdown fires and the next level fails to generate.
+        expect(() => game.update(3)).toThrow(/no reachable portal/);
+        // currentLevel only advances after a successful construction, so the
+        // game is not corrupted and cannot double-advance via the stale
+        // portal flag into an unbounded ~2s cycle.
+        expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+        expect(game.currentLevel).toBe(finishedLevel);
+    } finally {
+        Level.prototype.pickPortalTile = original;
+    }
+});
+
+// --- Score integrity (S7) ----------------------------------------------------
+
+test("score is capped at MAX_SAFE_INTEGER however long coins keep coming", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+
+    game.score = Number.MAX_SAFE_INTEGER - 5;
+    game.collectibles = coinsAtPlayer(game, 3); // would add 30 unbounded
+    game.update(DT);
+    expect(game.score).toBe(Number.MAX_SAFE_INTEGER);
+
+    // And stays there on further pickups.
+    game.collectibles = coinsAtPlayer(game, 1);
+    game.update(DT);
+    expect(game.score).toBe(Number.MAX_SAFE_INTEGER);
 });
