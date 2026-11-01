@@ -9,22 +9,31 @@ export class InputHandler {
         this.onReleaseLeftCallback = null;
         this.onReleaseRightCallback = null;
 
+        // One controller for every listener registered below; destroy()
+        // detaches them all (owner: Game).
+        this._abort = new AbortController();
+
         this.bindEvents();
     }
 
+    destroy() {
+        this._abort.abort();
+    }
+
     bindEvents() {
-        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
-        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        const signal = this._abort.signal;
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e), { signal });
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e), { signal });
 
         // Browsers drop the keyup of a held key when the window loses focus,
         // which would leave the key latched in `keys` forever: alt-tab while
         // holding a direction and the player drives on until that exact key
         // is pressed-and-released again. Clearing the set is enough — held
         // speed is re-derived from isLeft()/isRight() every frame.
-        window.addEventListener('blur', () => this.keys.clear());
+        window.addEventListener('blur', () => this.keys.clear(), { signal });
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) this.keys.clear();
-        });
+        }, { signal });
     }
 
     resolveCode(event) {

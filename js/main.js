@@ -23,6 +23,19 @@ const COYOTE_TIME = 0.1;
 const FINAL_LEVEL = 15;
 const HIGH_SCORE_KEY = 'platformerHighScore';
 
+// Every live Game, so test scaffolding sharing one window can tear down all
+// window listeners at once (see destroy()/destroyAllGames).
+const liveGames = new Set();
+
+// Detach every constructed Game's listeners. Test seam for harnesses that
+// build many Games against one shared window: a stale Game's Escape handler
+// would otherwise drive togglePause() and rewrite overlay nodes belonging to
+// the current fixture.
+export function destroyAllGames() {
+    for (const game of liveGames) game.destroy();
+    liveGames.clear();
+}
+
 // Game states
 export const STATE = {
     MENU: 'MENU',
@@ -44,9 +57,13 @@ export class Game {
         }
         this.ctx = this.canvas.getContext('2d');
 
+        // Single abort controller for every window listener this Game adds;
+        // destroy() detaches them all at once.
+        this._abort = new AbortController();
+
         // Set canvas size for high-DPI displays
         this.resize();
-        window.addEventListener('resize', () => this.resize());
+        window.addEventListener('resize', () => this.resize(), { signal: this._abort.signal });
 
         // Initialize systems
         this.input = new InputHandler();
@@ -85,8 +102,20 @@ export class Game {
         // Bind event listeners
         this.bindEvents();
 
+        liveGames.add(this);
+
         // Start game loop
         requestAnimationFrame((time) => this.loop(time));
+    }
+
+    // Detach this Game's window listeners (resize, Escape, and everything
+    // InputHandler registered). After destroy() the instance is inert: the
+    // loop stops re-scheduling itself.
+    destroy() {
+        liveGames.delete(this);
+        this._destroyed = true;
+        this._abort.abort();
+        this.input.destroy();
     }
 
     resize() {
@@ -133,25 +162,34 @@ export class Game {
         // window still jumps. The initial-press filter lives in InputHandler
         // (wasDown captured before keys.add), so autorepeat keydowns neither
         // re-jump nor refresh the buffer.
+        // All closures gate on PLAYING: PAUSED freezes physics, and these are
+        // mutation paths that bypass update()'s state gate — a Space press
+        // during pause must not launch the player on resume.
         this.input.onJump(() => {
-            if (!this.player) return;
+            if (this.state !== STATE.PLAYING || !this.player) return;
             if (this.player.grounded || this.coyoteTimer > 0) {
                 this.player.jump();
             } else {
                 this.jumpBufferTimer = JUMP_BUFFER_TIME;
             }
         });
-        this.input.onMoveLeft(() => this.player?.moveLeft());
-        this.input.onMoveRight(() => this.player?.moveRight());
+        const moveIfPlaying = (fn) => () => {
+            if (this.state === STATE.PLAYING) fn();
+        };
+        this.input.onMoveLeft(moveIfPlaying(() => this.player?.moveLeft()));
+        this.input.onMoveRight(moveIfPlaying(() => this.player?.moveRight()));
         this.input.onReleaseLeft(() => this.player?.stopLeft());
         this.input.onReleaseRight(() => this.player?.stopRight());
 
         // Escape owns pause/end-screen navigation; InputHandler never fires
         // game actions for it. Check `key` too: some harnesses deliver raw key
-        // events with an empty `code` (see input.js resolveCode).
+        // events with an empty `code` (see input.js resolveCode). Filter OS
+        // autorepeat like InputHandler does for its own keys: holding Escape
+        // would otherwise strobe PAUSED↔PLAYING and bleed the run clock on
+        // frames landing in PLAYING.
         window.addEventListener('keydown', (e) => {
-            if (e.code === 'Escape' || e.key === 'Escape') this.togglePause();
-        });
+            if ((e.code === 'Escape' || e.key === 'Escape') && !e.repeat) this.togglePause();
+        }, { signal: this._abort.signal });
     }
 
     togglePause() {
@@ -423,6 +461,10 @@ export class Game {
     }
 
     loop(time) {
+        // destroy() halts the frame chain: any already-scheduled final frame
+        // returns here instead of re-arming and mutating a torn-down game.
+        if (this._destroyed) return;
+
         const dt = (time - this.lastTime) / 1000;
         this.lastTime = time;
 
