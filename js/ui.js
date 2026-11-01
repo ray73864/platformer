@@ -38,6 +38,16 @@ export class UI {
         if (hud) hud.style.display = 'none';
     }
 
+    // Spec §Accessibility: the pause control's accessible name toggles
+    // "Pause Game"/"Resume Game" with the game state. Game.togglePause keeps
+    // it in sync however the transition happened (button, Escape).
+    setPauseLabel(paused) {
+        const button = document.getElementById('pause-btn');
+        if (!button) return;
+        button.setAttribute('aria-label', paused ? 'Resume Game' : 'Pause Game');
+        button.textContent = paused ? 'Resume' : 'Pause';
+    }
+
     updateScore(score) {
         if (this.scoreElement) {
             this.scoreElement.textContent = `Score: ${score}`;

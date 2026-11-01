@@ -294,16 +294,74 @@ test("level advance keeps currentLevel and LEVEL_COMPLETE intact when generation
     expect(game.state).toBe(STATE.LEVEL_COMPLETE);
     const finishedLevel = game.currentLevel;
 
+    // Spec §Error Handling (transition timeout): update() must not throw out
+    // of a stalled transition — it keeps forcing the advance every frame and
+    // logs once per stall instead of flooding.
+    const originalConsole = console.error;
+    let logged = 0;
+    console.error = () => { logged++; };
     const original = Level.prototype.pickPortalTile;
     Level.prototype.pickPortalTile = () => null;
     try {
-        // The countdown fires and the next level fails to generate.
-        expect(() => game.update(3)).toThrow(/no reachable portal/);
+        game.update(3); // countdown fires, generation fails
+        game.update(DT); // retried, fails again
+        expect(game.state).toBe(STATE.LEVEL_COMPLETE);
         // currentLevel only advances after a successful construction, so the
         // game is not corrupted and cannot double-advance via the stale
         // portal flag into an unbounded ~2s cycle.
-        expect(game.state).toBe(STATE.LEVEL_COMPLETE);
         expect(game.currentLevel).toBe(finishedLevel);
+        expect(logged).toBe(1); // once per stall, not per frame
+    } finally {
+        console.error = originalConsole;
+        Level.prototype.pickPortalTile = original;
+    }
+
+    // Self-heal: the next attempt with a working generator advances normally.
+    game.update(DT);
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(game.currentLevel).toBe(finishedLevel + 1);
+});
+
+// --- Construct-before-publish on the run-flow entries (S5 review) -----------
+
+test("startGame keeps end-screen state intact when generation exhausts", () => {
+    mountFixture();
+    const game = new Game();
+    // Park a finished run behind Play Again.
+    game.state = STATE.GAME_COMPLETE;
+    game.score = 500;
+    game.currentLevel = 15;
+
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        expect(() => game.startGame()).toThrow(/no reachable portal/);
+        // Nothing was zeroed before the fallible construction: the visible
+        // GAME_COMPLETE screen still describes the run it shows.
+        expect(game.state).toBe(STATE.GAME_COMPLETE);
+        expect(game.score).toBe(500);
+        expect(game.currentLevel).toBe(15);
+    } finally {
+        Level.prototype.pickPortalTile = original;
+    }
+});
+
+test("retryLevel keeps the game-over overlay and state when generation exhausts", () => {
+    const game = startPlaying();
+    hideOverlays(game);
+    // Real death to GAME_OVER so the overlay is up.
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_OVER);
+
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        expect(() => game.retryLevel()).toThrow(/no reachable portal/);
+        // Overlay and state survive intact: the retry button is still there
+        // to press once generation works again.
+        expect(game.state).toBe(STATE.GAME_OVER);
+        expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(false);
     } finally {
         Level.prototype.pickPortalTile = original;
     }
@@ -342,7 +400,9 @@ test("portal contact completes the level only once the 70% coin gate is met", ()
     expect(game.player.hasReachedPortal()).toBe(false);
 
     // Meet the threshold through the real Collectibles API; same contact.
-    const collectibles = game.level.getCollectibles();
+    // Same handle the loop's gate reads (game.collectibles is publishLevel's
+    // adoption of level.getCollectibles() — one access path, no aliasing).
+    const collectibles = game.collectibles;
     const coins = collectibles.getCoins();
     for (let i = 0; i < coins.length && !collectibles.meetsPortalRequirement(); i++) {
         collectibles.collectCoin(i);

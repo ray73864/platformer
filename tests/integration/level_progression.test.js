@@ -25,7 +25,7 @@ test("run clock carries over a real portal win into the next level", () => {
 
     // Spend a known amount of the run clock through the real Timer API, so a
     // transition reset to 60 is distinguishable from ordinary ticking.
-    game.timer.update(10, false);
+    game.timer.update(10);
     expect(game.timer.getTimeRemaining()).toBeCloseTo(50, 6);
 
     // Meet the portal's 70% coin gate via the real Collectibles API, then let
@@ -63,6 +63,35 @@ test("run clock carries over a real portal win into the next level", () => {
     game.update(0.016);
     expect(game.timer.getTimeRemaining()).toBeLessThan(remainingAtWin);
     expect(document.getElementById('timer-display').textContent).toBe('Time: 0:49');
+});
+
+test("an invalid carried clock falls back to the default at the level transition", () => {
+    const game = startPlaying();
+    game.currentLevel = 5;
+    game.startLevel();
+
+    // Win through the real gate…
+    const coins = game.level.getCoins();
+    for (let i = 0; i < coins.length; i++) game.collectibles.collectCoin(i);
+    const portal = game.level.getPortal();
+    game.player.x = portal.x;
+    game.player.y = portal.y;
+    game.update(0.016);
+    expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+
+    // …then corrupt the parked clock, as a broken carryover would. The
+    // transition's validation (spec §Error Handling) must catch it before
+    // the next level runs on a NaN that never expires and never displays.
+    game.timer.timeRemaining = NaN;
+
+    let ticks = 0;
+    while (game.state === STATE.LEVEL_COMPLETE && ticks < 100) {
+        game.update(0.1);
+        ticks++;
+    }
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(Number.isFinite(game.timer.timeRemaining)).toBe(true);
+    expect(game.timer.getTimeRemaining()).toBeCloseTo(game.timer.baseTime, 6);
 });
 
 test("timer HUD visibility follows the difficulty tier", () => {

@@ -88,6 +88,13 @@ button:active {
     transform: scale(0.95);
 }
 
+/* Visible keyboard focus for Tab-operable controls (spec §Accessibility,
+   WCAG 2.4.7): the UA default outline is unreliable on this palette. */
+button:focus-visible {
+    outline: 3px solid #ffffff;
+    outline-offset: 2px;
+}
+
 #hud {
     position: absolute;
     top: 20px;

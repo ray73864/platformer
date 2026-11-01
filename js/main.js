@@ -72,8 +72,10 @@ export class Game {
         this.camera = new Camera(window.innerWidth, window.innerHeight);
         this.ui = new UI();
         // One run clock for the whole game: time carries over between levels
-        // (Timer.startNextLevel contract). Whether it ticks at all is decided
-        // per level by the difficulty tier in publishLevel().
+        // because nothing resets it mid-run (startGame() and retryLevel()
+        // deliberately re-arm it; level transitions never do). Whether it
+        // ticks at all is decided per level by the difficulty tier in
+        // publishLevel().
         this.difficulty = new Difficulty();
         this.timer = new Timer(60);
         this.timerActive = false;
@@ -146,8 +148,9 @@ export class Game {
         const startBtn = document.getElementById('start-btn');
         const retryBtn = document.getElementById('retry-btn');
         const playAgainBtn = document.getElementById('play-again-btn');
-        if (!startBtn || !retryBtn || !playAgainBtn) {
-            throw new Error('Game requires #start-btn, #retry-btn and #play-again-btn elements in the page');
+        const pauseBtn = document.getElementById('pause-btn');
+        if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn) {
+            throw new Error('Game requires #start-btn, #retry-btn, #play-again-btn and #pause-btn elements in the page');
         }
         startBtn.addEventListener('click', () => this.startGame());
         retryBtn.addEventListener('click', () => this.retryLevel());
@@ -155,6 +158,11 @@ export class Game {
             this.startGame();
             this.ui.hideOverlay('game-complete-screen');
         });
+        // Spec §Accessibility: pause/resume must be keyboard-operable with a
+        // toggling accessible name, not Escape-only. A native button gives
+        // Tab/Enter for free; togglePause keeps the label in sync however the
+        // pause was entered.
+        pauseBtn.addEventListener('click', () => this.togglePause());
 
         // Input listener.
         // Immediate jump while grounded (or within coyote reach of the ground
@@ -192,29 +200,51 @@ export class Game {
         }, { signal: this._abort.signal });
     }
 
+    // Spec §Error Handling (invalid state detection): verify the target state
+    // before transitioning; an invalid value logs an error and leaves the game
+    // in its current state instead of corrupting it.
+    setState(next) {
+        if (!Object.values(STATE).includes(next)) {
+            console.error('Invalid game state transition requested:', next);
+            return false;
+        }
+        this.state = next;
+        return true;
+    }
+
     togglePause() {
         if (this.state === STATE.PLAYING) {
-            this.state = STATE.PAUSED;
+            this.setState(STATE.PAUSED);
             this.ui.showOverlay('pause-screen');
+            this.ui.setPauseLabel(true);
         } else if (this.state === STATE.PAUSED) {
-            this.state = STATE.PLAYING;
+            this.setState(STATE.PLAYING);
             this.ui.hideOverlay('pause-screen');
+            this.ui.setPauseLabel(false);
         } else if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
             // Spec: Escape on an end screen returns to MENU, never pauses.
-            this.state = STATE.MENU;
+            this.setState(STATE.MENU);
             this.ui.hideOverlay('game-over-screen');
             this.ui.hideOverlay('game-complete-screen');
             this.ui.showOverlay('menu-screen');
+            // The HUD sits above the 85%-opaque menu overlay: without this
+            // the finished run's Score/Level/Time ghost through the menu.
+            this.ui.hideHUD();
         }
     }
 
     startGame() {
+        // Construct before mutating anything (same discipline as startLevel):
+        // if generation exhausts and throws, a GAME_COMPLETE/GAME_OVER screen
+        // keeps its state and overlay instead of being stranded over zeroed
+        // run data.
+        const level = new Level(1, TILE_SIZE);
         this.score = 0;
         this.currentLevel = 1;
         // A brand-new run always gets a fresh clock; whether it ticks at all
         // is decided per level by publishLevel's difficulty-tier gate.
         this.timer.timeRemaining = this.timer.baseTime;
-        this.startLevel();
+        this.publishLevel(level);
         this.ui.showHUD();
         this.ui.hideOverlay('menu-screen');
     }
@@ -246,11 +276,29 @@ export class Game {
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
+        // Spec §Error Handling (level transition): the run clock carries over
+        // untouched, but verify the carried value survived intact; an invalid
+        // one falls back to the default rather than corrupting the run.
+        if (!Number.isFinite(this.timer.timeRemaining) ||
+            this.timer.timeRemaining < 0 || this.timer.timeRemaining > 9999) {
+            console.warn('Run clock invalid at level transition; using default',
+                this.timer.baseTime, 'seconds');
+            this.timer.timeRemaining = this.timer.baseTime;
+        }
+        // Spec §Error Handling (coin count validation): the 70% portal gate is
+        // only meaningful with enough coins to divide. Generation ships more
+        // than this on every tier; a level below the floor is a generator bug
+        // — warn and continue (the gate itself never becomes unwinnable).
+        if (this.collectibles.getCoins().length < 3) {
+            console.warn('Level generated with fewer than 3 coins:',
+                this.collectibles.getCoins().length);
+        }
         // Difficulty tier is the single authority for whether the run clock
         // runs at all on this level.
         this.timerActive = this.difficulty.isTimerEnabled(this.currentLevel);
         this.ui.setTimerVisible(this.timerActive);
-        this.state = STATE.PLAYING;
+        this.setState(STATE.PLAYING);
+        this.ui.setPauseLabel(false);
         this.camera.reset();
         // Snap the camera onto the new level immediately: reset() alone would
         // render one frame of fresh terrain through the default origin on
@@ -263,6 +311,11 @@ export class Game {
     }
 
     retryLevel() {
+        // Construct before mutating anything (same discipline as startGame):
+        // on generation failure the game stays GAME_OVER with the overlay and
+        // its retry button intact, instead of a bare GAME_OVER with no way
+        // back in.
+        const level = new Level(this.currentLevel, TILE_SIZE);
         // Roll the score back to the level-start snapshot first: the level
         // regenerates on retry, so keeping mid-level pickups would let
         // repeated die-and-retry runs farm coins.
@@ -271,12 +324,13 @@ export class Game {
         // time-out would kill the player on the very next tick.
         this.timer.timeRemaining = this.timer.baseTime;
         this.ui.hideOverlay('game-over-screen');
-        this.startLevel();
+        this.publishLevel(level);
     }
 
     handleWin() {
-        this.state = STATE.LEVEL_COMPLETE;
+        this.setState(STATE.LEVEL_COMPLETE);
         this.levelCompleteTimer = 2; // 2 seconds transition
+        this.levelTransitionStalled = false;
 
         this.ui.showOverlay('level-complete-screen');
 
@@ -285,14 +339,14 @@ export class Game {
     }
 
     handleGameOver() {
-        this.state = STATE.GAME_OVER;
+        this.setState(STATE.GAME_OVER);
         // Single game-over presentation path: UI.showGameOver writes the
         // #final-score node and reveals the overlay.
         this.ui.showGameOver(this.score);
     }
 
     handleGameComplete() {
-        this.state = STATE.GAME_COMPLETE;
+        this.setState(STATE.GAME_COMPLETE);
         let highScore = this.score;
         // Storage-disabled environments throw from getItem/setItem. An
         // uncaught throw here would leave state LEVEL_COMPLETE with an expired
@@ -317,7 +371,7 @@ export class Game {
             // other outcome of the same frame. The PLAYING-only gate means
             // PAUSED freezes the clock for free.
             if (this.timerActive) {
-                this.timer.update(dt, false);
+                this.timer.update(dt);
                 this.ui.updateTimer(this.timer.getTimeRemaining());
                 if (this.timer.isTimeUp()) {
                     this.handleGameOver();
@@ -385,17 +439,20 @@ export class Game {
                     this.score + collectedCoins * COIN_POINTS,
                     Number.MAX_SAFE_INTEGER
                 );
-                // shortcut: pre-L5 coins are score-only; there is no live clock to extend.
-                if (this.timerActive) {
-                    for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
-                }
+                // Spec: +2 s per coin, unconditionally. The run clock is one
+                // object across the whole game, so coins banked before the
+                // timer tier (level 5) are already on it when it starts
+                // ticking — no separate pending-bonus ledger needed.
+                for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
             }
 
             // Check portal contact; hidden until the 70% coin gate is met,
-            // so locked contact does nothing.
+            // so locked contact does nothing. Same Collectibles instance the
+            // loop scores through (publishLevel adopts it from the level) —
+            // one access path, no aliasing against this.level.
             const portal = this.level.getPortal();
             if (portal && !this.player.hasReachedPortal() &&
-                this.level.collectibles.meetsPortalRequirement() &&
+                this.collectibles.meetsPortalRequirement() &&
                 this.physics.checkAABB(this.player, portal)) {
                 this.player.markPortalReached();
             }
@@ -421,6 +478,7 @@ export class Game {
                 if (this.currentLevel >= FINAL_LEVEL) {
                     // The run ends here: never construct level 16.
                     this.handleGameComplete();
+                    this.ui.hideOverlay('level-complete-screen');
                 } else {
                     // The fallible construction happens BEFORE currentLevel
                     // advances: on generation exhaustion the game stays
@@ -428,11 +486,24 @@ export class Game {
                     // corrupting into a PLAYING state with stale systems or
                     // double-advancing via the stale portal flag.
                     const next = this.currentLevel + 1;
-                    const level = new Level(next, TILE_SIZE);
-                    this.currentLevel = next;
-                    this.publishLevel(level);
+                    try {
+                        const level = new Level(next, TILE_SIZE);
+                        this.currentLevel = next;
+                        this.publishLevel(level);
+                        this.ui.hideOverlay('level-complete-screen');
+                    } catch (error) {
+                        // Spec §Error Handling (transition timeout): never
+                        // stick in LEVEL_COMPLETE. Keep forcing the transition
+                        // every frame past the nominal 2 s budget — each retry
+                        // is a fresh randomised generation, so this self-heals
+                        // (R26: 0/1000 throws) — but log once per stall
+                        // instead of flooding console.error through the loop.
+                        if (!this.levelTransitionStalled) {
+                            console.error('Level transition stalled; retrying:', error);
+                            this.levelTransitionStalled = true;
+                        }
+                    }
                 }
-                this.ui.hideOverlay('level-complete-screen');
             }
         }
     }

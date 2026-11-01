@@ -243,6 +243,47 @@ test("escape from GAME_OVER returns to MENU, hiding game-over and showing the me
     expect(game.state).toBe(STATE.MENU);
     expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(true);
     expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(false);
+    // The HUD sits above the translucent menu overlay: returning to MENU
+    // must hide it, or the finished run's Score/Level/Time ghost through.
+    expect(document.getElementById('hud').style.display).toBe('none');
+});
+
+test("clicking #pause-btn pauses and toggles its accessible name", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    const pauseBtn = document.getElementById('pause-btn');
+    expect(pauseBtn.getAttribute('aria-label')).toBe('Pause Game');
+
+    pauseBtn.click();
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(false);
+    expect(pauseBtn.getAttribute('aria-label')).toBe('Resume Game');
+
+    pauseBtn.click();
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(pauseBtn.getAttribute('aria-label')).toBe('Pause Game');
+});
+
+test("setState rejects an invalid target and leaves the state untouched", () => {
+    mountFixture();
+    const game = new Game();
+
+    const originalConsole = console.error;
+    let logged = 0;
+    console.error = () => { logged++; };
+    try {
+        expect(game.setState('BOOTLEG')).toBe(false);
+        expect(game.state).toBe(STATE.MENU);
+        expect(logged).toBe(1);
+
+        expect(game.setState(STATE.PLAYING)).toBe(true);
+        expect(game.state).toBe(STATE.PLAYING);
+    } finally {
+        console.error = originalConsole;
+    }
 });
 
 test("escape in MENU does nothing", () => {

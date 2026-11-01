@@ -22,7 +22,7 @@
         <div id="game-over-screen" class="overlay hidden">
             <h2>Game Over</h2>
             <p id="final-score">Score: 0</p>
-            <button id="retry-btn" aria-label="Try Again">Try Again</button>
+            <button id="retry-btn" aria-label="Retry Level">Retry Level</button>
         </div>
 
         <div id="level-complete-screen" class="overlay hidden">
@@ -46,6 +46,9 @@
             <span id="level-display">Level: 1</span>
             <!-- Timer is timed-levels-only (level 5+); a later task toggles visibility. -->
             <span id="timer-display" class="hidden">Time: 1:00</span>
+            <!-- Keyboard-operable pause per spec §Accessibility; the accessible
+                 name toggles to "Resume Game" while paused (see ui.setPauseLabel). -->
+            <button id="pause-btn" aria-label="Pause Game">Pause</button>
         </div>
     </div>
 

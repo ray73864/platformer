@@ -144,7 +144,7 @@ game/
 
 - Levels 1-4 have no time limit; from level 5 a single 60-second clock ticks down
 - The clock is run-wide: remaining time carries over between levels
-- Each coin collected adds +2 seconds (levels 1-4 coins are score-only, with no live clock to extend)
+- Each coin collected adds +2 seconds to the run clock — including coins taken before level 5: they are banked on the single run clock and already on it when the timer starts ticking
 - Running out of time ends the run; retrying a level resets the clock to 60 seconds
 
 ### Difficulty tiers

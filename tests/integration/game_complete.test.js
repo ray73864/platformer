@@ -45,20 +45,13 @@ function pressEscape() {
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
 }
 
-// Level generation is Math.random with bounded attempts and can legitimately
-// exhaust on large levels (~37% for L15); the live loop self-heals by retrying
-// each frame from the intact LEVEL_COMPLETE state. Tests retry here so that
-// generator flakiness never masquerades as a product failure.
-function startLevelRetrying(game, levelNumber) {
+// Level generation reliability is pinned by the permanent R26 construction
+// stress guard (0/1000 throws per level), so tests construct levels directly:
+// a throw here is a generator regression and must fail loudly, not be
+// silently retried away.
+function startLevelAt(game, levelNumber) {
     game.currentLevel = levelNumber;
-    for (let attempt = 0; ; attempt++) {
-        try {
-            game.startLevel();
-            return;
-        } catch (err) {
-            if (attempt >= 24) throw err;
-        }
-    }
+    game.startLevel();
 }
 
 // Wins the current level through the real coin gate + portal AABB path
@@ -85,7 +78,7 @@ function finishTransition(game) {
 function reachGameComplete() {
     const game = startPlaying();
     hideOverlays(game);
-    startLevelRetrying(game, 15);
+    startLevelAt(game, 15);
     clearGeneratedThreats(game);
     game.score = 250;
     winCurrentLevel(game);
@@ -108,8 +101,8 @@ test("coin pickups add exactly 2s per coin to the run clock while it is active",
     expect(game.timer.getTimeRemaining()).toBeCloseTo(before - DT + 4, 6);
 });
 
-test("coin pickups add no clock time while the run clock is inactive", () => {
-    const game = startPlaying(); // level 1: basic tier, clock off
+test("coin pickups bank clock time even before the tier starts ticking it", () => {
+    const game = startPlaying(); // level 1: basic tier, clock not ticking
     hideOverlays(game);
     clearGeneratedThreats(game);
     expect(game.timerActive).toBe(false);
@@ -118,31 +111,43 @@ test("coin pickups add no clock time while the run clock is inactive", () => {
     const before = game.timer.getTimeRemaining();
     game.update(DT);
     expect(game.score).toBe(20); // the coins still score
-    expect(game.timer.getTimeRemaining()).toBe(before);
+    // Spec: +2 s per coin unconditionally — one run clock across all levels,
+    // so pre-tier coins are already on it when level 5 starts the ticking.
+    expect(game.timer.getTimeRemaining()).toBe(before + 4);
 });
 
 test("completing level 15 ends the run in GAME_COMPLETE with overlay and persisted high score", () => {
     localStorage.removeItem(HIGH_SCORE_KEY);
-    const game = reachGameComplete();
+    try {
+        const game = reachGameComplete();
 
-    expect(game.currentLevel).toBe(15);
-    expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
-    expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
-    expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
-    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
+        expect(game.currentLevel).toBe(15);
+        expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
+        expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
+        expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
+        expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
+    } finally {
+        // localStorage outlives this file on the shared happy-dom Window:
+        // leave no high score behind for later files' assertions.
+        localStorage.removeItem(HIGH_SCORE_KEY);
+    }
 });
 
 test("a lower finishing score keeps the stored high score", () => {
     localStorage.setItem(HIGH_SCORE_KEY, '9999');
-    reachGameComplete();
+    try {
+        reachGameComplete();
 
-    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('9999');
-    expect(document.getElementById('high-score').textContent).toBe('High Score: 9999');
+        expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('9999');
+        expect(document.getElementById('high-score').textContent).toBe('High Score: 9999');
+    } finally {
+        localStorage.removeItem(HIGH_SCORE_KEY);
+    }
 });
 
 test("Play Again starts a clean run: score 0, level 1, fresh inactive clock", () => {
     const game = reachGameComplete();
-    game.timer.update(30, false); // burn the old clock so "fresh" is observable
+    game.timer.update(30); // burn the old clock so "fresh" is observable
 
     document.getElementById('play-again-btn').click();
 
