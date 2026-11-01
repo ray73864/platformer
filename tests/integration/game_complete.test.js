@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, afterEach } from "bun:test";
 import { installGameTestScaffolding, mountFixture } from "./setup.js";
 import { Collectibles } from "../../js/collectibles.js";
 
@@ -8,6 +8,13 @@ import { Game, STATE } from "../../js/main.js";
 
 const HIGH_SCORE_KEY = "platformerHighScore";
 const DT = 0.016;
+
+// localStorage outlives this file on the shared happy-dom Window: no test may
+// leave a high score behind for later files' assertions (every reachGameComplete
+// run writes one).
+afterEach(() => {
+    localStorage.removeItem(HIGH_SCORE_KEY);
+});
 
 function startPlaying() {
     mountFixture();
@@ -117,31 +124,91 @@ test("coin pickups bank clock time even before the tier starts ticking it", () =
 });
 
 test("completing level 15 ends the run in GAME_COMPLETE with overlay and persisted high score", () => {
-    localStorage.removeItem(HIGH_SCORE_KEY);
-    try {
-        const game = reachGameComplete();
+    localStorage.removeItem(HIGH_SCORE_KEY); // start from clean storage (exact persistence check)
+    const game = reachGameComplete();
 
-        expect(game.currentLevel).toBe(15);
-        expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
-        expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
-        expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
-        expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
-    } finally {
-        // localStorage outlives this file on the shared happy-dom Window:
-        // leave no high score behind for later files' assertions.
-        localStorage.removeItem(HIGH_SCORE_KEY);
-    }
+    expect(game.currentLevel).toBe(15);
+    expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
+    expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
+    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
 });
 
 test("a lower finishing score keeps the stored high score", () => {
     localStorage.setItem(HIGH_SCORE_KEY, '9999');
-    try {
-        reachGameComplete();
+    reachGameComplete();
 
-        expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('9999');
-        expect(document.getElementById('high-score').textContent).toBe('High Score: 9999');
+    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('9999');
+    expect(document.getElementById('high-score').textContent).toBe('High Score: 9999');
+});
+
+// Spec §Error Handling (high score): storage failures warn and continue —
+// the run must still land on GAME_COMPLETE showing its own score as the high
+// score, never stall in LEVEL_COMPLETE re-entering handleGameComplete.
+// Without these tests, deleting the try/catch in main.js keeps the suite
+// green and reintroduces the soft-lock (prior review S13). handleGameComplete
+// is the only storage consumer in game code, so patching before
+// reachGameComplete() aims the throw precisely at it. Returns a restore fn.
+function installThrowingStorage(method) {
+    const original = localStorage[method];
+    Object.defineProperty(localStorage, method, {
+        value: () => { throw new Error(`${method} unavailable`); },
+        configurable: true,
+        writable: true,
+    });
+    return () => {
+        Object.defineProperty(localStorage, method, {
+            value: original,
+            configurable: true,
+            writable: true,
+        });
+    };
+}
+
+function assertStorageFailureCompletesRun(game) {
+    expect(game.state).toBe(STATE.GAME_COMPLETE);
+    expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
+    // No soft-lock: further updates must not re-enter the completion path.
+    game.update(DT);
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_COMPLETE);
+}
+
+test("a getItem failure still completes the run, warning and showing the run score as high score", () => {
+    let warned = 0;
+    const originalWarn = console.warn;
+    console.warn = () => { warned++; };
+    try {
+        const restore = installThrowingStorage('getItem');
+        try {
+            const game = reachGameComplete();
+            assertStorageFailureCompletesRun(game);
+            expect(warned).toBe(1);
+        } finally {
+            restore();
+        }
     } finally {
-        localStorage.removeItem(HIGH_SCORE_KEY);
+        console.warn = originalWarn;
+    }
+});
+
+test("a setItem failure still completes the run, warning and showing the run score as high score", () => {
+    let warned = 0;
+    const originalWarn = console.warn;
+    console.warn = () => { warned++; };
+    try {
+        localStorage.setItem(HIGH_SCORE_KEY, '100'); // lower than 250: forces the setItem path
+        const restore = installThrowingStorage('setItem');
+        try {
+            const game = reachGameComplete();
+            assertStorageFailureCompletesRun(game);
+            expect(warned).toBe(1);
+        } finally {
+            restore();
+        }
+    } finally {
+        console.warn = originalWarn;
     }
 });
 

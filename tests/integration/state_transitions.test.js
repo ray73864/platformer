@@ -267,6 +267,47 @@ test("clicking #pause-btn pauses and toggles its accessible name", () => {
     expect(pauseBtn.getAttribute('aria-label')).toBe('Pause Game');
 });
 
+test("fresh MENU keeps the HUD hidden and the pause control out of the tab order", () => {
+    // I2 baseline: on load there is no run to pause; a focusable "Pause Game"
+    // that silently no-ops fails WCAG 2.4.6/3.2.2.
+    mountFixture();
+    new Game();
+
+    expect(document.getElementById('hud').style.display).toBe('none');
+    expect(document.getElementById('pause-btn').disabled).toBe(true);
+});
+
+test("the pause control is disabled and inert on GAME_OVER; Escape still returns to MENU", () => {
+    // I2: previously the button stayed focusable under the end overlay with
+    // the name "Pause Game" while Enter/Space silently navigated to MENU,
+    // stranding keyboard/screen-reader users away from score and Retry.
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(0.016);
+    expect(game.state).toBe(STATE.GAME_OVER);
+
+    const pauseBtn = document.getElementById('pause-btn');
+    expect(pauseBtn.disabled).toBe(true);
+    pauseBtn.click(); // even if a harness dispatches on disabled buttons,
+    expect(game.state).toBe(STATE.GAME_OVER); // end-screen nav is Escape-only now
+
+    pressEscape();
+    expect(game.state).toBe(STATE.MENU);
+});
+
+test("publishLevel re-enables the pause control for the new level", () => {
+    mountFixture();
+    new Game();
+    document.getElementById('start-btn').click();
+
+    expect(document.getElementById('hud').style.display).toBe('flex');
+    expect(document.getElementById('pause-btn').disabled).toBe(false);
+});
+
 test("setState rejects an invalid target and leaves the state untouched", () => {
     mountFixture();
     const game = new Game();

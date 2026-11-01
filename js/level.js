@@ -269,7 +269,12 @@ export class Level {
             // reject every candidate on heavily fragmented maps, so hazard
             // presence is required here too (level 5+ always ships spikes).
             if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
-                valid = this.countTilesOfType(4) > 0 &&
+                // Check what actually deploys, not raw markers: a marker that
+                // fails deriveEnemySpawns' band/reachability/patrolSpan filters
+                // ships zero enemies while a raw count reports success. Same
+                // call spawnEnemies() makes below, on the same tiles and
+                // reachableTiles, so guard and deployment cannot diverge.
+                valid = this.deriveEnemySpawns().length > 0 &&
                     this.countTilesOfType(2) > 0;
             }
             attempt++;

@@ -1,3 +1,10 @@
+// keydown targets the focused element (body when nothing is). tagName over
+// instanceof: harnesses may deliver events whose target comes from another
+// DOM realm than this module's globals.
+function isButtonTarget(event) {
+    return !!event.target && event.target.tagName === 'BUTTON';
+}
+
 export class InputHandler {
     constructor() {
         this.keys = new Set();
@@ -66,7 +73,12 @@ export class InputHandler {
                 this.onMoveLeftCallback?.();
             } else if (code === 'ArrowRight' || code === 'KeyD') {
                 this.onMoveRightCallback?.();
-            } else if (code === 'Space') {
+            } else if (code === 'Space' && !isButtonTarget(event)) {
+                // A focused <button> activates on Space at keyup (UI Events
+                // spec). Firing the jump callback as well would make one press
+                // both jump and click the button. While a control holds focus,
+                // Space belongs to that control; Enter still reaches buttons
+                // untouched, and gameplay resumes once focus leaves it.
                 this.onJumpCallback?.();
             }
         }

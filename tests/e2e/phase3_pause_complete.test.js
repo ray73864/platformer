@@ -90,6 +90,36 @@ test("the HUD pause button pauses and its accessible name toggles", async () => 
     assertConsoleClean();
 }, 60000);
 
+test("Space after clicking the pause button jumps without re-pausing", async () => {
+    // I1 regression: a real-browser click leaves focus on #pause-btn, and
+    // every later Space press then both jumped (window keydown) and toggled
+    // pause (button activation at keyup). The fix blurs after activation and
+    // suppresses the jump while a button holds focus; happy-dom has no
+    // focus-activation model, so this needs the real browser.
+    openGame(SESSION, server.url);
+    startGame(SESSION);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+    waitLanded(SESSION);
+
+    ab(SESSION, "click", "#pause-btn");
+    abWaitFn(SESSION, "window.game.state === 'PAUSED'");
+    ab(SESSION, "press", "Escape");
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+
+    // Focus must not have stuck to the button after the click.
+    expect(abEvalJSON(SESSION, "document.activeElement.tagName")).toBe("BODY");
+
+    // One Space press: jumps (vy < 0 observed) and stays PLAYING — before
+    // the fix this same press strobed PAUSED↔PLAYING mid-jump.
+    ab(SESSION, "press", "Space");
+    abWaitFn(SESSION, "window.game.player.vy < 0");
+    expect(abEvalJSON(SESSION, "window.game.state")).toBe("PLAYING");
+    waitLanded(SESSION);
+    expect(abEvalJSON(SESSION, "window.game.state")).toBe("PLAYING");
+    expect(elementState(SESSION, "pause-screen").hidden).toBe(true);
+    assertConsoleClean();
+}, 60000);
+
 test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", async () => {
     openGame(SESSION, server.url);
     startGame(SESSION);

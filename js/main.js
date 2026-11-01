@@ -71,6 +71,11 @@ export class Game {
         // Camera viewport is in CSS pixels, not the device-pixel backing store.
         this.camera = new Camera(window.innerWidth, window.innerHeight);
         this.ui = new UI();
+        // MENU baseline: with no run in progress the HUD has nothing to show,
+        // and hiding it also takes #pause-btn out of the tab order on a fresh
+        // load (startGame's publishLevel re-enables it).
+        this.ui.hideHUD();
+        this.ui.setPauseEnabled(false);
         // One run clock for the whole game: time carries over between levels
         // because nothing resets it mid-run (startGame() and retryLevel()
         // deliberately re-arm it; level transitions never do). Whether it
@@ -101,10 +106,11 @@ export class Game {
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
 
-        // Bind event listeners
-        this.bindEvents();
-
+        // Register before binding: bindEvents throws on missing buttons, and
+        // an unregistered half-constructed Game would keep its resize and
+        // InputHandler window listeners out of destroyAllGames' reach.
         liveGames.add(this);
+        this.bindEvents();
 
         // Start game loop
         requestAnimationFrame((time) => this.loop(time));
@@ -161,8 +167,14 @@ export class Game {
         // Spec §Accessibility: pause/resume must be keyboard-operable with a
         // toggling accessible name, not Escape-only. A native button gives
         // Tab/Enter for free; togglePause keeps the label in sync however the
-        // pause was entered.
-        pauseBtn.addEventListener('click', () => this.togglePause());
+        // pause was entered. blur() matters: a focused <button> activates on
+        // Space at keyup, so after a mouse click every later Space press would
+        // strobe PAUSED↔PLAYING (input.js suppresses the jump half while a
+        // button holds focus, but gameplay must not silently lose it either).
+        pauseBtn.addEventListener('click', () => {
+            this.togglePause();
+            pauseBtn.blur();
+        });
 
         // Input listener.
         // Immediate jump while grounded (or within coyote reach of the ground
@@ -194,9 +206,17 @@ export class Game {
         // events with an empty `code` (see input.js resolveCode). Filter OS
         // autorepeat like InputHandler does for its own keys: holding Escape
         // would otherwise strobe PAUSED↔PLAYING and bleed the run clock on
-        // frames landing in PLAYING.
+        // frames landing in PLAYING. End-screen navigation lives here and NOT
+        // in togglePause: it is an Escape affordance, not a pause-button one
+        // (the button is disabled in those states; see setPauseEnabled).
         window.addEventListener('keydown', (e) => {
-            if ((e.code === 'Escape' || e.key === 'Escape') && !e.repeat) this.togglePause();
+            if ((e.code === 'Escape' || e.key === 'Escape') && !e.repeat) {
+                if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
+                    this.returnToMenu();
+                } else {
+                    this.togglePause();
+                }
+            }
         }, { signal: this._abort.signal });
     }
 
@@ -212,6 +232,10 @@ export class Game {
         return true;
     }
 
+    // Pause is strictly PLAYING↔PAUSED. End screens are handled by the
+    // Escape keypath (returnToMenu), never by this method: a still-live
+    // "Pause Game" button on GAME_OVER that silently jumped to MENU would
+    // strand keyboard/screen-reader users away from the score and Retry.
     togglePause() {
         if (this.state === STATE.PLAYING) {
             this.setState(STATE.PAUSED);
@@ -221,16 +245,18 @@ export class Game {
             this.setState(STATE.PLAYING);
             this.ui.hideOverlay('pause-screen');
             this.ui.setPauseLabel(false);
-        } else if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
-            // Spec: Escape on an end screen returns to MENU, never pauses.
-            this.setState(STATE.MENU);
-            this.ui.hideOverlay('game-over-screen');
-            this.ui.hideOverlay('game-complete-screen');
-            this.ui.showOverlay('menu-screen');
-            // The HUD sits above the 85%-opaque menu overlay: without this
-            // the finished run's Score/Level/Time ghost through the menu.
-            this.ui.hideHUD();
         }
+    }
+
+    // Spec: Escape on an end screen returns to MENU, never pauses.
+    returnToMenu() {
+        this.setState(STATE.MENU);
+        this.ui.hideOverlay('game-over-screen');
+        this.ui.hideOverlay('game-complete-screen');
+        this.ui.showOverlay('menu-screen');
+        // The HUD sits above the 85%-opaque menu overlay: without this
+        // the finished run's Score/Level/Time ghost through the menu.
+        this.ui.hideHUD();
     }
 
     startGame() {
@@ -297,8 +323,13 @@ export class Game {
         // runs at all on this level.
         this.timerActive = this.difficulty.isTimerEnabled(this.currentLevel);
         this.ui.setTimerVisible(this.timerActive);
+        // Write the carried time before revealing the node: otherwise the
+        // first painted frame shows whatever text it last held (e.g. a stale
+        // "Time: 1:00" when entering level 5 with 12 s carried over).
+        this.ui.updateTimer(this.timer.getTimeRemaining());
         this.setState(STATE.PLAYING);
         this.ui.setPauseLabel(false);
+        this.ui.setPauseEnabled(true);
         this.camera.reset();
         // Snap the camera onto the new level immediately: reset() alone would
         // render one frame of fresh terrain through the default origin on
@@ -329,6 +360,9 @@ export class Game {
 
     handleWin() {
         this.setState(STATE.LEVEL_COMPLETE);
+        // The transition is automatic and not pausable: drop the button out
+        // of the tab order until publishLevel re-enables it.
+        this.ui.setPauseEnabled(false);
         this.levelCompleteTimer = 2; // 2 seconds transition
         this.levelTransitionStalled = false;
 
@@ -340,6 +374,7 @@ export class Game {
 
     handleGameOver() {
         this.setState(STATE.GAME_OVER);
+        this.ui.setPauseEnabled(false);
         // Single game-over presentation path: UI.showGameOver writes the
         // #final-score node and reveals the overlay.
         this.ui.showGameOver(this.score);
@@ -347,12 +382,17 @@ export class Game {
 
     handleGameComplete() {
         this.setState(STATE.GAME_COMPLETE);
+        this.ui.setPauseEnabled(false);
         let highScore = this.score;
         // Storage-disabled environments throw from getItem/setItem. An
         // uncaught throw here would leave state LEVEL_COMPLETE with an expired
         // timer, so update() would re-enter every frame and flood the loop's
         // console.error. Spec: warn and continue, showing the run score as the
         // high score when storage is unavailable.
+        // Accepted trade-off: this read-modify-write is unlocked, so two tabs
+        // completing a run simultaneously can lose the higher score. A single-
+        // player local game has no cross-tab reconciliation requirement; if
+        // that ever changes, re-read before writing or listen for `storage`.
         try {
             const stored = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0;
             if (this.score > stored) {

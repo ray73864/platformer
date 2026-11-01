@@ -48,6 +48,16 @@ export class UI {
         button.textContent = paused ? 'Resume' : 'Pause';
     }
 
+    // The pause control is only meaningful in PLAYING/PAUSED. Outside those
+    // states it is disabled rather than hidden: a focusable no-op (or worse,
+    // an end-screen control that silently navigates) fails WCAG 2.4.6/3.2.2,
+    // while `disabled` removes it from the tab order and announces it as such.
+    setPauseEnabled(enabled) {
+        const button = document.getElementById('pause-btn');
+        if (!button) return;
+        button.disabled = !enabled;
+    }
+
     updateScore(score) {
         if (this.scoreElement) {
             this.scoreElement.textContent = `Score: ${score}`;

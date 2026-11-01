@@ -117,3 +117,24 @@ test("held keys are released when the window loses focus", () => {
     window.dispatchEvent(new Event("blur"));
     expect(input.isRight()).toBe(false);
 });
+
+test("Space targeting a focused button does not fire the jump callback", () => {
+    // Regression for I1: a focused <button> activates on Space at keyup (UI
+    // Events spec), so firing the jump callback too made one press both jump
+    // and click the button. While a control holds focus, Space belongs to it.
+    const input = new InputHandler();
+    let jumpCount = 0;
+    input.onJump(() => { jumpCount++; });
+
+    const button = document.createElement("button");
+    input.handleKeyDown({ code: "Space", target: button });
+    expect(jumpCount).toBe(0);
+
+    // Focus back on the page (body / no target): gameplay jump as normal.
+    input.handleKeyUp({ code: "Space" });
+    input.handleKeyDown({ code: "Space" });
+    expect(jumpCount).toBe(1);
+    input.handleKeyUp({ code: "Space" });
+    input.handleKeyDown({ code: "Space", target: document.body });
+    expect(jumpCount).toBe(2);
+});

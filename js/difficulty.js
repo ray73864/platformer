@@ -33,7 +33,16 @@ const LEVEL_CONFIGS = {
 };
 
 // Tier lookup is internal: consumers ask for the specific parameter they need.
+// Spec §Error Handling (Difficulty Scaling): level number must be a positive
+// integer; anything else warns and falls back to the basic tier instead of
+// silently landing on a tier through comparison fall-through (NaN reaches
+// basic only by accident, and 5.7 would reach intermediate).
 function configFor(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1) {
+        console.warn('Invalid level number for difficulty scaling:',
+            levelNumber, '- defaulting to basic tier');
+        return LEVEL_CONFIGS.basic;
+    }
     if (levelNumber >= 10) return LEVEL_CONFIGS.advanced;
     if (levelNumber >= PHASE2_FIRST_LEVEL) return LEVEL_CONFIGS.intermediate;
     return LEVEL_CONFIGS.basic;
@@ -54,6 +63,9 @@ export class Difficulty {
     }
 
     hasPhase2Content(levelNumber) {
-        return levelNumber >= PHASE2_FIRST_LEVEL;
+        // Same validity contract as configFor: an invalid level number must
+        // read as basic tier here too, or the generator would gate Phase 2
+        // content on a tier the size/clock lookups refused to select.
+        return Number.isInteger(levelNumber) && levelNumber >= PHASE2_FIRST_LEVEL;
     }
 }
