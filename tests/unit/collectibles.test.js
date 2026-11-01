@@ -198,7 +198,7 @@ test("meetsPortalRequirement is true at 3 of 3 coins", () => {
     expect(collectibles.meetsPortalRequirement()).toBe(true); // 3/3
 });
 
-test("meetsPortalRequirement is true when collected overshoots total", () => {
+test("meetsPortalRequirement stays true when the coin list shrinks after collection", () => {
     const collectibles = new Collectibles();
     for (let i = 0; i < 3; i++) {
         collectibles.addCoin(i * 32, 0);
@@ -206,8 +206,9 @@ test("meetsPortalRequirement is true when collected overshoots total", () => {
     for (let i = 0; i < 3; i++) {
         collectibles.collectCoin(i);
     }
-    // Force collected above total: three coins were scored, then the coin
-    // list shrank to two from outside the class.
+    // Three real coins were collected (flags set), then the list shrank to
+    // two from outside the class: direct counting sees 2/2, which clears the
+    // threshold. The spec's overshoot guard stays as defensive dead code.
     collectibles.coins.length = 2;
 
     expect(collectibles.meetsPortalRequirement()).toBe(true);
