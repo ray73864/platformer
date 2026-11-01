@@ -42,7 +42,7 @@ function spawnBandEnemy(level, { wide = false } = {}) {
 
 test("Level spawns injected enemy tiles into its exposed manager, and a real Player on the enemy dies", () => {
     const level = new Level(1, TILE);
-    const { enemy, x, y } = spawnBandEnemy(level);
+    const { x, y } = spawnBandEnemy(level);
 
     // Delegation seam: getEnemyManager() must be the very instance
     // spawnEnemies() populated, holding the enemy at the tile's pixel space.
