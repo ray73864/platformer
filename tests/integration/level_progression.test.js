@@ -65,6 +65,22 @@ test("run clock carries over a real portal win into the next level", () => {
     expect(document.getElementById('timer-display').textContent).toBe('Time: 0:49');
 });
 
+test("timer HUD visibility follows the difficulty tier", () => {
+    const game = startPlaying();
+    const timerEl = document.getElementById('timer-display');
+    // Basic tier (level 1): the clock node stays hidden.
+    expect(timerEl.classList.contains('hidden')).toBe(true);
+
+    game.currentLevel = 5;
+    game.startLevel();
+    expect(timerEl.classList.contains('hidden')).toBe(false);
+
+    // Back down to a basic tier (as Play Again does): hidden again.
+    game.currentLevel = 1;
+    game.startLevel();
+    expect(timerEl.classList.contains('hidden')).toBe(true);
+});
+
 test("real Level constructions grow across difficulty tiers on horizontal levels", () => {
     // directionForLevel cycles right/left/vertical from level 5, so the
     // advanced tier's horizontal numbers are 11 and 12 — never 10.

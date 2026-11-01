@@ -211,6 +211,7 @@ export class Game {
         // Difficulty tier is the single authority for whether the run clock
         // runs at all on this level.
         this.timerActive = this.difficulty.isTimerEnabled(this.currentLevel);
+        this.ui.setTimerVisible(this.timerActive);
         this.state = STATE.PLAYING;
         this.camera.reset();
         // Snap the camera onto the new level immediately: reset() alone would

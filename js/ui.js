@@ -50,6 +50,14 @@ export class UI {
         }
     }
 
+    // The run clock is timed-tiers-only: the HUD node starts hidden and is
+    // revealed exactly when a level's difficulty tier enables the clock.
+    setTimerVisible(visible) {
+        if (this.timerElement) {
+            this.timerElement.classList.toggle('hidden', !visible);
+        }
+    }
+
     updateTimer(timeRemaining) {
         if (this.timerElement) {
             const minutes = Math.floor(timeRemaining / 60);
