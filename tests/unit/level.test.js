@@ -16,10 +16,12 @@ function mulberry32(seed) {
 
 // Per-direction band where spike (type 2) and enemy-marker (type 4) tiles
 // are allowed during generation:
-// - 'right': canonical columns x ∈ [6, w-5] (spawn zone x < 6, portal band
-//   x >= w-4 excluded).
+// - 'right': canonical columns x ∈ [6, w-6] (spawn zone x < 6, portal band
+//   x >= w-4 excluded). The one-column buffer at w-6 keeps a patrol clamped
+//   to this band disjoint from the portal band; the old w-5 bound let the
+//   mirrored band [4, w-7] overlap the left portal band [2, 4] at column 4.
 // - 'left': the same canonical placement mirrored (x -> w-1-x), so the
-//   allowed band mirrors to x ∈ [4, w-7].
+//   allowed band mirrors to x ∈ [5, w-7].
 // - 'vertical': rows between the bottom spawn neighborhood (y >= h-6) and
 //   the top portal band (y <= 4) excluded, leaving y ∈ [5, h-7].
 function allowedHazardRange(level) {
@@ -27,9 +29,9 @@ function allowedHazardRange(level) {
         return { axis: "y", min: 5, max: level.height - 7 };
     }
     if (level.direction === "left") {
-        return { axis: "x", min: 4, max: level.width - 7 };
+        return { axis: "x", min: 5, max: level.width - 7 };
     }
-    return { axis: "x", min: 6, max: level.width - 5 };
+    return { axis: "x", min: 6, max: level.width - 6 };
 }
 
 function countType(tiles, type) {
@@ -287,33 +289,78 @@ test("Phase 2 levels place surface spikes within density and safe zones", () => 
     }
 });
 
-test("enemy markers sit on standable tiles atop runs at least 3 wide", () => {
+test("enemy markers sit on standable tiles and patrols stay walkable, banded, and clear of spawn/portal", () => {
+    for (const n of [5, 6, 7, 8, 9]) {
+        for (let build = 0; build < 5; build++) {
+            const level = new Level(n, 32);
+            const target = Math.min(5, Math.floor(n / 2));
+            const range = allowedHazardRange(level);
+            const markers = tilesOfType(level.tiles, 4);
+
+            // The validation loop rejects zero-marker constructions at
+            // level 5+, so this is deterministic, not a terrain lottery.
+            expect(markers.length).toBeGreaterThan(0);
+            expect(markers.length).toBeLessThanOrEqual(target);
+
+            for (const m of markers) {
+                // Never inside the direction's spawn zone or portal band.
+                expect(m[range.axis]).toBeGreaterThanOrEqual(range.min);
+                expect(m[range.axis]).toBeLessThanOrEqual(range.max);
+                // Standable: air tile with solid ground beneath.
+                expect(level.tiles[m.y + 1][m.x]).toBe(1);
+            }
+
+            const band = level.patrolBandBounds();
+            const spawn = level.getSpawnTile();
+            const portalCol = Math.floor(level.portal.x / 32);
+            const enemies = level.getEnemyManager().enemies;
+            expect(enemies.length).toBeLessThanOrEqual(markers.length);
+
+            for (const e of enemies) {
+                const y = e.y / 32;
+                const leftTile = e.minX / 32;
+                const rightTile = e.maxX / 32 - 1;
+                expect(rightTile).toBeGreaterThanOrEqual(leftTile);
+                // Patrol bounds contain the spawn position.
+                expect(e.x).toBeGreaterThanOrEqual(e.minX);
+                expect(e.x + e.width).toBeLessThanOrEqual(e.maxX);
+
+                for (let c = leftTile; c <= rightTile; c++) {
+                    // I4: no rock or spike anywhere along the walk row.
+                    expect(level.tiles[y][c]).not.toBe(1);
+                    expect(level.tiles[y][c]).not.toBe(2);
+                    // And every patrolled column has real support.
+                    expect(level.tiles[y + 1][c]).toBe(1);
+                }
+
+                if (level.direction !== "vertical") {
+                    // I3: the band clamp keeps patrols out of the spawn
+                    // column and the portal column entirely.
+                    expect(leftTile).toBeGreaterThanOrEqual(band[0]);
+                    expect(rightTile).toBeLessThanOrEqual(band[1]);
+                    expect(leftTile <= spawn.x && spawn.x <= rightTile)
+                        .toBe(false);
+                    expect(leftTile <= portalCol && portalCol <= rightTile)
+                        .toBe(false);
+                }
+            }
+        }
+    }
+});
+
+test("coins never sit on a tile any enemy patrol sweeps", () => {
     for (const n of [5, 6, 7, 8, 9]) {
         const level = new Level(n, 32);
-        const target = Math.min(5, Math.floor(n / 2));
-        const range = allowedHazardRange(level);
-        const markers = tilesOfType(level.tiles, 4);
-
-        expect(markers.length).toBeGreaterThan(0);
-        expect(markers.length).toBeLessThanOrEqual(target);
-
-        for (const m of markers) {
-            // Never inside the direction's spawn zone or portal band.
-            expect(m[range.axis]).toBeGreaterThanOrEqual(range.min);
-            expect(m[range.axis]).toBeLessThanOrEqual(range.max);
-            // Standable: air tile with solid ground beneath.
-            expect(level.tiles[m.y + 1][m.x]).toBe(1);
-            // Patrol exists: contiguous solid run under the walk row >= 3.
-            let left = m.x;
-            while (level.tiles[m.y + 1][left - 1] === 1) left--;
-            let right = m.x;
-            while (level.tiles[m.y + 1][right + 1] === 1) right++;
-            expect(right - left + 1).toBeGreaterThanOrEqual(3);
+        const covered = new Set();
+        for (const e of level.getEnemyManager().enemies) {
+            const y = e.y / 32;
+            for (let c = e.minX / 32; c <= e.maxX / 32 - 1; c++) {
+                covered.add(`${c},${y}`);
+            }
         }
-
-        // Spawned enemies never exceed the validated markers on the grid.
-        expect(level.getEnemyManager().enemies.length)
-            .toBeLessThanOrEqual(markers.length);
+        for (const coin of level.getCoins()) {
+            expect(covered.has(`${coin.x / 32},${coin.y / 32}`)).toBe(false);
+        }
     }
 });
 
@@ -412,6 +459,19 @@ test("BFS never marks spike tiles or their tips as reachable", () => {
         expect(reachable.has((height - 2) * width + sx)).toBe(false);
         // Standing on the spike tip: the spike provides no support.
         expect(reachable.has((height - 3) * width + sx)).toBe(false);
+    }
+});
+
+test("vertical patrols never sweep a route cell (S10)", () => {
+    for (let i = 0; i < 25; i++) {
+        const level = new Level(7, 32);
+        expect(level.direction).toBe("vertical");
+        for (const e of level.getEnemyManager().enemies) {
+            const y = e.y / 32;
+            for (let c = e.minX / 32; c <= e.maxX / 32 - 1; c++) {
+                expect(level.pathCells.has(y * level.width + c)).toBe(false);
+            }
+        }
     }
 });
 

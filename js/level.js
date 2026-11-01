@@ -256,6 +256,14 @@ export class Level {
             );
             this.portalTile = this.pickPortalTile();
             valid = this.portalTile !== null;
+            // Patrol AI from level 5 onward is a product contract (README).
+            // Jagged Phase-2 terrain can leave no legal marker site inside
+            // the band, so a zero-marker construction is rejected here —
+            // otherwise unit tests would flake on terrain variance (~0.1% of
+            // constructions) and level 5+ could ship with no enemies at all.
+            if (valid && this.levelNumber >= 5) {
+                valid = this.countTilesOfType(4) > 0;
+            }
             attempt++;
         }
 
@@ -403,7 +411,8 @@ export class Level {
                 tiles[row][cx] = 1;
             }
             // Jump-off and landing cells carry the route: protect them from
-            // spikes. Markers are plain air to the BFS and harmless there.
+            // spikes AND enemy markers (a patrol sweeping a route cell
+            // makes the only validated climb periodically lethal, S10).
             this.pathCells.add(row * w + x);
             this.pathCells.add((row - 1) * w + c);
             x = c;
@@ -462,9 +471,11 @@ export class Level {
 
     // Generation-space exclusion for spikes and enemy markers. Canonical
     // right-facing space keeps the spawn zone (x < 6) and portal band
-    // (x >= width - 4) clear; 'left' generates in that same space and
-    // mirrors afterwards, which maps its allowed band x ∈ [6, w-5] exactly
-    // onto x ∈ [4, w-7]. Vertical space keeps the bottom spawn neighborhood
+    // (x >= width - 4) clear with a one-column buffer; 'left' generates in
+    // that same space and mirrors afterwards, which maps its allowed band
+    // x ∈ [6, w-6] exactly onto x ∈ [5, w-7] — disjoint from the mirrored
+    // portal band x ∈ [2, 4] (the old w-5 bound overlapped it at column 4).
+    // Vertical space keeps the bottom spawn neighborhood
     // (y >= height - VERTICAL_SPAWN_EXCL_ROWS) and the top portal band
     // (y <= VERTICAL_PORTAL_MAX_Y) clear.
     hazardPlacementAllowed(coord) {
@@ -472,7 +483,81 @@ export class Level {
             return coord > VERTICAL_PORTAL_MAX_Y &&
                 coord < this.height - VERTICAL_SPAWN_EXCL_ROWS;
         }
-        return coord >= 6 && coord <= this.width - 5;
+        return coord >= 6 && coord <= this.width - 6;
+    }
+
+    // Tile bounds of the band a patrol may sweep, per direction: mirrors
+    // hazardPlacementAllowed's canonical band. Patrols are clamped here so
+    // they can never sweep the spawn tile or the portal band (I3): support-
+    // row runs alone leak past both because the forced-flat spawn ground
+    // connects to terrain beyond column 5.
+    patrolBandBounds() {
+        if (this.direction === 'left') {
+            return [5, this.width - 7];
+        }
+        if (this.direction === 'vertical') {
+            return [0, this.width - 1];
+        }
+        return [6, this.width - 6];
+    }
+
+    // Free patrol span around a marker candidate (x, y): contiguous columns
+    // whose walk row is actually walkable — solid support beneath AND the
+    // body row itself free of rock and spikes. A support-only scan sweeps
+    // into neighbouring terrain because heightmaps rise up to one tile per
+    // column (a step-up's mass occupies this row), and type-2 spikes sit on
+    // the walk row and are lethal, not terrain (I4). Other markers (type 4)
+    // sit on ordinary standable air and do not break a run. On vertical
+    // levels the recorded route cells also end a run: an enemy sweeping a
+    // jump-off/landing cell makes the only validated climb periodically
+    // lethal with no stomp mechanic (S10). Returns null when the marker
+    // tile itself is unsupported or on the route.
+    patrolSpan(tiles, x, y) {
+        const solidAt = (cx, cy) =>
+            cx >= 0 && cx < this.width && cy >= 0 && cy < this.height &&
+            tiles[cy][cx] === 1;
+        const blockedByRoute = (cx, cy) =>
+            this.pathCells !== null &&
+            this.pathCells.has(cy * this.width + cx);
+        const walkable = (cx, cy) =>
+            cx >= 0 && cx < this.width && cy >= 0 && cy < this.height &&
+            tiles[cy][cx] !== 1 && tiles[cy][cx] !== 2 &&
+            !blockedByRoute(cx, cy);
+        if (!solidAt(x, y + 1) || blockedByRoute(x, y)) return null;
+        let left = x;
+        while (solidAt(left - 1, y + 1) && walkable(left - 1, y)) left--;
+        let right = x;
+        while (solidAt(right + 1, y + 1) && walkable(right + 1, y)) right++;
+        return { left, right };
+    }
+
+    // One geometry pass over the grid's type-4 markers producing every
+    // valid enemy deployment: standable marker tile, reachable from the
+    // player spawn, free patrol span (patrolSpan), clamped to the
+    // direction's band (patrolBandBounds). Shared by spawnEnemies and the
+    // coin exclusion so patrol bounds and coin placement can never diverge.
+    // Markers outside the band are skipped: the generator never emits them,
+    // and an enemy whose spawn column sits beyond its own clamped bounds
+    // would teleport on its first tick.
+    deriveEnemySpawns() {
+        const spawns = [];
+        const [bandMin, bandMax] = this.patrolBandBounds();
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.tiles[y][x] !== 4) continue;
+                if (x < bandMin || x > bandMax) continue;
+                if (!this.reachableTiles.has(y * this.width + x)) continue;
+                const span = this.patrolSpan(this.tiles, x, y);
+                if (!span) continue;
+                spawns.push({
+                    x,
+                    y,
+                    left: Math.max(span.left, bandMin),
+                    right: Math.min(span.right, bandMax)
+                });
+            }
+        }
+        return spawns;
     }
 
     placeSpikes(tiles) {
@@ -537,11 +622,15 @@ export class Level {
             x >= 0 && x < this.width && y >= 0 && y < this.height &&
             tiles[y][x] === 1;
 
-        // Markers need a standable air tile whose contiguous solid run
-        // beneath is at least 3 columns wide, so every spawned enemy gets a
-        // real patrol. The direction's spawn zone and portal band are both
-        // excluded (see hazardPlacementAllowed); markers never overwrite
-        // spike tiles (those are no longer air).
+        // Markers need a standable air tile whose FREE patrol span beneath
+        // is at least 3 columns wide, so every spawned enemy gets a real
+        // walkable patrol (patrolSpan: rock and spikes on the walk row end
+        // a run; support alone does not make one). The direction's spawn
+        // zone and portal band are both excluded (see
+        // hazardPlacementAllowed); markers never overwrite spike tiles
+        // (those are no longer air), and vertical route cells are off
+        // limits: an enemy sweeping a jump-off/landing cell makes the only
+        // validated climb periodically lethal with no stomp mechanic (S10).
         const candidates = [];
         for (let y = 0; y < this.height - 1; y++) {
             for (let x = 0; x < this.width; x++) {
@@ -550,11 +639,20 @@ export class Level {
                     continue;
                 }
                 if (tiles[y][x] !== 0 || !solidAt(x, y + 1)) continue;
-                let left = x;
-                while (solidAt(left - 1, y + 1)) left--;
-                let right = x;
-                while (solidAt(right + 1, y + 1)) right++;
-                if (right - left + 1 >= 3) candidates.push({ x, y });
+                if (this.pathCells &&
+                    this.pathCells.has(y * this.width + x)) {
+                    continue;
+                }
+                const span = this.patrolSpan(tiles, x, y);
+                // Horizontal runs demand >=3 free columns for a real patrol.
+                // Vertical ledge tops are one jump apart and their route
+                // cells split the surface into short segments (S10 blocks
+                // patrols from sweeping them), so 2 free columns is the
+                // narrowest legal moving patrol there.
+                const minWidth = this.direction === 'vertical' ? 2 : 3;
+                if (span && span.right - span.left + 1 >= minWidth) {
+                    candidates.push({ x, y });
+                }
             }
         }
         shuffle(candidates);
@@ -632,10 +730,20 @@ export class Level {
             ? this.portalTile.y * this.width + this.portalTile.x
             : -1;
 
-        // Only place coins on tiles the player can actually reach.
+        // Only place coins on tiles the player can actually reach — and
+        // never under an enemy patrol: the game loop's death check precedes
+        // collection, so a coin inside a sweep is bait for a kill (before
+        // this exclusion ~18% of coins sat on the enemy's own marker tile).
+        const patrolCovered = new Set();
+        for (const s of this.deriveEnemySpawns()) {
+            for (let cx = s.left; cx <= s.right; cx++) {
+                patrolCovered.add(s.y * this.width + cx);
+            }
+        }
         const candidates = [];
         for (const key of this.reachableTiles) {
             if (key === spawnKey || key === portalKey) continue;
+            if (patrolCovered.has(key)) continue;
             const x = key % this.width;
             const y = Math.floor(key / this.width);
             candidates.push({ x, y });
@@ -675,6 +783,16 @@ export class Level {
         return coins;
     }
 
+    countTilesOfType(type) {
+        let n = 0;
+        for (const row of this.tiles) {
+            for (const t of row) {
+                if (t === type) n++;
+            }
+        }
+        return n;
+    }
+
     extractHazards() {
         // Re-extraction replaces the list so repeated calls stay idempotent.
         this.hazards.clear();
@@ -692,44 +810,20 @@ export class Level {
         // Re-spawning replaces the list so repeated calls stay idempotent.
         this.enemyManager.clear();
 
-        // Solidity convention matches computeReachable: only type 1 is solid.
-        const solidAt = (x, y) =>
-            x >= 0 && x < this.width && y >= 0 && y < this.height &&
-            this.tiles[y][x] === 1;
-
-        for (let y = 0; y < this.height; y++) {
-            for (let x = 0; x < this.width; x++) {
-                if (this.tiles[y][x] !== 4) continue;
-
-                // Spawn validation: the tile must be standable (air with a
-                // solid tile below) AND reachable from the player spawn;
-                // anything else is skipped entirely.
-                if (!solidAt(x, y + 1)) continue;
-                if (!this.reachableTiles.has(y * this.width + x)) continue;
-
-                // Patrol bounds from real geometry: the contiguous run of
-                // solid columns under the walk row, extending outward from
-                // the spawn column, clamped within the level.
-                let left = x;
-                while (solidAt(left - 1, y + 1)) left--;
-                let right = x;
-                while (solidAt(right + 1, y + 1)) right++;
-                const minX = Math.max(0, left * this.tileSize);
-                const maxX = Math.min(
-                    (right + 1) * this.tileSize,
-                    this.width * this.tileSize
-                );
-
-                // Same placement convention as the player spawn point: the
-                // body rests inside the standable air tile, its bottom edge
-                // on the solid tile below.
-                this.enemyManager.addEnemy(
-                    x * this.tileSize,
-                    y * this.tileSize,
-                    minX,
-                    maxX
-                );
-            }
+        // Derived fresh from the current grid every call (never cached):
+        // bounds come from walkable patrol spans clamped to the direction's
+        // band, so no patrol ever sweeps the spawn tile or the portal band,
+        // and none walks through rock or spikes.
+        for (const s of this.deriveEnemySpawns()) {
+            // Same placement convention as the player spawn point: the
+            // body rests inside the standable air tile, its bottom edge
+            // on the solid tile below.
+            this.enemyManager.addEnemy(
+                s.x * this.tileSize,
+                s.y * this.tileSize,
+                s.left * this.tileSize,
+                (s.right + 1) * this.tileSize
+            );
         }
     }
 

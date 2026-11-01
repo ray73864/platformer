@@ -206,8 +206,11 @@ test("Level wires an EnemyManager instance and exposes it via getEnemyManager", 
 
 test("spawnEnemies places enemies on standable reachable tiles with geometry-derived bounds", () => {
     const tiles = twoShelfGrid();
-    tiles[11][5] = 4; // Left shelf
-    tiles[11][14] = 4; // Right shelf, across the pit
+    // Markers sit inside the patrol band (x ∈ [6, w-6] for 'right'):
+    // deriveEnemySpawns skips markers outside it, matching what the
+    // generator can actually emit.
+    tiles[11][7] = 4; // Left shelf
+    tiles[11][13] = 4; // Right shelf, across the pit
     const level = levelWithGrid(tiles);
 
     level.spawnEnemies();
@@ -218,19 +221,31 @@ test("spawnEnemies places enemies on standable reachable tiles with geometry-der
     // Body rests inside the standable air tile (same convention as the
     // player spawn): bottom edge sits on the solid tile below.
     const left = enemies[0];
-    expect(left.x).toBe(5 * 32);
+    expect(left.x).toBe(7 * 32);
     expect(left.y).toBe(11 * 32);
-    // Patrol spans the contiguous solid run under the walk row: columns
-    // 0-9 stop at the pit, so 0..320 px.
-    expect(left.minX).toBe(0);
+    // Patrol spans the walkable run under the walk row (columns 0-9 stop
+    // at the pit) clamped to the band: columns 6..9, so 192..320 px. The
+    // clamp keeps patrols out of the spawn zone and portal band (I3).
+    expect(left.minX).toBe(6 * 32);
     expect(left.maxX).toBe(10 * 32);
 
     const right = enemies[1];
-    expect(right.x).toBe(14 * 32);
+    expect(right.x).toBe(13 * 32);
     expect(right.y).toBe(11 * 32);
-    // Columns 12-19: 384..640 px.
+    // Columns 12-19 clamped to band max w-6=14: 384..480 px.
     expect(right.minX).toBe(12 * 32);
-    expect(right.maxX).toBe(20 * 32);
+    expect(right.maxX).toBe(15 * 32);
+});
+
+test("spawnEnemies skips markers outside the patrol band", () => {
+    const tiles = twoShelfGrid();
+    tiles[11][2] = 4; // Spawn-zone column (x < 6)
+    tiles[11][17] = 4; // Beyond band max (w-6 = 14)
+    const level = levelWithGrid(tiles);
+
+    level.spawnEnemies();
+
+    expect(level.getEnemyManager().enemies).toEqual([]);
 });
 
 test("spawnEnemies skips non-standable tiles", () => {
@@ -260,7 +275,7 @@ test("spawnEnemies skips unreachable tiles", () => {
 
 test("spawnEnemies is idempotent across repeated calls", () => {
     const tiles = twoShelfGrid();
-    tiles[11][5] = 4;
+    tiles[11][7] = 4;
     const level = levelWithGrid(tiles);
 
     level.spawnEnemies();
@@ -269,10 +284,10 @@ test("spawnEnemies is idempotent across repeated calls", () => {
     expect(level.getEnemyManager().enemies.length).toBe(1);
 });
 
-test("patrol bounds are clamped within level bounds", () => {
+test("patrol bounds are clamped to the band within level bounds", () => {
     const tiles = twoShelfGrid();
-    tiles[11][0] = 4; // Run touches the left wall
-    tiles[11][19] = 4; // Run touches the right wall
+    tiles[11][6] = 4; // Run extends into the excluded spawn zone columns
+    tiles[11][14] = 4; // Run extends into the excluded portal columns
     const level = levelWithGrid(tiles);
 
     level.spawnEnemies();
@@ -283,6 +298,8 @@ test("patrol bounds are clamped within level bounds", () => {
         expect(enemy.minX).toBeGreaterThanOrEqual(0);
         expect(enemy.maxX).toBeLessThanOrEqual(level.width * level.tileSize);
     }
-    expect(enemies[0].minX).toBe(0);
-    expect(enemies[1].maxX).toBe(20 * 32);
+    // The band clamp, not the wall, decides the bounds now: never sweep
+    // spawn zone columns 0-5 or portal-band columns 16-19.
+    expect(enemies[0].minX).toBe(6 * 32);
+    expect(enemies[1].maxX).toBe(15 * 32);
 });
