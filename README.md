@@ -10,12 +10,14 @@ A procedurally generated 2D platformer game built with vanilla JavaScript.
 - Level progression with increasing platform difficulty
 - Score tracking and level progression
 - **Phase 2:** coins, spike hazards, and patrolling enemies
+- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked at 70% of coins, pause via Escape, and a 15-level run ending in a game-complete screen with a saved high score
 
 ## Controls
 
 - **Arrow Left / A**: Move left
 - **Arrow Right / D**: Move right
 - **Space**: Jump
+- **Escape**: Pause / resume (on the game-over or game-complete screen, Escape returns to the menu)
 
 ## Development
 
@@ -93,7 +95,9 @@ game/
 │   ├── ui.js              # UI management
 │   ├── enemies.js         # Patrolling enemy AI (Phase 2)
 │   ├── collectibles.js    # Coin collection and scoring (Phase 2)
-│   └── hazards.js         # Spike hazard detection (Phase 2)
+│   ├── hazards.js         # Spike hazard detection (Phase 2)
+│   ├── timer.js           # Run clock with coin bonus (Phase 3)
+│   └── difficulty.js      # Difficulty tiers: size, enemy caps, timer flag (Phase 3)
 ├── tests/
 │   ├── setup/             # Test setup helpers
 │   ├── unit/              # Unit tests
@@ -119,13 +123,13 @@ game/
 
 ### Enemies
 
-- Simple patrol AI (from level 5 onward, up to 5 per level)
+- Simple patrol AI (from level 5 onward; generation caps are 5 per level for levels 5-9 and 8 from level 10, with the actual count ramping with level number inside the cap)
 - Each enemy walks back and forth along bounds derived from the solid ground beneath it
 - Contact kills the player
 
 ### Level sizing and direction
 
-- Horizontal levels are 20x15 tiles for levels 1-4 and grow to 24x18 from level 5
+- Horizontal levels are 20x15 tiles for levels 1-4, 24x18 from level 5, and 28x21 from level 10
 - Vertical levels are 15x24 climb layouts; the player starts at the bottom and reaches the portal band at the top
 - Every generated level — horizontal or vertical — is validated with a BFS reachability check before it ships
 
@@ -133,6 +137,37 @@ game/
 
 - Score accumulates across levels within a run
 - Retrying a level restores the score to what it was when that level started, so die-and-retry runs cannot farm coins
+
+## Phase 3 Features
+
+### Run clock
+
+- Levels 1-4 have no time limit; from level 5 a single 60-second clock ticks down
+- The clock is run-wide: remaining time carries over between levels
+- Each coin collected adds +2 seconds (levels 1-4 coins are score-only, with no live clock to extend)
+- Running out of time ends the run; retrying a level resets the clock to 60 seconds
+
+### Difficulty tiers
+
+- Levels 1-4 (basic): 20x15 tiles, no enemies
+- Levels 5-9 (intermediate): 24x18 tiles, enemies introduced
+- Levels 10+ (advanced): 28x21 tiles, higher enemy cap
+- The enemy caps (0 / 5 / 8) are generation ceilings; the actual count ramps with level number inside the cap
+
+### Hidden portal
+
+- The portal stays hidden and inert until at least 70% of the level's coins are collected
+- Reaching the unlocked portal completes the level
+
+### Pause
+
+- Escape pauses and resumes; the run clock freezes while paused
+- Escape on the game-over or game-complete screen returns to the menu instead of pausing
+
+### Run completion and high score
+
+- A run is 15 levels; finishing level 15 shows the game-complete screen rather than generating another level
+- The final score is compared against a high score persisted in `localStorage` (key `platformerHighScore`)
 
 ## License
 
