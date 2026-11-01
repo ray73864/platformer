@@ -80,11 +80,15 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
     // level: gate-opening via collectCoin() never touches game.score (the
     // loop scores real pickups), and a 0-score run would not exercise the
     // high-score write. Cleared storage makes the persistence check exact.
+    // Seed score BEFORE startLevel so levelStartScore snapshots 250: the
+    // GAME_OVER recovery below replays via retryLevel(), which rolls the
+    // score back to that snapshot, and the high-score assertion must survive
+    // a stray patrol winning the race.
     const summary = abEvalJSON(
         SESSION,
         `(() => { const g = window.game;
                   localStorage.removeItem('platformerHighScore');
-                  g.currentLevel = 15; g.startLevel(); g.score = 250;
+                  g.currentLevel = 15; g.score = 250; g.startLevel();
                   return { timerHidden: document.getElementById('timer-display')
                               .classList.contains('hidden'),
                            level: g.currentLevel }; })()`
@@ -93,12 +97,19 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
     expect(summary.timerHidden).toBe(false);
 
     // Meet the 70% coin gate through the real Collectibles API, then drop
-    // onto the live portal (same pattern as the phase-2 harness): clearance
-    // and the teleport happen in ONE eval, stale terrain regenerates through
-    // the seam when a patrol is in range at the moment of the drop.
-    let dropped = false;
-    for (let attempt = 0; attempt < 6 && !dropped; attempt++) {
-        dropped = abEvalJSON(
+    // onto the live portal (same pattern as the phase-2 completeViaPortal):
+    // clearance and the teleport happen in ONE eval, stale terrain
+    // regenerates when a patrol is in range at the moment of the drop, and a
+    // stray patrol that still kills the player mid-race is recovered via the
+    // retry button — L15 is the densest enemy tier, so the compound
+    // LEVEL_COMPLETE || GAME_OVER wait must not stall on a death.
+    let outcome = null;
+    for (let attempt = 0; attempt < 6 && outcome !== "LEVEL_COMPLETE"; attempt++) {
+        if (outcome === "GAME_OVER") {
+            ab(SESSION, "click", "#retry-btn");
+            abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+        }
+        const dropped = abEvalJSON(
             SESSION,
             `(() => { const g = window.game;
                       const c = g.collectibles;
@@ -118,10 +129,16 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
         );
         if (!dropped) {
             abEvalJSON(SESSION, `(() => { window.game.startLevel(); return true; })()`);
-            abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+            continue;
         }
+        abWaitFn(
+            SESSION,
+            "window.game.state === 'LEVEL_COMPLETE' ||" +
+            " window.game.state === 'GAME_OVER'"
+        );
+        outcome = abEvalJSON(SESSION, "window.game.state");
     }
-    expect(dropped).toBe(true);
+    expect(outcome).toBe("LEVEL_COMPLETE");
     abWaitFn(SESSION, "window.game.state === 'GAME_COMPLETE'", 30000);
 
     const done = abEvalJSON(
