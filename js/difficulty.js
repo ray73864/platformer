@@ -3,10 +3,10 @@
 // geometry) are deliberately not wired here; only size, enemy caps, and the
 // timer flag are a contract. Moving platforms are deferred to a later phase.
 const LEVEL_CONFIGS = {
-    basic: {         // Levels 1-4
+    basic: {         // Levels 1-4: no enemies (generation gates markers at 5)
         width: 20,
         height: 15,
-        maxEnemies: 2,
+        maxEnemies: 0,
         hasTimer: false
     },
     intermediate: {  // Levels 5-9

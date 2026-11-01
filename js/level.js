@@ -620,8 +620,10 @@ export class Level {
         // Same Phase 2 gate as spikes: no enemies before level 5.
         if (this.levelNumber < 5) return;
 
-        // Tier cap from difficulty.js is the single source of truth; today's
-        // derived values never exceed it, so behavior is unchanged.
+        // Tier cap from difficulty.js is the single source of truth. Per spec
+        // Difficulty Parameters the cap intentionally allows growth on
+        // advanced levels: target rises past the old constant 5 from level 12
+        // toward the cap of 8.
         const target = Math.min(
             DIFFICULTY.getMaxEnemies(this.levelNumber),
             Math.floor(this.levelNumber / 2)
