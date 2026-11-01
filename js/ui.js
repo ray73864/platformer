@@ -3,6 +3,7 @@ export class UI {
         this.scoreElement = this.ensureElement('score-display');
         this.levelElement = this.ensureElement('level-display');
         this.finalScoreElement = this.ensureElement('final-score');
+        this.timerElement = this.ensureElement('timer-display');
         this.hudElement = this.ensureElement('hud');
         for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen']) {
             this.ensureElement(id, 'overlay');
@@ -44,6 +45,14 @@ export class UI {
     updateLevel(level) {
         if (this.levelElement) {
             this.levelElement.textContent = `Level: ${level}`;
+        }
+    }
+
+    updateTimer(timeRemaining) {
+        if (this.timerElement) {
+            const minutes = Math.floor(timeRemaining / 60);
+            const seconds = Math.floor(timeRemaining % 60);
+            this.timerElement.textContent = `Time: ${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
     }
 

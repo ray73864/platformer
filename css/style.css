@@ -44,6 +44,11 @@ body {
     display: none;
 }
 
+/* Generic hide for non-overlay elements (e.g. the HUD timer before timed levels). */
+.hidden {
+    display: none;
+}
+
 .overlay h1 {
     font-size: 3rem;
     margin-bottom: 2rem;
