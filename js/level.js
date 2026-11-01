@@ -265,8 +265,12 @@ export class Level {
             // the band, so a zero-marker construction is rejected here —
             // otherwise unit tests would flake on terrain variance (~0.1% of
             // constructions) and level 5+ could ship with no enemies at all.
+            // The same reasoning covers spikes: the keep-if-harmless gate can
+            // reject every candidate on heavily fragmented maps, so hazard
+            // presence is required here too (level 5+ always ships spikes).
             if (valid && this.levelNumber >= 5) {
-                valid = this.countTilesOfType(4) > 0;
+                valid = this.countTilesOfType(4) > 0 &&
+                    this.countTilesOfType(2) > 0;
             }
             attempt++;
         }
@@ -450,6 +454,7 @@ export class Level {
                 gapStreak++;
                 continue; // Air column (pit); at most maxGap in a row
             }
+            const resumedAfterWideGap = gapStreak >= 2;
             gapStreak = 0;
 
             if (isSpawnZone) {
@@ -457,8 +462,15 @@ export class Level {
             } else {
                 // delta > 0 lowers the surface (drop), delta < 0 raises it.
                 // Range [-maxRise, +maxDrop] keeps rises within the verified
-                // one-tile climb and drops within the band's cap.
-                const delta = Math.floor(Math.random() * (maxRise + maxDrop + 1)) - maxRise;
+                // one-tile climb and drops within the band's cap. After a pit
+                // two or more columns wide the landing must sit at same-or-
+                // lower height: rise-jumps reach only dist <= 2 in the
+                // movement model (and ~62px rise against the crossing's hang
+                // time), so a column rising over a wide gap is an uncrossable
+                // wall, not terrain.
+                const minDelta = resumedAfterWideGap ? 0 : -maxRise;
+                const delta = Math.floor(
+                    Math.random() * (maxDrop - minDelta + 1)) + minDelta;
                 currentY = Math.min(
                     this.height - 3,
                     Math.max(3, currentY + delta)
@@ -597,22 +609,62 @@ export class Level {
         }
         shuffle(candidates);
 
+        // Keep-if-harmless gate: a spike is kept only when the grid still has
+        // a reachable portal-band tile after placing it. A surface spike makes
+        // its entire column unlandable (the movement model breaks downward
+        // landing scans on hazards — falling onto a spike kills), so a spike
+        // on a pit rim or capping a riser can silently wall the corridor off.
+        // Blind placement plus whole-map retries starved the advanced-tier
+        // sizes (~98% of attempts unreachable at level 15, throwing after
+        // MAX_GENERATION_ATTEMPTS); testing each placement against the same
+        // validation the constructor applies rejects severing spikes at the
+        // source instead. Bounded by the candidate list, like everything else
+        // here. Evaluated in canonical right-facing space: 'left' mirrors
+        // afterwards and the movement model is symmetric in x, so a mirrored
+        // route mirrors its validation exactly.
+        const headroom = this.direction === 'vertical';
+        const spawn = this.direction === 'vertical'
+            ? this.getSpawnTile()
+            : { x: SPAWN_TILE_X, y: this.height - 4 };
+        const portalStillReachable = () => {
+            const reachable = computeReachable(
+                tiles, this.width, this.height, spawn, headroom);
+            for (const key of reachable) {
+                const x = key % this.width;
+                const y = Math.floor(key / this.width);
+                if (this.direction === 'vertical'
+                    ? y <= VERTICAL_PORTAL_MAX_Y
+                    : x >= this.width - 4 && x <= this.width - 2) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         let placed = 0;
         const usedColumns = new Set();
         for (const c of candidates) {
             if (placed >= target) break;
+            // shortcut: on heavily fragmented advanced-tier maps fewer safe
+            // sites exist than the target count, so realized spike density
+            // runs below target there (~3.5 vs 7 at level 15); presence is
+            // guaranteed by the constructor's zero-spike rejection instead.
             // Keep spikes at least two columns apart: each hazard stays a
             // comfortable single hop within verified jump range, so spikes
-            // can never combine into an unjumpable barrier. The BFS portal
-            // validation remains the backstop safety net either way.
+            // can never combine into an unjumpable barrier. The keep-if-
+            // harmless gate below is the backstop either way.
             if (usedColumns.has(c.x - 1) ||
                 usedColumns.has(c.x) ||
                 usedColumns.has(c.x + 1)) {
                 continue;
             }
             tiles[c.y][c.x] = 2;
-            usedColumns.add(c.x);
-            placed++;
+            if (portalStillReachable()) {
+                usedColumns.add(c.x);
+                placed++;
+            } else {
+                tiles[c.y][c.x] = 0;
+            }
         }
     }
 
