@@ -149,14 +149,15 @@ game/
 
 ### Difficulty tiers
 
-- Levels 1-4 (basic): 20x15 tiles, no enemies
-- Levels 5-9 (intermediate): 24x18 tiles, enemies introduced
-- Levels 10+ (advanced): 28x21 tiles, higher enemy cap
+- Levels 1-4 (basic): 20x15 horizontal tiles, no enemies
+- Levels 5-9 (intermediate): 24x18 horizontal tiles, enemies introduced
+- Levels 10+ (advanced): 28x21 horizontal tiles, higher enemy cap
+- Vertical levels keep the 15x24 climb layout at every tier
 - The enemy caps (0 / 5 / 8) are generation ceilings; the actual count ramps with level number inside the cap
 
 ### Hidden portal
 
-- The portal stays hidden and inert until at least 70% of the level's coins are collected
+- The portal stays hidden and inert until at least 70% of the level's coins are collected (the threshold is rounded down, with a minimum of one coin)
 - Reaching the unlocked portal completes the level
 
 ### Pause
