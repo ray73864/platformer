@@ -5,7 +5,7 @@ export class UI {
         this.finalScoreElement = this.ensureElement('final-score');
         this.timerElement = this.ensureElement('timer-display');
         this.hudElement = this.ensureElement('hud');
-        for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen']) {
+        for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen', 'pause-screen']) {
             this.ensureElement(id, 'overlay');
         }
     }

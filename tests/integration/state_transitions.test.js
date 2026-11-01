@@ -13,6 +13,13 @@ function hideOverlays(game) {
     game.ui.hideOverlay('menu-screen');
     game.ui.hideOverlay('game-over-screen');
     game.ui.hideOverlay('level-complete-screen');
+    game.ui.hideOverlay('pause-screen');
+}
+
+// Escape must travel the same window-keydown path the browser uses; InputHandler
+// never fires game actions for Escape, so main.js owns it exclusively.
+function pressEscape() {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
 }
 
 test("a new Game starts in MENU with no active level", () => {
@@ -182,4 +189,70 @@ test("from LEVEL_COMPLETE, more than 2s of update time advances to the next leve
     // The LEVEL_COMPLETE exit must have left a fresh, fully playable level.
     game.update(0.016);
     expect(game.state).toBe(STATE.PLAYING);
+});
+
+test("escape from PLAYING pauses, freezes the simulation, and shows the pause overlay", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    pressEscape();
+
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(false);
+
+    // Frozen: update() must run no physics while PAUSED.
+    const frozenX = game.player.x;
+    const frozenY = game.player.y;
+    for (let i = 0; i < 5; i++) {
+        game.update(0.016);
+    }
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(game.player.x).toBe(frozenX);
+    expect(game.player.y).toBe(frozenY);
+});
+
+test("escape again resumes PLAYING and hides the pause overlay", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    pressEscape();
+    expect(game.state).toBe(STATE.PAUSED);
+
+    pressEscape();
+
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+});
+
+test("escape from GAME_OVER returns to MENU, hiding game-over and showing the menu overlay", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(0.016);
+    expect(game.state).toBe(STATE.GAME_OVER);
+
+    pressEscape();
+
+    expect(game.state).toBe(STATE.MENU);
+    expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(false);
+});
+
+test("escape in MENU does nothing", () => {
+    mountFixture();
+    const game = new Game();
+
+    pressEscape();
+
+    // State-only: leaked keydown listeners from games built by earlier tests
+    // in this file also react to the same event, so overlay visibility here
+    // is not isolated to this instance.
+    expect(game.state).toBe(STATE.MENU);
 });

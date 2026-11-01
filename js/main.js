@@ -24,6 +24,7 @@ const COYOTE_TIME = 0.1;
 export const STATE = {
     MENU: 'MENU',
     PLAYING: 'PLAYING',
+    PAUSED: 'PAUSED',
     GAME_OVER: 'GAME_OVER',
     LEVEL_COMPLETE: 'LEVEL_COMPLETE'
 };
@@ -135,6 +136,30 @@ export class Game {
         this.input.onMoveRight(() => this.player?.moveRight());
         this.input.onReleaseLeft(() => this.player?.stopLeft());
         this.input.onReleaseRight(() => this.player?.stopRight());
+
+        // Escape owns pause/end-screen navigation; InputHandler never fires
+        // game actions for it. Check `key` too: some harnesses deliver raw key
+        // events with an empty `code` (see input.js resolveCode).
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Escape' || e.key === 'Escape') this.togglePause();
+        });
+    }
+
+    togglePause() {
+        if (this.state === STATE.PLAYING) {
+            this.state = STATE.PAUSED;
+            this.ui.showOverlay('pause-screen');
+        } else if (this.state === STATE.PAUSED) {
+            this.state = STATE.PLAYING;
+            this.ui.hideOverlay('pause-screen');
+        } else if (this.state === STATE.GAME_OVER) {
+            // Spec: Escape on an end screen returns to MENU, never pauses.
+            // shortcut: GAME_COMPLETE is not in STATE yet (later task); add it
+            // to this branch when it lands.
+            this.state = STATE.MENU;
+            this.ui.hideOverlay('game-over-screen');
+            this.ui.showOverlay('menu-screen');
+        }
     }
 
     startGame() {
@@ -219,9 +244,10 @@ export class Game {
     update(dt) {
         if (this.state === STATE.PLAYING) {
             // Run clock first: a tick that crosses zero is death before any
-            // other outcome of the same frame.
-            // shortcut: coin bonus (+2s) and PAUSED-state ticking are not
-            // wired yet; upgrade when those tasks land.
+            // other outcome of the same frame. The PLAYING-only gate means
+            // PAUSED freezes the clock for free.
+            // shortcut: coin bonus (+2s) is not wired yet; upgrade when that
+            // task lands.
             if (this.timerActive) {
                 this.timer.update(dt, false);
                 this.ui.updateTimer(this.timer.getTimeRemaining());
@@ -339,7 +365,9 @@ export class Game {
         this.ctx.fillStyle = '#87CEEB';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        if (this.state === STATE.PLAYING || this.state === STATE.LEVEL_COMPLETE) {
+        // PAUSED keeps rendering the frozen scene; the overlay sits on top.
+        if (this.state === STATE.PLAYING || this.state === STATE.LEVEL_COMPLETE ||
+            this.state === STATE.PAUSED) {
             this.ctx.save();
 
             // Apply camera transform (camera.y is negative of the world-top offset)
