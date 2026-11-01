@@ -54,7 +54,17 @@ test("Player reaches portal to complete level", async () => {
     screenshot(SESSION, "task-11-camera-follow.png");
 
     // Step onto the portal; contact is detected by the game's own
-    // collision check, not by poking at its completion flag.
+    // collision check, not by poking at its completion flag. The portal is
+    // coin-gated (70%), so meet the threshold through the real Collectibles
+    // API first.
+    const gateMet = abEvalJSON(
+        SESSION,
+        `(() => { const c = window.game.collectibles;
+                  const coins = c.getCoins();
+                  for (let i = 0; i < coins.length && !c.meetsPortalRequirement(); i++) c.collectCoin(i);
+                  return c.meetsPortalRequirement(); })()`
+    );
+    expect(gateMet).toBe(true);
     abEvalJSON(
         SESSION,
         `(() => { const p = window.game.level.portal;

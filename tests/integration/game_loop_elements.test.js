@@ -325,3 +325,37 @@ test("score is capped at MAX_SAFE_INTEGER however long coins keep coming", () =>
     game.update(DT);
     expect(game.score).toBe(Number.MAX_SAFE_INTEGER);
 });
+
+// --- Portal coin-gate (R21) ---------------------------------------------------
+
+test("portal contact completes the level only once the 70% coin gate is met", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+
+    // Teleport onto the live portal with no coins banked: the locked gate
+    // must ignore contact, so the player can stand on it without winning.
+    const portal = game.level.portal;
+    game.player.x = portal.x;
+    game.player.y = portal.y;
+    game.update(DT);
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(game.player.hasReachedPortal()).toBe(false);
+
+    // Meet the threshold through the real Collectibles API; same contact.
+    const collectibles = game.level.getCollectibles();
+    const coins = collectibles.getCoins();
+    for (let i = 0; i < coins.length && !collectibles.meetsPortalRequirement(); i++) {
+        collectibles.collectCoin(i);
+    }
+    expect(collectibles.meetsPortalRequirement()).toBe(true);
+
+    game.update(DT);
+    expect(game.player.hasReachedPortal()).toBe(true);
+    expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+
+    // Exit LEVEL_COMPLETE deterministically (mirrors level_flow.test.js) so
+    // the armed 2s timer cannot cross into a later test.
+    for (let i = 0; i < 3 && game.state === STATE.LEVEL_COMPLETE; i++) {
+        game.update(0.8);
+    }
+});

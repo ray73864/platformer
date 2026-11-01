@@ -131,6 +131,12 @@ function completeViaPortal() {
         const dropped = abEvalJSON(
             SESSION,
             `(() => { const g = window.game;
+                      // The portal is coin-gated (70%): meet the threshold
+                      // through the real Collectibles API before dropping.
+                      const c = g.collectibles;
+                      const coins = c.getCoins();
+                      for (let i = 0; i < coins.length && !c.meetsPortalRequirement(); i++) c.collectCoin(i);
+                      if (!c.meetsPortalRequirement()) return false;
                       const portal = g.level.portal;
                       const clear = (${noThreatFn})(g, portal, 96);
                       if (!clear) return false;

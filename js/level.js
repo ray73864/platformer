@@ -919,10 +919,10 @@ export class Level {
         // Draw enemies (EnemyManager owns per-enemy drawing).
         this.enemyManager.drawAll(ctx);
 
-        // Draw portal
+        // Draw portal; hidden until the 70% coin gate is met.
         ctx.fillStyle = '#9400D3'; // Purple
 
-        if (this.portal) {
+        if (this.portal && this.collectibles.meetsPortalRequirement()) {
             ctx.fillRect(
                 this.portal.x,
                 this.portal.y,

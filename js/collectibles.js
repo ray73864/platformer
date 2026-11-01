@@ -62,6 +62,19 @@ export class Collectibles {
         return this.coins.filter(coin => !coin.collected);
     }
 
+    // Portal coin-gate (spec: 70% of coins). Collected count derives from
+    // score so an externally shrunk coin list surfaces as overshoot, which
+    // passes per the spec's overshoot rule.
+    meetsPortalRequirement() {
+        const total = this.coins.length;
+        if (total === 0) return false;
+
+        const collected = this.score / COIN_POINTS;
+        if (collected > total) return true;
+
+        return collected >= Math.max(1, Math.floor(total * 0.7));
+    }
+
     checkCollection(player) {
         let collectedNow = 0;
 

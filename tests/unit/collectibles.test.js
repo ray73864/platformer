@@ -156,6 +156,63 @@ test("loadCoins adopts externally generated coins by reference", () => {
     expect(generated[1].collected).toBe(true);
 });
 
+test("meetsPortalRequirement is false when the level has no coins", () => {
+    const collectibles = new Collectibles();
+
+    expect(collectibles.meetsPortalRequirement()).toBe(false);
+});
+
+test("meetsPortalRequirement is false at 6 of 10 coins", () => {
+    const collectibles = new Collectibles();
+    for (let i = 0; i < 10; i++) {
+        collectibles.addCoin(i * 32, 0);
+    }
+    for (let i = 0; i < 6; i++) {
+        collectibles.collectCoin(i);
+    }
+
+    expect(collectibles.meetsPortalRequirement()).toBe(false); // 6/10
+});
+
+test("meetsPortalRequirement is true at 7 of 10 coins", () => {
+    const collectibles = new Collectibles();
+    for (let i = 0; i < 10; i++) {
+        collectibles.addCoin(i * 32, 0);
+    }
+    for (let i = 0; i < 7; i++) {
+        collectibles.collectCoin(i);
+    }
+
+    expect(collectibles.meetsPortalRequirement()).toBe(true); // 7/10
+});
+
+test("meetsPortalRequirement is true at 3 of 3 coins", () => {
+    const collectibles = new Collectibles();
+    for (let i = 0; i < 3; i++) {
+        collectibles.addCoin(i * 32, 0);
+    }
+    for (let i = 0; i < 3; i++) {
+        collectibles.collectCoin(i);
+    }
+
+    expect(collectibles.meetsPortalRequirement()).toBe(true); // 3/3
+});
+
+test("meetsPortalRequirement is true when collected overshoots total", () => {
+    const collectibles = new Collectibles();
+    for (let i = 0; i < 3; i++) {
+        collectibles.addCoin(i * 32, 0);
+    }
+    for (let i = 0; i < 3; i++) {
+        collectibles.collectCoin(i);
+    }
+    // Force collected above total: three coins were scored, then the coin
+    // list shrank to two from outside the class.
+    collectibles.coins.length = 2;
+
+    expect(collectibles.meetsPortalRequirement()).toBe(true);
+});
+
 test("Level wires generated coins through its Collectibles instance", () => {
     const level = new Level(1, 32);
     const collectibles = level.getCollectibles();

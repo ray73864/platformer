@@ -293,9 +293,11 @@ export class Game {
                 );
             }
 
-            // Check portal contact
+            // Check portal contact; hidden until the 70% coin gate is met,
+            // so locked contact does nothing.
             const portal = this.level.getPortal();
             if (portal && !this.player.hasReachedPortal() &&
+                this.level.collectibles.meetsPortalRequirement() &&
                 this.physics.checkAABB(this.player, portal)) {
                 this.player.markPortalReached();
             }
