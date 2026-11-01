@@ -3,9 +3,11 @@ export class UI {
         this.scoreElement = this.ensureElement('score-display');
         this.levelElement = this.ensureElement('level-display');
         this.finalScoreElement = this.ensureElement('final-score');
+        this.gameCompleteScoreElement = this.ensureElement('game-complete-score');
+        this.highScoreElement = this.ensureElement('high-score');
         this.timerElement = this.ensureElement('timer-display');
         this.hudElement = this.ensureElement('hud');
-        for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen', 'pause-screen']) {
+        for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen', 'pause-screen', 'game-complete-screen']) {
             this.ensureElement(id, 'overlay');
         }
     }
@@ -77,6 +79,18 @@ export class UI {
             this.finalScoreElement.textContent = `Score: ${score}`;
         }
         this.showOverlay('game-over-screen');
+    }
+
+    showGameComplete(score, highScore) {
+        // #final-score belongs to the game-over overlay; this screen has its
+        // own score node plus the persisted high score.
+        if (this.gameCompleteScoreElement) {
+            this.gameCompleteScoreElement.textContent = `Score: ${score}`;
+        }
+        if (this.highScoreElement) {
+            this.highScoreElement.textContent = `High Score: ${highScore}`;
+        }
+        this.showOverlay('game-complete-screen');
     }
 
     showLevelComplete() {

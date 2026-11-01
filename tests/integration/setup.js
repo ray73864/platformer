@@ -1,9 +1,9 @@
 // Shared integration-test scaffolding.
 //
 // The Game constructor touches real DOM nodes (#game-canvas, #start-btn,
-// #retry-btn, #final-score) and a 2d canvas context before any state exists,
-// so every integration file installs the same fixture. UI-owned ids
-// self-heal via ensureElement; these four do not (see main.js
+// #retry-btn, #play-again-btn, #final-score) and a 2d canvas context before
+// any state exists, so every integration file installs the same fixture.
+// UI-owned ids self-heal via ensureElement; these five do not (see main.js
 // bindEvents/handleGameOver).
 //
 // installGameTestScaffolding() registers an afterAll teardown that restores
@@ -60,6 +60,7 @@ export function mountFixture() {
         <canvas id="game-canvas"></canvas>
         <button id="start-btn">Start</button>
         <button id="retry-btn">Retry</button>
+        <button id="play-again-btn">Play Again</button>
         <div id="final-score"></div>
     `;
 }

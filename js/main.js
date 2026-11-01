@@ -19,6 +19,9 @@ const MAX_FALL_SPEED = 600;
 // (coyote), so presses straddling the grounded transition are not dropped.
 const JUMP_BUFFER_TIME = 0.12;
 const COYOTE_TIME = 0.1;
+// Winning this level finishes the whole run instead of generating another.
+const FINAL_LEVEL = 15;
+const HIGH_SCORE_KEY = 'platformerHighScore';
 
 // Game states
 export const STATE = {
@@ -26,7 +29,8 @@ export const STATE = {
     PLAYING: 'PLAYING',
     PAUSED: 'PAUSED',
     GAME_OVER: 'GAME_OVER',
-    LEVEL_COMPLETE: 'LEVEL_COMPLETE'
+    LEVEL_COMPLETE: 'LEVEL_COMPLETE',
+    GAME_COMPLETE: 'GAME_COMPLETE'
 };
 
 export class Game {
@@ -112,11 +116,16 @@ export class Game {
         // Button listeners (Game-owned: required, see constructor note).
         const startBtn = document.getElementById('start-btn');
         const retryBtn = document.getElementById('retry-btn');
-        if (!startBtn || !retryBtn) {
-            throw new Error('Game requires #start-btn and #retry-btn elements in the page');
+        const playAgainBtn = document.getElementById('play-again-btn');
+        if (!startBtn || !retryBtn || !playAgainBtn) {
+            throw new Error('Game requires #start-btn, #retry-btn and #play-again-btn elements in the page');
         }
         startBtn.addEventListener('click', () => this.startGame());
         retryBtn.addEventListener('click', () => this.retryLevel());
+        playAgainBtn.addEventListener('click', () => {
+            this.startGame();
+            this.ui.hideOverlay('game-complete-screen');
+        });
 
         // Input listener.
         // Immediate jump while grounded (or within coyote reach of the ground
@@ -152,12 +161,11 @@ export class Game {
         } else if (this.state === STATE.PAUSED) {
             this.state = STATE.PLAYING;
             this.ui.hideOverlay('pause-screen');
-        } else if (this.state === STATE.GAME_OVER) {
+        } else if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
             // Spec: Escape on an end screen returns to MENU, never pauses.
-            // shortcut: GAME_COMPLETE is not in STATE yet (later task); add it
-            // to this branch when it lands.
             this.state = STATE.MENU;
             this.ui.hideOverlay('game-over-screen');
+            this.ui.hideOverlay('game-complete-screen');
             this.ui.showOverlay('menu-screen');
         }
     }
@@ -165,6 +173,9 @@ export class Game {
     startGame() {
         this.score = 0;
         this.currentLevel = 1;
+        // A brand-new run always gets a fresh clock; whether it ticks at all
+        // is decided per level by publishLevel's difficulty-tier gate.
+        this.timer.timeRemaining = this.timer.baseTime;
         this.startLevel();
         this.ui.showHUD();
         this.ui.hideOverlay('menu-screen');
@@ -241,13 +252,20 @@ export class Game {
         this.ui.showGameOver(this.score);
     }
 
+    handleGameComplete() {
+        this.state = STATE.GAME_COMPLETE;
+        const stored = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0;
+        if (this.score > stored) {
+            localStorage.setItem(HIGH_SCORE_KEY, String(this.score));
+        }
+        this.ui.showGameComplete(this.score, Math.max(this.score, stored));
+    }
+
     update(dt) {
         if (this.state === STATE.PLAYING) {
             // Run clock first: a tick that crosses zero is death before any
             // other outcome of the same frame. The PLAYING-only gate means
             // PAUSED freezes the clock for free.
-            // shortcut: coin bonus (+2s) is not wired yet; upgrade when that
-            // task lands.
             if (this.timerActive) {
                 this.timer.update(dt, false);
                 this.ui.updateTimer(this.timer.getTimeRemaining());
@@ -317,6 +335,10 @@ export class Game {
                     this.score + collectedCoins * COIN_POINTS,
                     Number.MAX_SAFE_INTEGER
                 );
+                // shortcut: pre-L5 coins are score-only; there is no live clock to extend.
+                if (this.timerActive) {
+                    for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
+                }
             }
 
             // Check portal contact; hidden until the 70% coin gate is met,
@@ -346,15 +368,20 @@ export class Game {
         } else if (this.state === STATE.LEVEL_COMPLETE) {
             this.levelCompleteTimer -= dt;
             if (this.levelCompleteTimer <= 0) {
-                // The fallible construction happens BEFORE currentLevel
-                // advances: on generation exhaustion the game stays
-                // LEVEL_COMPLETE with the finished level intact, instead of
-                // corrupting into a PLAYING state with stale systems or
-                // double-advancing via the stale portal flag.
-                const next = this.currentLevel + 1;
-                const level = new Level(next, TILE_SIZE);
-                this.currentLevel = next;
-                this.publishLevel(level);
+                if (this.currentLevel >= FINAL_LEVEL) {
+                    // The run ends here: never construct level 16.
+                    this.handleGameComplete();
+                } else {
+                    // The fallible construction happens BEFORE currentLevel
+                    // advances: on generation exhaustion the game stays
+                    // LEVEL_COMPLETE with the finished level intact, instead of
+                    // corrupting into a PLAYING state with stale systems or
+                    // double-advancing via the stale portal flag.
+                    const next = this.currentLevel + 1;
+                    const level = new Level(next, TILE_SIZE);
+                    this.currentLevel = next;
+                    this.publishLevel(level);
+                }
                 this.ui.hideOverlay('level-complete-screen');
             }
         }

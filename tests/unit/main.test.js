@@ -13,7 +13,7 @@ describe("main.js module", () => {
     expect(typeof init).toBe("function");
   });
 
-  test("exports STATE with exactly the five required states", async () => {
+  test("exports STATE with exactly the six required states", async () => {
     const { STATE } = await import("../../js/main.js");
     expect(STATE).toEqual({
       MENU: "MENU",
@@ -21,6 +21,7 @@ describe("main.js module", () => {
       PAUSED: "PAUSED",
       GAME_OVER: "GAME_OVER",
       LEVEL_COMPLETE: "LEVEL_COMPLETE",
+      GAME_COMPLETE: "GAME_COMPLETE",
     });
   });
 
