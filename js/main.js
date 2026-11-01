@@ -5,6 +5,8 @@ import { Level } from './level.js';
 import { Camera } from './camera.js';
 import { UI } from './ui.js';
 import { COIN_POINTS } from './collectibles.js';
+import { Difficulty } from './difficulty.js';
+import { Timer } from './timer.js';
 
 // Game constants
 export const TILE_SIZE = 32;
@@ -47,6 +49,12 @@ export class Game {
         // Camera viewport is in CSS pixels, not the device-pixel backing store.
         this.camera = new Camera(window.innerWidth, window.innerHeight);
         this.ui = new UI();
+        // One run clock for the whole game: time carries over between levels
+        // (Timer.startNextLevel contract). Whether it ticks at all is decided
+        // per level by the difficulty tier in publishLevel().
+        this.difficulty = new Difficulty();
+        this.timer = new Timer(60);
+        this.timerActive = false;
 
         // Game state
         this.state = STATE.MENU;
@@ -164,6 +172,9 @@ export class Game {
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
+        // Difficulty tier is the single authority for whether the run clock
+        // runs at all on this level.
+        this.timerActive = this.difficulty.isTimerEnabled(this.currentLevel);
         this.state = STATE.PLAYING;
         this.camera.reset();
         // Snap the camera onto the new level immediately: reset() alone would
@@ -181,6 +192,9 @@ export class Game {
         // regenerates on retry, so keeping mid-level pickups would let
         // repeated die-and-retry runs farm coins.
         this.score = this.levelStartScore;
+        // A fresh attempt gets a fresh clock: without this, retrying after a
+        // time-out would kill the player on the very next tick.
+        this.timer.timeRemaining = this.timer.baseTime;
         this.ui.hideOverlay('game-over-screen');
         this.startLevel();
     }
@@ -204,6 +218,19 @@ export class Game {
 
     update(dt) {
         if (this.state === STATE.PLAYING) {
+            // Run clock first: a tick that crosses zero is death before any
+            // other outcome of the same frame.
+            // shortcut: coin bonus (+2s) and PAUSED-state ticking are not
+            // wired yet; upgrade when those tasks land.
+            if (this.timerActive) {
+                this.timer.update(dt, false);
+                this.ui.updateTimer(this.timer.getTimeRemaining());
+                if (this.timer.isTimeUp()) {
+                    this.handleGameOver();
+                    return;
+                }
+            }
+
             // Update player
             this.player.update(dt, this.input.isLeft(), this.input.isRight());
 
