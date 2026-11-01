@@ -1,6 +1,9 @@
 import { Collectibles } from './collectibles.js';
+import { Difficulty } from './difficulty.js';
 import { EnemyManager } from './enemies.js';
 import { Hazards } from './hazards.js';
+
+const DIFFICULTY = new Difficulty();
 
 const MAX_GENERATION_ATTEMPTS = 200;
 const SPAWN_TILE_X = 2;
@@ -225,14 +228,15 @@ export class Level {
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
 
-        // Phase 2: larger maps from level 5 onward; early levels keep the
-        // shipped 20x15 footprint. Vertical levels climb a 15x24 grid.
+        // Difficulty tiers size horizontal maps (20x15 / 24x18 / 28x21 from
+        // level 5 / 10). Vertical levels climb a fixed 15x24 grid.
         if (this.direction === 'vertical') {
             this.width = VERTICAL_WIDTH;   // tiles
             this.height = VERTICAL_HEIGHT; // tiles
         } else {
-            this.width = levelNumber >= 5 ? 24 : 20;  // tiles
-            this.height = levelNumber >= 5 ? 18 : 15; // tiles
+            const size = DIFFICULTY.getLevelSize(levelNumber);
+            this.width = size.width;   // tiles
+            this.height = size.height; // tiles
         }
 
         let attempt = 0;
@@ -616,7 +620,12 @@ export class Level {
         // Same Phase 2 gate as spikes: no enemies before level 5.
         if (this.levelNumber < 5) return;
 
-        const target = Math.min(5, Math.floor(this.levelNumber / 2));
+        // Tier cap from difficulty.js is the single source of truth; today's
+        // derived values never exceed it, so behavior is unchanged.
+        const target = Math.min(
+            DIFFICULTY.getMaxEnemies(this.levelNumber),
+            Math.floor(this.levelNumber / 2)
+        );
 
         const solidAt = (x, y) =>
             x >= 0 && x < this.width && y >= 0 && y < this.height &&
