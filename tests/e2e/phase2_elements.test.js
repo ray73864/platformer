@@ -3,7 +3,10 @@
 // debug seam. Terrain is randomly generated, so every assertion locates its
 // subject (coin/spike/enemy/safe tile) in the live level data instead of
 // assuming positions, and levels missing a required element are regenerated
-// through the seam rather than failed on.
+// through the seam rather than failed on. Threat clearance for anything the
+// player is teleported onto is re-evaluated AT THE MOMENT of the drop —
+// margins computed several CLI round-trips earlier go stale while enemies
+// patrol (I9).
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
     startServer, openGame, startGame, ab, abEvalJSON, abWaitFn, waitLanded,
@@ -22,18 +25,24 @@ afterAll(() => {
     closeSession(SESSION);
 });
 
+// One source of truth for "no enemy can touch this rect right now" (S11):
+// threat needs real collision possibility — same-row proximity (a body
+// fills its tile row, so |dy| >= 64 means no contact is possible) AND
+// horizontal closeness within `margin` px. Portal drops use the 96px base;
+// teleports onto coins/spikes add the 32px contact radius on top, because
+// AABB contact begins once the gap closes to body width, not at zero (I9).
+const noThreatFn = `(g, r, margin) => g.enemyManager.enemies.every(
+    e => Math.abs(e.y - r.y) >= 64 ||
+         e.x + e.width < r.x - margin ||
+         e.x > r.x + r.width + margin)`;
+
 // Regenerates the given level through the seam and reports what the generated
-// level contains, plus pre-computed safe anchors so each scenario can act
-// without tripping the other element types:
+// level contains, plus anchors that don't depend on enemy positions at
+// action time:
 // - safeTileX: standable tile outside every enemy's patrol span, so a parked
 //   player cannot be touched while observers sample enemy motion.
-// - safeCoinIdx: uncollected coin no active enemy is within ~2s of (96px at
-//   50px/s) on an overlapping row, so collection cannot be pre-empted by an
-//   enemy kill.
-// - safeSpike: spike likewise clear of enemies, so a spike death is
-//   attributable to the spike.
-// - portalClear: no enemy on the portal's row (or a body-height of it) comes
-//   within 96px horizontally, i.e. no patrol can touch the portal right now.
+// - portalClear: no patrol can touch the portal right now (re-checked again
+//   at drop time inside completeViaPortal).
 const phase2Summary = (levelNumber) => `(() => {
     const g = window.game;
     g.currentLevel = ${levelNumber};
@@ -46,22 +55,7 @@ const phase2Summary = (levelNumber) => `(() => {
         );
         if (clear) { safeTileX = px; break; }
     }
-    const safeCoinIdx = g.level.coins.findIndex(c => !c.collected &&
-        g.enemyManager.enemies.every(
-            e => Math.abs(e.x - c.x) > 96 || Math.abs(e.y - c.y) >= 64
-        ));
-    const spike = g.hazards.getSpikes().find(s =>
-        g.enemyManager.enemies.every(e => Math.abs(e.x - s.x) > 128));
-    const portal = g.level.portal;
-    // Threat needs real collision possibility: same-row proximity (a body
-    // fills its tile row, so |dy| >= 64 means no contact is possible —
-    // same convention as safeCoinIdx above) AND horizontal closeness. On
-    // vertical levels every patrol sits rows below the top-band portal, so
-    // an x-only test would demand impossible terrain.
-    const portalClear = g.enemyManager.enemies.every(
-        e => Math.abs(e.y - portal.y) >= 64 ||
-             e.x + e.width < portal.x - 96 ||
-             e.x > portal.x + portal.width + 96);
+    const portalClear = (${noThreatFn})(g, g.level.portal, 96);
     return {
         direction: g.level.direction,
         width: g.level.width,
@@ -70,8 +64,6 @@ const phase2Summary = (levelNumber) => `(() => {
         spikes: g.hazards.getSpikes().length,
         enemies: g.enemyManager.enemies.length,
         safeTileX,
-        safeCoinIdx,
-        safeSpike: spike ? { x: spike.x, y: spike.y } : null,
         portalClear
     };
 })()`;
@@ -98,6 +90,11 @@ function openAtLevel(levelNumber, requirement) {
     );
 }
 
+// In-seam regeneration used by the action-time pick loops below.
+function regenerate() {
+    abEvalJSON(SESSION, `(() => { window.game.startLevel(); return true; })()`);
+}
+
 // Teleports the player, zeroing velocity and grounded alongside the
 // position: physics only refreshes grounded on the next tick, and the
 // helpers' landing polls read it.
@@ -121,7 +118,9 @@ const ENEMY_SNAPSHOT =
 // range since any earlier summary; clearance is re-checked at the moment of
 // the drop and stale terrain regenerated through the seam. A stray patrol
 // that still wins the race is recovered via the retry button. Bounded;
-// returns the final state string.
+// returns the final state string. Once LEVEL_COMPLETE is seen, the 2s
+// auto-advance countdown is frozen through the seam so post-completion
+// assertions cannot race it into level N+1 (I10).
 function completeViaPortal() {
     let outcome = null;
     for (let attempt = 0; attempt < 6 && outcome !== "LEVEL_COMPLETE"; attempt++) {
@@ -133,10 +132,7 @@ function completeViaPortal() {
             SESSION,
             `(() => { const g = window.game;
                       const portal = g.level.portal;
-                      const clear = g.enemyManager.enemies.every(
-                          e => Math.abs(e.y - portal.y) >= 64 ||
-                               e.x + e.width < portal.x - 96 ||
-                               e.x > portal.x + portal.width + 96);
+                      const clear = (${noThreatFn})(g, portal, 96);
                       if (!clear) return false;
                       const p = g.player;
                       p.x = portal.x; p.y = portal.y - 60;
@@ -144,10 +140,7 @@ function completeViaPortal() {
                       return true; })()`
         );
         if (!dropped) {
-            abEvalJSON(
-                SESSION,
-                `(() => { window.game.startLevel(); return true; })()`
-            );
+            regenerate();
             continue;
         }
         abWaitFn(
@@ -155,7 +148,12 @@ function completeViaPortal() {
             "window.game.state === 'LEVEL_COMPLETE' ||" +
             " window.game.state === 'GAME_OVER'"
         );
-        outcome = abEvalJSON(SESSION, "window.game.state");
+        outcome = abEvalJSON(
+            SESSION,
+            `(() => { const g = window.game;` +
+            ` if (g.state === 'LEVEL_COMPLETE') g.levelCompleteTimer = 60;` +
+            ` return g.state; })()`
+        );
     }
     return outcome;
 }
@@ -180,64 +178,109 @@ test("Level 5 generates phase 2 elements at the larger footprint", async () => {
     screenshot(SESSION, "phase2-level5-generation.png");
 }, 90000);
 
-test("Collecting a coin raises score by tens and syncs the HUD", async () => {
-    const summary = openAtLevel(5, s => s.safeCoinIdx >= 0);
-    const idx = summary.safeCoinIdx;
+test("Collecting a coin raises score by exactly the collected count x 10 and syncs the HUD", async () => {
+    openAtLevel(5, s => s.coins >= 5);
     waitLanded(SESSION);
 
-    const before = abEvalJSON(
-        SESSION,
-        `{ score: window.game.score,
-           hud: document.getElementById('score-display').textContent }`
-    );
+    // Action-time pick (I9): find an uncollected coin no enemy can reach in
+    // time (clearance + contact radius), teleport onto it, and capture the
+    // score/collected baseline — all inside ONE eval, so nothing can walk
+    // into range between measuring and acting. If the live terrain offers
+    // none, regenerate and look again.
+    let placed = null;
+    for (let attempt = 0; attempt < MAX_REGENERATIONS && !placed; attempt++) {
+        placed = abEvalJSON(
+            SESSION,
+            `(() => { const g = window.game;
+                      const idx = g.level.coins.findIndex(c => !c.collected &&
+                          (${noThreatFn})(g, c, 128));
+                      if (idx < 0) return null;
+                      const c = g.level.coins[idx];
+                      const p = g.player;
+                      p.x = c.x; p.y = c.y;
+                      p.vx = 0; p.vy = 0; p.grounded = false;
+                      return { idx, score: g.score,
+                               collected: g.level.coins.filter(k => k.collected).length }; })()`
+        );
+        if (!placed) regenerate();
+    }
+    expect(placed).not.toBeNull();
 
-    const coin = abEvalJSON(
-        SESSION,
-        `(() => { const c = window.game.level.coins[${idx}];
-                  return { x: c.x, y: c.y }; })()`
-    );
-    teleport(coin.x, coin.y);
-    abWaitFn(SESSION, `window.game.level.coins[${idx}].collected === true`);
+    abWaitFn(SESSION, `window.game.level.coins[${placed.idx}].collected === true`);
 
     // The HUD is rewritten every PLAYING tick; poll until it mirrors the
     // engine total rather than racing the next frame.
     abWaitFn(
         SESSION,
-        `window.game.score >= ${before.score} + 10 &&` +
-        ` document.getElementById('score-display').textContent ===` +
+        `document.getElementById('score-display').textContent ===` +
         ` ('Score: ' + window.game.score)`
     );
     const after = abEvalJSON(
         SESSION,
         `{ score: window.game.score,
            state: window.game.state,
-           hud: document.getElementById('score-display').textContent }`
+           hud: document.getElementById('score-display').textContent,
+           collected: window.game.level.coins.filter(k => k.collected).length }`
     );
-    const delta = after.score - before.score;
-    expect(delta).toBeGreaterThan(0);
-    expect(delta % 10).toBe(0); // COIN_POINTS multiples only
+    // Exact attribution (S3): the score delta must equal exactly ten times
+    // the number of coins that flipped to collected across the drop — a
+    // bare "> 0 and % 10" could never fail for any implementation.
+    const newCollected = after.collected - placed.collected;
+    expect(newCollected).toBeGreaterThanOrEqual(1);
+    expect(after.score - placed.score).toBe(newCollected * 10);
     expect(after.hud).toBe(`Score: ${after.score}`);
     expect(after.state).toBe("PLAYING");
+
+    // Stability: parked on the coin tile, nothing else is collecting.
+    const stable = abEvalJSON(SESSION, "window.game.score");
+    expect(stable).toBe(after.score);
     screenshot(SESSION, "phase2-coin-collected.png");
 }, 90000);
 
 test("Spike contact ends the game and shows the game-over overlay", async () => {
-    const summary = openAtLevel(5, s => s.safeSpike !== null);
+    openAtLevel(5, s => s.spikes >= 1);
     waitLanded(SESSION);
 
-    // Land the player squarely on the spike tile: the 32x32 body fully
-    // covers the inset lethal core, so the very next tick must kill.
-    teleport(summary.safeSpike.x, summary.safeSpike.y);
-    abWaitFn(SESSION, "window.game.state === 'GAME_OVER'");
+    // Action-time pick (I9): the spike must be clear of enemies when the
+    // player lands on it, or an enemy could win the race and still leave
+    // the frozen body overlapping the spike — a false "spikes kill" pass.
+    // Clearance and the teleport happen in ONE eval; attribution is then
+    // verified: spike overlap true AND enemy contact false.
+    let dead = null;
+    for (let attempt = 0; attempt < MAX_REGENERATIONS && !dead; attempt++) {
+        const placed = abEvalJSON(
+            SESSION,
+            `(() => { const g = window.game;
+                      const spike = g.hazards.getSpikes().find(s =>
+                          (${noThreatFn})(g, s, 128));
+                      if (!spike) return null;
+                      const p = g.player;
+                      p.x = spike.x; p.y = spike.y;
+                      p.vx = 0; p.vy = 0; p.grounded = false;
+                      return { x: spike.x, y: spike.y }; })()`
+        );
+        if (!placed) {
+            regenerate();
+            continue;
+        }
+        // The 32x32 body fully covers the inset lethal core, so the very
+        // next tick must kill.
+        abWaitFn(SESSION, "window.game.state === 'GAME_OVER'");
+        const outcome = abEvalJSON(
+            SESSION,
+            `{ score: window.game.score,
+               onSpike: window.game.hazards.checkPlayerSpikes(window.game.player),
+               enemyTouch: window.game.enemyManager.checkPlayerCollisions(window.game.player) }`
+        );
+        dead = (outcome.onSpike && !outcome.enemyTouch) ? outcome : null;
+        if (!dead) {
+            // An enemy won the race despite clearance: regenerate and retry.
+            regenerate();
+            abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+        }
+    }
+    expect(dead).not.toBeNull();
 
-    // Attribution: the frozen player still overlaps the spike hitbox, so the
-    // death is the spike's, not some incidental hazard.
-    const dead = abEvalJSON(
-        SESSION,
-        `{ score: window.game.score,
-           onSpike: window.game.hazards.checkPlayerSpikes(window.game.player) }`
-    );
-    expect(dead.onSpike).toBe(true);
     expect(elementState(SESSION, "game-over-screen").hidden).toBe(false);
     expect(abEvalJSON(SESSION,
         `document.getElementById('final-score').textContent`
