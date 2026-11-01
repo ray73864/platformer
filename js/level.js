@@ -1,5 +1,5 @@
 import { Collectibles } from './collectibles.js';
-import { Difficulty } from './difficulty.js';
+import { Difficulty, PHASE2_FIRST_LEVEL } from './difficulty.js';
 import { EnemyManager } from './enemies.js';
 import { Hazards } from './hazards.js';
 
@@ -27,8 +27,8 @@ const VERTICAL_SPAWN_EXCL_ROWS = 6;
 // right-facing, then right/left/vertical cycle from level 5 onward
 // (L5 right, L6 left, L7 vertical, L8 right, L9 left).
 function directionForLevel(levelNumber) {
-    if (levelNumber < 5) return 'right';
-    return ['right', 'left', 'vertical'][(levelNumber - 5) % 3];
+    if (levelNumber < PHASE2_FIRST_LEVEL) return 'right';
+    return ['right', 'left', 'vertical'][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
 }
 
 // In-place Fisher-Yates shuffle: bounded, no unbounded random retry loops.
@@ -268,7 +268,7 @@ export class Level {
             // The same reasoning covers spikes: the keep-if-harmless gate can
             // reject every candidate on heavily fragmented maps, so hazard
             // presence is required here too (level 5+ always ships spikes).
-            if (valid && this.levelNumber >= 5) {
+            if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
                 valid = this.countTilesOfType(4) > 0 &&
                     this.countTilesOfType(2) > 0;
             }
@@ -428,7 +428,7 @@ export class Level {
     }
 
     generatePlatforms(tiles) {
-        const isPhase2 = this.levelNumber >= 5;
+        const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
         // Difficulty scales past the old cap of 4 into the Phase 2 band;
         // the game tops out at level 9. The early-level ramp is unchanged.
         const difficulty = Math.min(this.levelNumber, 9);
@@ -577,14 +577,14 @@ export class Level {
     }
 
     placeSpikes(tiles) {
-        // Phase 2 elements appear only at level >= 5: the early-game ramp
-        // and existing E2E flows stay untouched below that line.
-        if (this.levelNumber < 5) return;
+        // Phase 2 elements appear only from the tier boundary up: the
+        // early-game ramp and existing E2E flows stay untouched below it.
+        if (!DIFFICULTY.hasPhase2Content(this.levelNumber)) return;
 
         // Mild count scaling with level number, hard-capped far below the
         // spec's 10%-of-all-tiles density limit.
         const target = Math.min(
-            2 + Math.floor((this.levelNumber - 5) / 2),
+            2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2),
             Math.floor(this.width * this.height * 0.1)
         );
 
@@ -632,9 +632,12 @@ export class Level {
             for (const key of reachable) {
                 const x = key % this.width;
                 const y = Math.floor(key / this.width);
-                if (this.direction === 'vertical'
-                    ? y <= VERTICAL_PORTAL_MAX_Y
-                    : x >= this.width - 4 && x <= this.width - 2) {
+                // Shared with pickPortalTile through the canonical-band
+                // predicate: one spelling of the band numbers, so a future
+                // change cannot void this safety net while it reports
+                // success. Canonical (pre-mirror) space is required here —
+                // 'left' mirrors only after generateLevel returns.
+                if (this.inCanonicalPortalBand(x, y)) {
                     return true;
                 }
             }
@@ -669,8 +672,8 @@ export class Level {
     }
 
     placeEnemyMarkers(tiles) {
-        // Same Phase 2 gate as spikes: no enemies before level 5.
-        if (this.levelNumber < 5) return;
+        // Same Phase 2 gate as spikes: no enemies below the tier boundary.
+        if (!DIFFICULTY.hasPhase2Content(this.levelNumber)) return;
 
         // Tier cap from difficulty.js is the single source of truth. Per spec
         // Difficulty Parameters the cap intentionally allows growth on
@@ -734,19 +737,26 @@ export class Level {
         }
     }
 
-    // Portal candidate band per direction. Horizontal bands avoid the
-    // extreme edge column (design doc: portal is "not placed at extreme
-    // edges"); 'left' mirrors [w-4, w-2] to [2, 4]. The vertical band is
-    // the top rows (y <= VERTICAL_PORTAL_MAX_Y), reachable only via the
-    // constructed ledge chain.
+    // Portal band in canonical right-facing space — the space generateLevel
+    // (and therefore placeSpikes' keep-if-harmless validation) operates in,
+    // before the 'left' column flip. The single spelling of the band numbers;
+    // horizontal bands avoid the extreme edge column (design doc: portal is
+    // "not placed at extreme edges"); the vertical band is the top rows
+    // (y <= VERTICAL_PORTAL_MAX_Y), reachable only via the ledge chain.
+    inCanonicalPortalBand(x, y) {
+        return this.direction === 'vertical'
+            ? y <= VERTICAL_PORTAL_MAX_Y
+            : x >= this.width - 4 && x <= this.width - 2;
+    }
+
+    // Band as consumed by pickPortalTile on the final (post-mirror) grid:
+    // 'left' mirrors [w-4, w-2] to [2, 4].
     inPortalBand(x, y) {
         switch (this.direction) {
             case 'left':
                 return x >= 2 && x <= 4;
-            case 'vertical':
-                return y <= VERTICAL_PORTAL_MAX_Y;
             default:
-                return x >= this.width - 4 && x <= this.width - 2;
+                return this.inCanonicalPortalBand(x, y);
         }
     }
 
