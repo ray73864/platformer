@@ -644,13 +644,19 @@ export class Level {
                     continue;
                 }
                 const span = this.patrolSpan(tiles, x, y);
-                // Horizontal runs demand >=3 free columns for a real patrol.
-                // Vertical ledge tops are one jump apart and their route
-                // cells split the surface into short segments (S10 blocks
-                // patrols from sweeping them), so 2 free columns is the
-                // narrowest legal moving patrol there.
-                const minWidth = this.direction === 'vertical' ? 2 : 3;
-                if (span && span.right - span.left + 1 >= minWidth) {
+                // The candidate must offer at least 2 patrollable columns
+                // AFTER clamping the free span to the direction's band.
+                // Ground runs routinely extend into the forced-flat spawn
+                // zone; requiring the raw run to sit fully inside the band
+                // would reject nearly every ground marker on Phase-2
+                // terrain, while a 1-column clamped window would spawn a
+                // body that fits its bounds exactly and never moves. Two
+                // columns = every patrol visibly walks. The clamp itself is
+                // what keeps patrols out of excluded columns (I3).
+                const [bandMin, bandMax] = this.patrolBandBounds();
+                const left = Math.max(span ? span.left : 0, bandMin);
+                const right = Math.min(span ? span.right : -1, bandMax);
+                if (span && right - left + 1 >= 2) {
                     candidates.push({ x, y });
                 }
             }
