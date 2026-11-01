@@ -21,8 +21,12 @@ const JUMP_FORCE = 350;
 // Inject a type-4 marker at the first reachable tile inside the patrol band
 // (x ∈ [6, w-6] for 'right') that yields a spawned enemy, and return it with
 // its bounds. With wide=true require at least two tiles of patrol so tests
-// that watch movement are not at the mercy of a one-tile span. The level's
-// own reachability set guarantees validity on any generated terrain.
+// that watch movement are not at the mercy of a one-tile span.
+// NOTE: reachability does NOT guarantee spawnability — a band-legal reachable
+// tile can lack the 2-tile walkable run a patrol needs, and ~5% of Level(1)
+// terrains have none anywhere (pre-existing flake f7fb87e0). Callers use
+// newLevelWithBandEnemy below; spawnBandEnemy itself stays unguarded so a
+// genuine spawn-validation regression is visible on a given terrain.
 function spawnBandEnemy(level, { wide = false } = {}) {
     for (const key of level.reachableTiles) {
         const x = key % level.width;
@@ -40,9 +44,31 @@ function spawnBandEnemy(level, { wide = false } = {}) {
     throw new Error("no band-legal reachable tile yielded a spawnable enemy");
 }
 
+// Terrain-variance guard (mirrors the R26 stress-pinned generator's own
+// self-heal): construct fresh Level(1)s until one offers an injection site.
+// Bounded so a real regression — no terrain ever yielding a spawnable enemy —
+// still fails loudly with the last construction error. `prepare`, when given,
+// mutates each fresh level before the search (e.g. injecting a tile that must
+// be ignored).
+function newLevelWithBandEnemy({ wide = false, prepare = null } = {}, maxAttempts = 30) {
+    let lastError;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const level = new Level(1, TILE);
+        if (prepare) prepare(level);
+        try {
+            return { level, ...spawnBandEnemy(level, { wide }) };
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw new Error(
+        `no Level(1) in ${maxAttempts} constructions yielded a spawnable band enemy`,
+        { cause: lastError }
+    );
+}
+
 test("Level spawns injected enemy tiles into its exposed manager, and a real Player on the enemy dies", () => {
-    const level = new Level(1, TILE);
-    const { x, y } = spawnBandEnemy(level);
+    const { level, x, y } = newLevelWithBandEnemy();
 
     // Delegation seam: getEnemyManager() must be the very instance
     // spawnEnemies() populated, holding the enemy at the tile's pixel space.
@@ -67,12 +93,11 @@ test("Level spawns injected enemy tiles into its exposed manager, and a real Pla
 });
 
 test("spawnEnemies validates against the real grid: floating type-4 tiles are ignored", () => {
-    const level = new Level(1, TILE);
     // Row 0 is always open sky (terrain tops out at row 3), so this tile has
     // no solid below and must be skipped entirely.
-    level.tiles[0][10] = 4;
-
-    const { enemy, x } = spawnBandEnemy(level);
+    const { level, enemy, x } = newLevelWithBandEnemy({
+        prepare: (lvl) => { lvl.tiles[0][10] = 4; }
+    });
 
     const spawned = level.getEnemyManager().getActiveEnemies();
     expect(spawned.length).toBe(1);
@@ -81,8 +106,7 @@ test("spawnEnemies validates against the real grid: floating type-4 tiles are ig
 });
 
 test("a patrolling Level-spawned enemy eventually reaches a player standing at its geometry-derived bound", () => {
-    const level = new Level(1, TILE);
-    const { enemy } = spawnBandEnemy(level, { wide: true });
+    const { level, enemy } = newLevelWithBandEnemy({ wide: true });
     const manager = level.getEnemyManager();
 
     // Player stands on the far patrol bound from where the enemy starts
@@ -109,8 +133,7 @@ test("a patrolling Level-spawned enemy eventually reaches a player standing at i
 });
 
 test("killing a Level-spawned enemy removes it from collision aggregation against the player", () => {
-    const level = new Level(1, TILE);
-    const { enemy } = spawnBandEnemy(level);
+    const { level, enemy } = newLevelWithBandEnemy();
     const manager = level.getEnemyManager();
 
     const player = new Player(enemy.x, enemy.y, PLAYER_SPEED, JUMP_FORCE);
