@@ -31,7 +31,13 @@
 
         <div id="pause-screen" class="overlay hidden">
             <h2>Game Paused</h2>
-            <p>Press Escape to resume</p>
+            <!-- Arrow-navigable pause menu (spec §Accessibility, owner ruling
+                 R29): focus lands on the first option when pausing; Up/Left
+                 and Down/Right cycle; Enter/Space activate natively. -->
+            <button id="resume-btn" aria-label="Resume Game">Resume Game</button>
+            <button id="restart-level-btn" aria-label="Restart Level">Restart Level</button>
+            <button id="quit-menu-btn" aria-label="Quit to Menu">Quit to Menu</button>
+            <p class="pause-hint">Arrow keys select · Enter activates · Escape resumes</p>
         </div>
 
         <div id="game-complete-screen" class="overlay hidden">
@@ -50,6 +56,11 @@
                  name toggles to "Resume Game" while paused (see ui.setPauseLabel). -->
             <button id="pause-btn" aria-label="Pause Game">Pause</button>
         </div>
+
+        <!-- Loop-error notice (spec §General Error Handling: state recovery
+             "with error message displayed"). role=alert announces changes to
+             assistive tech; UI.showErrorMessage reveals and auto-hides it. -->
+        <div id="error-message" class="hidden" role="alert"></div>
     </div>
 
     <script type="module" src="js/main.js"></script>

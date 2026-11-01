@@ -864,6 +864,17 @@ export class Level {
         // Candidates therefore always number >= 6, past the 5-coin floor —
         // anything the old fallback could add would sit outside
         // reachableTiles, i.e. an uncollectable coin.
+        // Spec §Error Handling (Difficulty Scaling): coin placement must not
+        // exceed 20% of level tiles. Current tuning can't approach that
+        // (target ≤ 20 coins on ≥300-tile grids; observed worst ~3.4%), so
+        // this guards future retuning: warn and trim to the cap rather than
+        // ship a broken-density level.
+        const densityCap = Math.floor(this.width * this.height * 0.2);
+        if (coins.length > densityCap) {
+            console.warn('Coin density exceeds 20% of level tiles:',
+                coins.length, '>', densityCap, '- trimming');
+            coins.length = densityCap;
+        }
         return coins;
     }
 

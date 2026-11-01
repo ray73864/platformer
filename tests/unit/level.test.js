@@ -711,3 +711,27 @@ test("advanced-tier generation never exhausts retries (R26 stress)", () => {
         }
     }
 });
+
+test("extractCoins enforces the 20% density cap (spec §Difficulty Scaling)", () => {
+    const level = new Level(1, 32);
+    // Force a scenario generation cannot produce today (target ≤ 20 coins on
+    // ≥300-tile grids): an oversized candidate set and a coin target beyond
+    // the cap for this grid (width*height*0.2). The guard must warn and trim.
+    const reachable = new Set();
+    for (let i = 0; i < 100; i++) reachable.add(3 * level.width + i); // row 3
+    level.reachableTiles = reachable;
+    level.spawnTile = { x: 0, y: 0 }; // key 0, outside the candidate row
+    level.portalTile = null;
+    level.levelNumber = 95; // target = 5 + 95 = 100 candidates collected
+
+    const originalWarn = console.warn;
+    let warned = 0;
+    console.warn = () => { warned++; };
+    try {
+        const coins = level.extractCoins();
+        expect(coins.length).toBe(Math.floor(level.width * level.height * 0.2));
+        expect(warned).toBe(1);
+    } finally {
+        console.warn = originalWarn;
+    }
+});

@@ -63,3 +63,53 @@ test("UI shows level complete screen", () => {
 
     expect(() => ui.showLevelComplete()).not.toThrow();
 });
+
+test("score/level writers log once per HUD-failure episode (spec §Score Tracking)", () => {
+    const ui = new UI();
+    const scoreEl = document.getElementById('score-display');
+    const levelEl = document.getElementById('level-display');
+    const originalError = console.error;
+    let logged = 0;
+    console.error = () => { logged++; };
+    try {
+        scoreEl.remove();
+        ui.updateScore(5);
+        ui.updateScore(6); // every-frame writer: must not log twice
+        expect(logged).toBe(1);
+
+        levelEl.remove();
+        ui.updateLevel(2);
+        expect(logged).toBe(2); // separate episode per display element
+
+        // Restoring the element re-arms the flag for a future episode.
+        document.body.appendChild(scoreEl);
+        ui.updateScore(7);
+        expect(logged).toBe(2);
+        expect(ui.getScore()).toBe(7);
+        scoreEl.remove();
+        ui.updateScore(8);
+        expect(logged).toBe(3);
+    } finally {
+        console.error = originalError;
+        document.body.appendChild(scoreEl);
+        document.body.appendChild(levelEl);
+    }
+});
+
+test("showErrorMessage reveals the alert and hides it again", async () => {
+    const ui = new UI();
+
+    ui.showErrorMessage('boom', 50);
+    const el = document.getElementById('error-message');
+    expect(el.textContent).toBe('boom');
+    expect(el.getAttribute('role')).toBe('alert');
+    expect(el).not.toHaveClass('hidden');
+
+    await Bun.sleep(80);
+    expect(el).toHaveClass('hidden');
+
+    // hideErrorMessage is safe to call again and clears any pending timer.
+    ui.showErrorMessage('boom again', 5000);
+    ui.hideErrorMessage();
+    expect(el).toHaveClass('hidden');
+});

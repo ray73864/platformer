@@ -10,7 +10,7 @@ A procedurally generated 2D platformer game built with vanilla JavaScript.
 - Level progression with increasing platform difficulty
 - Score tracking and level progression
 - **Phase 2:** coins, spike hazards, and patrolling enemies
-- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked at 70% of coins, pause via Escape, and a 15-level run ending in a game-complete screen with a saved high score
+- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked at 70% of coins, an arrow-navigable pause menu, and a 15-level run ending in a game-complete screen with a saved high score
 
 ## Controls
 
@@ -18,6 +18,7 @@ A procedurally generated 2D platformer game built with vanilla JavaScript.
 - **Arrow Right / D**: Move right
 - **Space**: Jump
 - **Escape**: Pause / resume (on the game-over or game-complete screen, Escape returns to the menu)
+- **While paused**: arrow keys select a menu option (Resume Game / Restart Level / Quit to Menu), Enter or Space activates the highlighted one
 
 ## Development
 
@@ -163,7 +164,10 @@ game/
 ### Pause
 
 - Escape pauses and resumes; the run clock freezes while paused
+- While paused, arrow keys cycle the pause menu (Resume Game / Restart Level / Quit to Menu) and Enter or Space activates the focused option; the player cannot move while paused
+- Restart Level rolls the score back to the level-start snapshot and re-arms the run clock, same contract as Retry on the game-over screen
 - Escape on the game-over or game-complete screen returns to the menu instead of pausing
+- If the game loop fails repeatedly during a run, the current level is rebuilt and a notice is shown; persistent failures return to the menu
 
 ### Run completion and high score
 

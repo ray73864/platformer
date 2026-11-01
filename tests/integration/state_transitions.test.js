@@ -308,6 +308,88 @@ test("publishLevel re-enables the pause control for the new level", () => {
     expect(document.getElementById('pause-btn').disabled).toBe(false);
 });
 
+// --- Pause menu (owner ruling R29, spec §Accessibility arrow-key clause) ---
+
+function pressArrow(code) {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code }));
+}
+
+test("pausing moves focus into the pause menu; resuming blurs back to the page", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    pressEscape();
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(document.activeElement.id).toBe('resume-btn');
+
+    pressEscape();
+    expect(game.state).toBe(STATE.PLAYING);
+    // Focus must not linger on the hidden menu: Space would stay swallowed.
+    expect(document.activeElement.tagName).toBe('BODY');
+});
+
+test("arrow keys cycle the pause menu selection and wrap around", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+    pressEscape();
+    expect(document.activeElement.id).toBe('resume-btn');
+
+    pressArrow('ArrowDown');
+    expect(document.activeElement.id).toBe('restart-level-btn');
+    pressArrow('ArrowRight');
+    expect(document.activeElement.id).toBe('quit-menu-btn');
+    pressArrow('ArrowDown'); // wraps forward to the first option
+    expect(document.activeElement.id).toBe('resume-btn');
+    pressArrow('ArrowUp'); // wraps backwards to the last
+    expect(document.activeElement.id).toBe('quit-menu-btn');
+});
+
+test("pause menu actions: Resume, Restart Level with score rollback, Quit to Menu", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    game.score = 123; // mid-level total above the level-start snapshot
+    pressEscape();
+    document.getElementById('resume-btn').click();
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+
+    pressEscape();
+    document.getElementById('restart-level-btn').click();
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(game.score).toBe(0); // rolled back to levelStartScore
+    expect(game.timer.getTimeRemaining()).toBe(game.timer.baseTime);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+
+    pressEscape();
+    document.getElementById('quit-menu-btn').click();
+    expect(game.state).toBe(STATE.MENU);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('hud').style.display).toBe('none');
+});
+
+test("arrow keys while PAUSED never move the player", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+    const x0 = game.player.x;
+
+    pressEscape();
+    for (const code of ['ArrowRight', 'ArrowRight', 'ArrowLeft']) {
+        pressArrow(code);
+        game.update(0.016);
+    }
+    expect(game.player.x).toBe(x0);
+});
+
 test("setState rejects an invalid target and leaves the state untouched", () => {
     mountFixture();
     const game = new Game();

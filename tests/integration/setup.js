@@ -1,10 +1,10 @@
 // Shared integration-test scaffolding.
 //
 // The Game constructor touches real DOM nodes (#game-canvas, #start-btn,
-// #retry-btn, #play-again-btn, #pause-btn, #final-score) and a 2d canvas
-// context before any state exists, so every integration file installs the
-// same fixture. UI-owned ids self-heal via ensureElement; these six do not
-// (see main.js bindEvents/handleGameOver).
+// #retry-btn, #play-again-btn, #pause-btn, the #pause-screen menu buttons,
+// #final-score) and a 2d canvas context before any state exists, so every
+// integration file installs the same fixture. UI-owned ids self-heal via
+// ensureElement; these do not (see main.js bindEvents/handleGameOver).
 //
 // installGameTestScaffolding() registers an afterAll teardown that restores
 // EVERY global it patches — getContext, requestAnimationFrame,
@@ -71,6 +71,13 @@ export function mountFixture() {
         <button id="retry-btn">Retry</button>
         <button id="play-again-btn">Play Again</button>
         <button id="pause-btn" aria-label="Pause Game">Pause</button>
+        <div id="pause-screen" class="overlay hidden">
+            <h2>Game Paused</h2>
+            <button id="resume-btn" aria-label="Resume Game">Resume Game</button>
+            <button id="restart-level-btn" aria-label="Restart Level">Restart Level</button>
+            <button id="quit-menu-btn" aria-label="Quit to Menu">Quit to Menu</button>
+        </div>
+        <div id="error-message" class="hidden" role="alert"></div>
         <div id="final-score"></div>
     `;
 }

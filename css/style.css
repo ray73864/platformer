@@ -88,6 +88,31 @@ button:active {
     transform: scale(0.95);
 }
 
+/* Stacked overlay controls (pause menu) need vertical rhythm; single-button
+   overlays are unaffected. */
+.overlay button + button {
+    margin-top: 1rem;
+}
+
+.overlay .pause-hint {
+    margin: 2rem 0 0;
+    font-size: 1rem;
+}
+
+/* Loop-error notice (see UI.showErrorMessage). Above every overlay. */
+#error-message {
+    position: absolute;
+    top: 12%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(178, 34, 34, 0.92);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    z-index: 20;
+}
+
 /* Visible keyboard focus for Tab-operable controls (spec §Accessibility,
    WCAG 2.4.7): the UA default outline is unreliable on this palette. */
 button:focus-visible {

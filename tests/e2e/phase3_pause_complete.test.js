@@ -120,6 +120,34 @@ test("Space after clicking the pause button jumps without re-pausing", async () 
     assertConsoleClean();
 }, 60000);
 
+test("pause menu: focus lands on Resume, arrows cycle, Enter activates", async () => {
+    // R29 spec §Accessibility clause in a real browser: arrow keys select
+    // pause-menu options while PAUSED, and native Enter activation works.
+    openGame(SESSION, server.url);
+    startGame(SESSION);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+
+    ab(SESSION, "press", "Escape");
+    abWaitFn(SESSION, "window.game.state === 'PAUSED'");
+    const activeId = () => abEvalJSON(SESSION, "document.activeElement.id");
+    expect(activeId()).toBe("resume-btn");
+
+    ab(SESSION, "press", "ArrowDown");
+    expect(activeId()).toBe("restart-level-btn");
+    ab(SESSION, "press", "ArrowDown");
+    expect(activeId()).toBe("quit-menu-btn");
+    ab(SESSION, "press", "ArrowUp");
+    expect(activeId()).toBe("restart-level-btn");
+
+    // Native Enter activation of the focused option resumes the run, and
+    // focus leaves the hidden menu so gameplay Space jumps again.
+    ab(SESSION, "press", "Enter");
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+    expect(elementState(SESSION, "pause-screen").hidden).toBe(true);
+    expect(abEvalJSON(SESSION, "document.activeElement.tagName")).toBe("BODY");
+    assertConsoleClean();
+}, 60000);
+
 test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", async () => {
     openGame(SESSION, server.url);
     startGame(SESSION);

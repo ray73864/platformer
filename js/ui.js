@@ -10,6 +10,9 @@ export class UI {
         for (const id of ['menu-screen', 'game-over-screen', 'level-complete-screen', 'pause-screen', 'game-complete-screen']) {
             this.ensureElement(id, 'overlay');
         }
+        // HUD-failure log-once flags (see updateScore).
+        this._scoreHudFailed = false;
+        this._levelHudFailed = false;
     }
 
     ensureElement(id, className) {
@@ -58,15 +61,79 @@ export class UI {
         button.disabled = !enabled;
     }
 
+    // --- Pause menu (owner ruling R29, spec §Accessibility "Arrow keys ...
+    // during PAUSED state to select menu options"). The options are native
+    // buttons inside #pause-screen: Enter/Space activation and focus styling
+    // come free from the platform; Game drives where focus goes.
+
+    focusPauseMenu() {
+        const first = document.querySelector('#pause-screen button');
+        if (first) first.focus();
+    }
+
+    cyclePauseFocus(forward) {
+        const buttons = [...document.querySelectorAll('#pause-screen button')];
+        if (buttons.length === 0) return;
+        const current = buttons.indexOf(document.activeElement);
+        // Off-menu (fresh pause, Tab elsewhere): Up/Down both land on the
+        // first option rather than wrapping to a half-visible last one.
+        const next = current === -1
+            ? 0
+            : (current + (forward ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next].focus();
+    }
+
+    // Resuming or navigating away must not leave focus on a now-hidden
+    // control: Space would stay swallowed by the focused button (see the
+    // I1 note in input.js), and assistive tech would announce nothing.
+    blurPauseControls() {
+        const active = document.activeElement;
+        if (!active || typeof active.closest !== 'function') return;
+        if (active.closest('#pause-screen') || active.id === 'pause-btn') {
+            active.blur();
+        }
+    }
+
+    // --- Loop-error notice (spec §General Error Handling: state recovery
+    // "with error message displayed"). Self-healing display element; the
+    // role attribute is re-asserted for fabricated nodes.
+    showErrorMessage(text, durationMs = 3000) {
+        const element = this.ensureElement('error-message', 'hidden');
+        if (!element.getAttribute('role')) element.setAttribute('role', 'alert');
+        element.textContent = text;
+        element.classList.remove('hidden');
+        clearTimeout(this._errorToastTimer);
+        this._errorToastTimer = setTimeout(() => this.hideErrorMessage(), durationMs);
+    }
+
+    hideErrorMessage() {
+        clearTimeout(this._errorToastTimer);
+        const element = document.getElementById('error-message');
+        if (element) element.classList.add('hidden');
+    }
+
+    // Spec §Error Handling (Score Tracking): "If HUD rendering fails, display
+    // score in console for debugging." These writers run every frame, so a
+    // missing/detached node logs once per failure episode — never per frame
+    // (the R26 flood lesson). isConnected catches nodes removed from the
+    // document after construction; the flag re-arms on the next success.
     updateScore(score) {
-        if (this.scoreElement) {
+        if (this.scoreElement && this.scoreElement.isConnected) {
             this.scoreElement.textContent = `Score: ${score}`;
+            this._scoreHudFailed = false;
+        } else if (!this._scoreHudFailed) {
+            this._scoreHudFailed = true;
+            console.error('HUD score display unavailable; score:', score);
         }
     }
 
     updateLevel(level) {
-        if (this.levelElement) {
+        if (this.levelElement && this.levelElement.isConnected) {
             this.levelElement.textContent = `Level: ${level}`;
+            this._levelHudFailed = false;
+        } else if (!this._levelHudFailed) {
+            this._levelHudFailed = true;
+            console.error('HUD level display unavailable; level:', level);
         }
     }
 

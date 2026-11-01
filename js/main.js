@@ -22,6 +22,13 @@ const COYOTE_TIME = 0.1;
 // Winning this level finishes the whole run instead of generating another.
 const FINAL_LEVEL = 15;
 const HIGH_SCORE_KEY = 'platformerHighScore';
+// Pause-menu arrow routing (R29): value is the cycle direction.
+const PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
+// Consecutive failing frames before the loop tries to recover by rebuilding
+// the current level; a second window of that many after an attempt gives up
+// to MENU (spec §General Error Handling: state recovery, without the R26
+// per-frame console flood).
+const LOOP_ERROR_RECOVERY_FRAMES = 30;
 
 // Every live Game, so test scaffolding sharing one window can tear down all
 // window listeners at once (see destroy()/destroyAllGames).
@@ -105,6 +112,9 @@ export class Game {
         this.levelCompleteTimer = 0;
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
+        // Loop-error recovery episode state (see _handleLoopError).
+        this._loopErrorStreak = 0;
+        this._recoveryAttempted = false;
 
         // Register before binding: bindEvents throws on missing buttons, and
         // an unregistered half-constructed Game would keep its resize and
@@ -155,8 +165,13 @@ export class Game {
         const retryBtn = document.getElementById('retry-btn');
         const playAgainBtn = document.getElementById('play-again-btn');
         const pauseBtn = document.getElementById('pause-btn');
-        if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn) {
-            throw new Error('Game requires #start-btn, #retry-btn, #play-again-btn and #pause-btn elements in the page');
+        const resumeBtn = document.getElementById('resume-btn');
+        const restartLevelBtn = document.getElementById('restart-level-btn');
+        const quitMenuBtn = document.getElementById('quit-menu-btn');
+        if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn ||
+            !resumeBtn || !restartLevelBtn || !quitMenuBtn) {
+            throw new Error('Game requires #start-btn, #retry-btn, #play-again-btn, ' +
+                '#pause-btn, #resume-btn, #restart-level-btn and #quit-menu-btn elements in the page');
         }
         startBtn.addEventListener('click', () => this.startGame());
         retryBtn.addEventListener('click', () => this.retryLevel());
@@ -174,6 +189,22 @@ export class Game {
         pauseBtn.addEventListener('click', () => {
             this.togglePause();
             pauseBtn.blur();
+        });
+
+        // Pause menu options (R29). Each click came from either a real click
+        // or native Enter/Space activation of the focused option; blur in
+        // every handler so focus never lingers on the overlay it just closed.
+        resumeBtn.addEventListener('click', () => {
+            this.togglePause();
+            resumeBtn.blur();
+        });
+        restartLevelBtn.addEventListener('click', () => {
+            this.restartCurrentLevel('pause-screen');
+            restartLevelBtn.blur();
+        });
+        quitMenuBtn.addEventListener('click', () => {
+            this.quitToMenu();
+            quitMenuBtn.blur();
         });
 
         // Input listener.
@@ -209,13 +240,21 @@ export class Game {
         // frames landing in PLAYING. End-screen navigation lives here and NOT
         // in togglePause: it is an Escape affordance, not a pause-button one
         // (the button is disabled in those states; see setPauseEnabled).
+        // While PAUSED, arrow keys cycle the pause menu selection (R29) —
+        // never the player: movement callbacks stay PLAYING-gated, so this is
+        // the only arrow behavior outside PLAYING. Autorepeat cycles while
+        // held, which menus expect; preventDefault stops page scroll.
         window.addEventListener('keydown', (e) => {
-            if ((e.code === 'Escape' || e.key === 'Escape') && !e.repeat) {
+            const code = e.code || e.key;
+            if (code === 'Escape' && !e.repeat) {
                 if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
                     this.returnToMenu();
                 } else {
                     this.togglePause();
                 }
+            } else if (this.state === STATE.PAUSED && code in PAUSE_MENU_ARROWS) {
+                e.preventDefault();
+                this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
             }
         }, { signal: this._abort.signal });
     }
@@ -241,10 +280,16 @@ export class Game {
             this.setState(STATE.PAUSED);
             this.ui.showOverlay('pause-screen');
             this.ui.setPauseLabel(true);
+            // R29: focus lands inside the menu so arrow+Enter work
+            // immediately and assistive tech announces the available options.
+            this.ui.focusPauseMenu();
         } else if (this.state === STATE.PAUSED) {
             this.setState(STATE.PLAYING);
             this.ui.hideOverlay('pause-screen');
             this.ui.setPauseLabel(false);
+            // Never leave focus on the just-hidden menu: Space would stay
+            // swallowed by its focused button instead of jumping.
+            this.ui.blurPauseControls();
         }
     }
 
@@ -257,6 +302,14 @@ export class Game {
         // The HUD sits above the 85%-opaque menu overlay: without this
         // the finished run's Score/Level/Time ghost through the menu.
         this.ui.hideHUD();
+    }
+
+    // Pause-menu "Quit to Menu": same landing state as Escape from an end
+    // screen, plus closing the pause overlay we are operating from.
+    quitToMenu() {
+        this.ui.blurPauseControls();
+        this.ui.hideOverlay('pause-screen');
+        this.returnToMenu();
     }
 
     startGame() {
@@ -341,20 +394,27 @@ export class Game {
         );
     }
 
+    // GAME_OVER "Retry Level": fresh attempt at the current level.
     retryLevel() {
+        this.restartCurrentLevel('game-over-screen');
+    }
+
+    // Shared by Retry (GAME_OVER) and the pause menu's Restart Level: one
+    // restart contract regardless of which screen initiated it.
+    restartCurrentLevel(overlayId) {
         // Construct before mutating anything (same discipline as startGame):
-        // on generation failure the game stays GAME_OVER with the overlay and
-        // its retry button intact, instead of a bare GAME_OVER with no way
-        // back in.
+        // on generation failure the game stays in its current state with the
+        // overlay and its controls intact, instead of a bare state with no
+        // way back in.
         const level = new Level(this.currentLevel, TILE_SIZE);
         // Roll the score back to the level-start snapshot first: the level
-        // regenerates on retry, so keeping mid-level pickups would let
+        // regenerates on restart, so keeping mid-level pickups would let
         // repeated die-and-retry runs farm coins.
         this.score = this.levelStartScore;
         // A fresh attempt gets a fresh clock: without this, retrying after a
         // time-out would kill the player on the very next tick.
         this.timer.timeRemaining = this.timer.baseTime;
-        this.ui.hideOverlay('game-over-screen');
+        this.ui.hideOverlay(overlayId);
         this.publishLevel(level);
     }
 
@@ -589,8 +649,53 @@ export class Game {
         try {
             this.update(cappedDt);
             this.draw();
+            // Clean frame: the error episode is over.
+            this._loopErrorStreak = 0;
+            this._recoveryAttempted = false;
         } catch (error) {
             console.error('Game loop error:', error);
+            this._handleLoopError();
+        }
+    }
+
+    // Spec §General Error Handling: "On error, attempt to return to PLAYING
+    // state with error message displayed." Forcing that on the first error
+    // would storm exactly like the R26 flood whenever corruption persists,
+    // so recovery engages only after LOOP_ERROR_RECOVERY_FRAMES consecutive
+    // failing frames inside a run, tries once per episode (rebuilding the
+    // current level heals most broken state), and gives up to MENU if
+    // errors keep coming through the next equal window.
+    _handleLoopError() {
+        this._loopErrorStreak++;
+        const inRun = this.state === STATE.PLAYING || this.state === STATE.PAUSED;
+        if (!inRun) return; // outside a run there is no PLAYING to recover into
+        if (!this._recoveryAttempted) {
+            if (this._loopErrorStreak >= LOOP_ERROR_RECOVERY_FRAMES) {
+                this._attemptLoopRecovery();
+            }
+        } else if (this._loopErrorStreak >= 2 * LOOP_ERROR_RECOVERY_FRAMES) {
+            console.error('Game loop errors persisted after recovery; returning to menu');
+            this.ui.hideOverlay('pause-screen');
+            this.returnToMenu();
+            this.ui.showErrorMessage('Something went wrong. Returning to main menu.');
+        }
+    }
+
+    _attemptLoopRecovery() {
+        this._recoveryAttempted = true;
+        console.error('Attempting recovery from repeated game loop errors');
+        try {
+            // Construct before publishing (same discipline as startGame): if
+            // generation throws, fall through to the MENU handoff rather than
+            // adopting a half-built level.
+            const level = new Level(this.currentLevel, TILE_SIZE);
+            this.ui.showErrorMessage('Something went wrong — recovering…');
+            this.publishLevel(level);
+        } catch (inner) {
+            console.error('Recovery failed; returning to menu:', inner);
+            this.ui.hideOverlay('pause-screen');
+            this.returnToMenu();
+            this.ui.showErrorMessage('Something went wrong. Returning to main menu.');
         }
     }
 }
