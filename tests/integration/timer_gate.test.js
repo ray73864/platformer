@@ -34,6 +34,30 @@ test("basic tier (levels 1-4): the clock never ticks or kills", () => {
     expect(game.timer.timeRemaining).toBe(0.5);
 });
 
+test("pause freezes the run clock on a timed level, Escape resumes ticking", () => {
+    mountFixture();
+    const game = new Game();
+    game.currentLevel = 5;
+    game.startLevel();
+
+    // Real key path: main.js binds window keydown for Escape.
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Escape" }));
+    expect(game.state).toBe(STATE.PAUSED);
+
+    const frozen = game.timer.timeRemaining;
+    // Large dt: if the clock ticked while PAUSED, these ticks would drain it
+    // (and crossing zero here would even flip the state to GAME_OVER).
+    for (let i = 0; i < 5; i++) game.update(1);
+
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(game.timer.timeRemaining).toBe(frozen);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Escape" }));
+    expect(game.state).toBe(STATE.PLAYING);
+    game.update(0.05); // small dt to avoid confounding the assertion with pit deaths
+    expect(game.timer.timeRemaining).toBeLessThan(frozen);
+});
+
 test("retry after time-up resets the run clock (no instant re-kill)", () => {
     mountFixture();
     const game = new Game();
