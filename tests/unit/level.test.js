@@ -693,3 +693,21 @@ test("fall-death threshold tracks level height on vertical levels", () => {
     // 24-row vertical grid: the threshold genuinely tracks level.height.
     expect(hazards.checkPitFall({ y: 15 * 32 + 101 }, worldHeightPx)).toBe(false);
 });
+
+test("advanced-tier generation never exhausts retries (R26 stress)", () => {
+    // Regression guard for the R26 defect: before the keep-if-harmless spike
+    // gate and the no-rise-after-wide-gap rule, ~37% of level-15
+    // constructions threw "no reachable portal position" after
+    // MAX_GENERATION_ATTEMPTS. Constructions now succeed in ~0.2ms with zero
+    // throws; 30 consecutive builds per advanced horizontal tier (levels 11,
+    // 12, 14, 15) must all validate. A throw surfaces as a test failure.
+    for (const n of [11, 12, 14, 15]) {
+        for (let i = 0; i < 30; i++) {
+            const level = new Level(n, 32);
+            expect(level.hasValidPath()).toBe(true);
+            // Presence contracts hold on every accepted construction.
+            expect(countType(level.tiles, 2)).toBeGreaterThan(0);
+            expect(countType(level.tiles, 4)).toBeGreaterThan(0);
+        }
+    }
+});
