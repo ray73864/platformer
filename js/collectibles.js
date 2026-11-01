@@ -12,6 +12,8 @@
  *   single call (0 when nothing overlaps), so a player straddling two
  *   coins picks both up at once.
  */
+import { aabbOverlap } from './physics.js';
+
 const COIN_WIDTH = 16;
 const COIN_HEIGHT = 16;
 // Exported so the game loop scores collections through the same constant
@@ -68,12 +70,7 @@ export class Collectibles {
             if (coin.collected) continue;
 
             // Axis-aligned overlap; touching edges do not count.
-            if (
-                player.x < coin.x + coin.width &&
-                player.x + player.width > coin.x &&
-                player.y < coin.y + coin.height &&
-                player.y + player.height > coin.y
-            ) {
+            if (aabbOverlap(player, coin)) {
                 this.collectCoin(i);
                 collectedNow++;
             }

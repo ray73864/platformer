@@ -1,3 +1,19 @@
+/**
+ * Axis-aligned overlap with strict </> comparisons: touching edges do not
+ * count as contact. Single source of truth for every collision convention
+ * in the game (platforms via Physics.checkAABB, coins, enemies, spike
+ * cores); previously four hand-synced copies drifted one convention change
+ * away from each other (review S9).
+ */
+export function aabbOverlap(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+    );
+}
+
 export class Physics {
     constructor(gravity = 980, maxFallSpeed = 600) {
         this.gravity = gravity;
@@ -15,12 +31,7 @@ export class Physics {
     }
 
     checkAABB(rect1, rect2) {
-        return (
-            rect1.x < rect2.x + rect2.width &&
-            rect1.x + rect1.width > rect2.x &&
-            rect1.y < rect2.y + rect2.height &&
-            rect1.y + rect1.height > rect2.y
-        );
+        return aabbOverlap(rect1, rect2);
     }
 
     checkCollisions(player, platforms) {

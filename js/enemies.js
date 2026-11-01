@@ -19,8 +19,9 @@
  *   item 6): static terrain plus walkable, band-clamped bounds cannot make
  *   these enemies stuck. Revisit for moving platforms / dynamic terrain.
  */
-const ENEMY_WIDTH = 32;
-const ENEMY_HEIGHT = 32;
+import { aabbOverlap } from './physics.js';
+
+const ENEMY_WIDTH = 32;const ENEMY_HEIGHT = 32;
 const ENEMY_SPEED = 50; // px/s
 
 export class Enemy {
@@ -54,12 +55,7 @@ export class Enemy {
 
     checkCollision(player) {
         // Axis-aligned overlap; touching edges do not count.
-        return (
-            this.x < player.x + player.width &&
-            this.x + this.width > player.x &&
-            this.y < player.y + player.height &&
-            this.y + this.height > player.y
-        );
+        return aabbOverlap(this, player);
     }
 
     die() {

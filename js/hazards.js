@@ -14,6 +14,8 @@
  *   `level.height * tileSize` in world/CSS pixels — never canvas backing-store
  *   pixels, which drift with devicePixelRatio.
  */
+import { aabbOverlap } from './physics.js';
+
 const SPIKE_WIDTH = 32;
 const SPIKE_HEIGHT = 32;
 const SPIKE_HITBOX_INSET = 4;
@@ -35,18 +37,15 @@ export class Hazards {
 
     checkSpikeCollision(player, spike) {
         // Inset hitbox centred within the full tile rect stored by addSpike.
-        const hitX = spike.x + SPIKE_HITBOX_INSET;
-        const hitY = spike.y + SPIKE_HITBOX_INSET;
-        const hitWidth = spike.width - 2 * SPIKE_HITBOX_INSET;
-        const hitHeight = spike.height - 2 * SPIKE_HITBOX_INSET;
+        const hitbox = {
+            x: spike.x + SPIKE_HITBOX_INSET,
+            y: spike.y + SPIKE_HITBOX_INSET,
+            width: spike.width - 2 * SPIKE_HITBOX_INSET,
+            height: spike.height - 2 * SPIKE_HITBOX_INSET
+        };
 
         // Axis-aligned overlap against the inset; touching edges do not count.
-        return (
-            player.x < hitX + hitWidth &&
-            player.x + player.width > hitX &&
-            player.y < hitY + hitHeight &&
-            player.y + player.height > hitY
-        );
+        return aabbOverlap(player, hitbox);
     }
 
     checkPlayerSpikes(player) {
