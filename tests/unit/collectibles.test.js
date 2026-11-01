@@ -156,10 +156,13 @@ test("loadCoins adopts externally generated coins by reference", () => {
     expect(generated[1].collected).toBe(true);
 });
 
-test("meetsPortalRequirement is false when the level has no coins", () => {
+test("meetsPortalRequirement opens the gate when the level has no coins", () => {
     const collectibles = new Collectibles();
 
-    expect(collectibles.meetsPortalRequirement()).toBe(false);
+    // The 70% formula's minimum (max(1, floor(0*0.7)) = 1) could never be met
+    // with zero coins: an unwinnable level. Nothing to collect means nothing
+    // to gate.
+    expect(collectibles.meetsPortalRequirement()).toBe(true);
 });
 
 test("meetsPortalRequirement is false at 6 of 10 coins", () => {
