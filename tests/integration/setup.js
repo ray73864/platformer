@@ -11,7 +11,14 @@
 // cancelAnimationFrame — and empties document.body. Without the body reset,
 // a leaked #game-canvas poisons later files sharing the one happy-dom Window
 // (e.g. main.test.js's "does not auto-construct a Game" guard).
+//
+// mountFixture() first destroys every still-listening Game: each `new Game()`
+// registers window listeners, and on a shared Window a stale game would react
+// to later tests' events (Escape driving togglePause on dead instances that
+// write overlays into the live fixture). Per-test construction is the norm
+// here: mountFixture() immediately precedes `new Game()` in every file.
 import { afterAll } from "bun:test";
+import { destroyAllGames } from "../../js/main.js";
 
 // Captured at module evaluation, before any file patches anything, so two
 // importing files can never restore a patched-over "original".
@@ -46,6 +53,7 @@ export function installGameTestScaffolding() {
     };
 
     afterAll(() => {
+        destroyAllGames();
         globalThis.requestAnimationFrame = realRequestAnimationFrame;
         globalThis.cancelAnimationFrame = realCancelAnimationFrame;
         HTMLCanvasElement.prototype.getContext = realGetContext;
@@ -54,6 +62,7 @@ export function installGameTestScaffolding() {
 }
 
 export function mountFixture() {
+    destroyAllGames();
     window.innerWidth = 800;
     window.innerHeight = 600;
     document.body.innerHTML = `

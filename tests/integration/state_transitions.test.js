@@ -248,11 +248,54 @@ test("escape from GAME_OVER returns to MENU, hiding game-over and showing the me
 test("escape in MENU does nothing", () => {
     mountFixture();
     const game = new Game();
+    hideOverlays(game);
 
     pressEscape();
 
-    // State-only: leaked keydown listeners from games built by earlier tests
-    // in this file also react to the same event, so overlay visibility here
-    // is not isolated to this instance.
     expect(game.state).toBe(STATE.MENU);
+    // Full overlay assertions: mountFixture() tears down every earlier Game,
+    // so only this instance can react to the event.
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(true);
+});
+
+test("escape autorepeat keydowns do not strobe PAUSED", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    pressEscape();
+    expect(game.state).toBe(STATE.PAUSED);
+
+    // OS key-repeat re-fires keydown without an intervening keyup; the
+    // handler must honour `repeat` or pause flickers ~30/s while held.
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', repeat: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', repeat: true }));
+
+    expect(game.state).toBe(STATE.PAUSED);
+});
+
+test("input while PAUSED does not mutate the player", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    hideOverlays(game);
+
+    // Land on the spawn ground so grounded/vy have settled values.
+    game.update(0.016);
+    pressEscape();
+    expect(game.state).toBe(STATE.PAUSED);
+
+    const { vx, vy, grounded } = game.player;
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight' }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA' }));
+
+    // PAUSED freezes physics: jump/move callbacks must not write velocity,
+    // clear grounded, or arm the jump buffer.
+    expect(game.player.vx).toBe(vx);
+    expect(game.player.vy).toBe(vy);
+    expect(game.player.grounded).toBe(grounded);
+    expect(game.jumpBufferTimer).toBe(0);
 });
