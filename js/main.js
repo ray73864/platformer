@@ -255,11 +255,22 @@ export class Game {
 
     handleGameComplete() {
         this.state = STATE.GAME_COMPLETE;
-        const stored = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0;
-        if (this.score > stored) {
-            localStorage.setItem(HIGH_SCORE_KEY, String(this.score));
+        let highScore = this.score;
+        // Storage-disabled environments throw from getItem/setItem. An
+        // uncaught throw here would leave state LEVEL_COMPLETE with an expired
+        // timer, so update() would re-enter every frame and flood the loop's
+        // console.error. Spec: warn and continue, showing the run score as the
+        // high score when storage is unavailable.
+        try {
+            const stored = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0;
+            if (this.score > stored) {
+                localStorage.setItem(HIGH_SCORE_KEY, String(this.score));
+            }
+            highScore = Math.max(this.score, stored);
+        } catch (error) {
+            console.warn('High score unavailable (localStorage failed):', error);
         }
-        this.ui.showGameComplete(this.score, Math.max(this.score, stored));
+        this.ui.showGameComplete(this.score, highScore);
     }
 
     update(dt) {
