@@ -75,12 +75,13 @@ test("Enemy detects player collision", () => {
 test("Enemy contact treats touching edges as no collision", () => {
     const enemy = new Enemy(100, 100, 50, 200);
 
-    // Player right edge sits exactly on the enemy's left edge (100).
-    const touching = { x: 68, y: 100, width: 32, height: 32 };
+    // Player right edge sits exactly on the art-matched lethal box's left
+    // edge (body x + 4px inset = 104).
+    const touching = { x: 72, y: 104, width: 32, height: 28 };
     expect(enemy.checkCollision(touching)).toBe(false);
 
     // One pixel deeper overlaps: strict </> boundary sensitivity.
-    const overlapping = { x: 69, y: 100, width: 32, height: 32 };
+    const overlapping = { x: 73, y: 104, width: 32, height: 28 };
     expect(enemy.checkCollision(overlapping)).toBe(true);
 });
 
@@ -302,4 +303,50 @@ test("patrol bounds are clamped to the band within level bounds", () => {
     // spawn zone columns 0-5 or portal-band columns 16-19.
     expect(enemies[0].minX).toBe(6 * 32);
     expect(enemies[1].maxX).toBe(15 * 32);
+});
+
+test("hitbox is inset from the body: edge-adjacent player is safe", () => {
+    const enemy = new Enemy(100, 200, 100, 200);
+
+    // Player right edge flush with the BODY rect right edge (x=132): still
+    // outside the art-matched lethal box (inset 4px per side).
+    const brushing = { x: 100 - 32 + 2, y: 204, width: 32, height: 28 };
+    expect(enemy.checkCollision(brushing)).toBe(false);
+
+    // Deep into visible flesh: collision.
+    const touching = { x: 106, y: 204, width: 32, height: 28 };
+    expect(enemy.checkCollision(touching)).toBe(true);
+});
+
+test("resolvePlayerContact: falling feet-first stomps instead of dying", () => {
+    const manager = new EnemyManager();
+    manager.addEnemy(100, 200, 60, 200);
+
+    // Falling onto the enemy: prev feet above its top, current overlap.
+    const player = { x: 104, y: 178, width: 32, height: 32, vy: 200, prevY: 172 };
+
+    const result = manager.resolvePlayerContact(player);
+
+    expect(result.stomped).toBe(1);
+    expect(result.deadly).toBe(false);
+    expect(manager.getActiveEnemies().length).toBe(0);
+});
+
+test("resolvePlayerContact: side contact stays deadly, rising does not stomp", () => {
+    const manager = new EnemyManager();
+    manager.addEnemy(100, 200, 60, 200);
+
+    // Walking into the enemy's side on the ground (vy 0, feet level).
+    const walker = { x: 96, y: 200, width: 32, height: 32, vy: 0, prevY: 200 };
+    let result = manager.resolvePlayerContact(walker);
+    expect(result.deadly).toBe(true);
+    expect(result.stomped).toBe(0);
+
+    // Rising through the enemy (jumping up beside it) must not stomp.
+    const manager2 = new EnemyManager();
+    manager2.addEnemy(100, 200, 60, 200);
+    const riser = { x: 104, y: 190, width: 32, height: 32, vy: -100, prevY: 196 };
+    result = manager2.resolvePlayerContact(riser);
+    expect(result.deadly).toBe(true);
+    expect(result.stomped).toBe(0);
 });

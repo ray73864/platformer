@@ -409,6 +409,9 @@
   var ENEMY_WIDTH = 32;
   var ENEMY_HEIGHT = 32;
   var ENEMY_SPEED = 50;
+  var ENEMY_HITBOX_INSET_X = 4;
+  var ENEMY_HITBOX_INSET_TOP = 4;
+  var ENEMY_STOMP_TOLERANCE = 12;
 
   class Enemy {
     constructor(x, y, minX, maxX) {
@@ -435,7 +438,12 @@
       }
     }
     checkCollision(player) {
-      return aabbOverlap(this, player);
+      return aabbOverlap(player, {
+        x: this.x + ENEMY_HITBOX_INSET_X,
+        y: this.y + ENEMY_HITBOX_INSET_TOP,
+        width: this.width - 2 * ENEMY_HITBOX_INSET_X,
+        height: this.height - ENEMY_HITBOX_INSET_TOP
+      });
     }
     die() {
       this.dead = true;
@@ -477,6 +485,24 @@
         }
       }
       return false;
+    }
+    resolvePlayerContact(player) {
+      let stomped = 0;
+      let deadly = false;
+      const prevBottom = (player.prevY !== undefined ? player.prevY : player.y) + player.height;
+      for (const enemy of this.enemies) {
+        if (enemy.isDead())
+          continue;
+        if (!enemy.checkCollision(player))
+          continue;
+        if (player.vy > 0 && prevBottom <= enemy.y + ENEMY_STOMP_TOLERANCE) {
+          enemy.die();
+          stomped++;
+        } else {
+          deadly = true;
+        }
+      }
+      return { stomped, deadly };
     }
     getActiveEnemies() {
       return this.enemies.filter((enemy) => !enemy.isDead());
@@ -1618,6 +1644,7 @@
   var JUMP_BUFFER_TIME = 0.12;
   var COYOTE_TIME = 0.1;
   var LEDGE_FALL_SEED = 140;
+  var STOMP_BOUNCE = 260;
   var FINAL_LEVEL = 15;
   var HIGH_SCORE_KEY = "platformerHighScore";
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
@@ -1941,7 +1968,12 @@
           }
         }
         this.enemyManager.updateAll(dt);
-        if (this.enemyManager.checkPlayerCollisions(this.player)) {
+        const contact = this.enemyManager.resolvePlayerContact(this.player);
+        if (contact.stomped > 0) {
+          this.player.vy = -STOMP_BOUNCE;
+          spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
+        }
+        if (contact.deadly) {
           this.handleGameOver();
           return;
         }

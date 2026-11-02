@@ -33,6 +33,9 @@ const COYOTE_TIME = 0.1;
 // Downward velocity seeded when the player walks off a ledge without jumping:
 // gravity from vy=0 drifts over narrow gaps instead of dropping cleanly.
 const LEDGE_FALL_SEED = 140;
+// Upward velocity after squashing an enemy (stomp bounce): a bit under a
+// full jump so chained stomps stay skillful.
+const STOMP_BOUNCE = 260;
 // Winning this level finishes the whole run instead of generating another.
 const FINAL_LEVEL = 15;
 const HIGH_SCORE_KEY = 'platformerHighScore';
@@ -623,7 +626,18 @@ export class Game {
             // spikes, pit) and stop the tick at the first hit, so several
             // simultaneous contacts produce exactly one game over.
             this.enemyManager.updateAll(dt);
-            if (this.enemyManager.checkPlayerCollisions(this.player)) {
+            // Stomp-aware enemy contact: falling feet-first from above
+            // squashes the enemy (with a bounce and a poof); any other
+            // contact is fatal.
+            const contact = this.enemyManager.resolvePlayerContact(this.player);
+            if (contact.stomped > 0) {
+                this.player.vy = -STOMP_BOUNCE;
+                spawnBurst(this.particles,
+                    this.player.x + this.player.width / 2,
+                    this.player.y + this.player.height,
+                    '#c96bf5', 10);
+            }
+            if (contact.deadly) {
                 this.handleGameOver();
                 return;
             }
