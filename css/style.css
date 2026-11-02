@@ -214,3 +214,20 @@ button:focus-visible {
 #hud > button:hover {
     background: #ffe27a;
 }
+
+/* Narrow phones: four chips (score/level/time/pause) must not run past the
+   viewport edge on timed levels. */
+@media (max-width: 560px) {
+    #hud {
+        top: 8px;
+        left: 8px;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    #hud > span,
+    #hud > button {
+        font-size: 0.55rem;
+        padding: 8px 10px;
+    }
+}
