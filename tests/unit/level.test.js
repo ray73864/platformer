@@ -694,20 +694,27 @@ test("fall-death threshold tracks level height on vertical levels", () => {
     expect(hazards.checkPitFall({ y: 15 * 32 + 101 }, worldHeightPx)).toBe(false);
 });
 
-test("advanced-tier generation never exhausts retries (R26 stress)", () => {
+test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
     // Regression guard for the R26 defect: before the keep-if-harmless spike
     // gate and the no-rise-after-wide-gap rule, ~37% of level-15
     // constructions threw "no reachable portal position" after
-    // MAX_GENERATION_ATTEMPTS. Constructions now succeed in ~0.2ms with zero
-    // throws; 30 consecutive builds per advanced horizontal tier (levels 11,
-    // 12, 14, 15) must all validate. A throw surfaces as a test failure.
-    for (const n of [11, 12, 14, 15]) {
+    // MAX_GENERATION_ATTEMPTS. Extended to ALL phase-2 levels (I2): the
+    // vertical tier (7, 10, 13) was omitted here while the branch retired
+    // startLevelRetrying on the claim that "R26 pins generation reliability"
+    // — a claim false for vertical level 13 (~5-7% exhaustion until the spike
+    // gate gained marker-site survival). Constructions now succeed in ~1ms
+    // with zero measured throws (0/800 at L13); 30 consecutive builds per
+    // phase-2 level must all validate. A throw surfaces as a test failure.
+    for (const n of [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
         for (let i = 0; i < 30; i++) {
             const level = new Level(n, 32);
             expect(level.hasValidPath()).toBe(true);
             // Presence contracts hold on every accepted construction.
             expect(countType(level.tiles, 2)).toBeGreaterThan(0);
             expect(countType(level.tiles, 4)).toBeGreaterThan(0);
+            // Deployed spawns, not raw markers (I2): the constructor's guard
+            // is deriveEnemySpawns().length > 0, and that is what ships.
+            expect(level.deriveEnemySpawns().length).toBeGreaterThan(0);
         }
     }
 });

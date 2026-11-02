@@ -96,6 +96,29 @@ test("score/level writers log once per HUD-failure episode (spec §Score Trackin
     }
 });
 
+test("updateTimer logs once per HUD-failure episode (S3)", () => {
+    const ui = new UI();
+    const timerEl = document.getElementById('timer-display');
+    const originalError = console.error;
+    let logged = 0;
+    console.error = () => { logged++; };
+    try {
+        timerEl.remove();
+        ui.updateTimer(30);
+        ui.updateTimer(29); // every-frame writer: must not log twice
+        expect(logged).toBe(1);
+
+        // Restoring the element re-arms the flag and writes again.
+        document.body.appendChild(timerEl);
+        ui.updateTimer(28);
+        expect(logged).toBe(1);
+        expect(timerEl.textContent).toBe('Time: 0:28');
+    } finally {
+        console.error = originalError;
+        document.body.appendChild(timerEl);
+    }
+});
+
 test("showErrorMessage reveals the alert and hides it again", async () => {
     const ui = new UI();
 

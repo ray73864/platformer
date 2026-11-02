@@ -49,6 +49,19 @@ test("a corrupt timeRemaining recovers to the default on the next tick", () => {
     expect(timer.getTimeRemaining()).toBeCloseTo(59, 6);
 });
 
+test("a corrupt baseTime cannot reinstate the corruption it repairs (S5)", () => {
+    const timer = new Timer(60);
+    timer.baseTime = 'sixty';
+    timer.timeRemaining = NaN;
+
+    timer.update(1);
+
+    // Without validating the fallback, timeRemaining would stay NaN and
+    // isTimeUp() false forever: a clock that never expires, warning-free.
+    expect(Number.isFinite(timer.getTimeRemaining())).toBe(true);
+    expect(timer.getTimeRemaining()).toBeCloseTo(59, 6);
+});
+
 test("negative timeRemaining clamps to zero", () => {
     const timer = new Timer(60);
     timer.timeRemaining = -5;

@@ -13,6 +13,7 @@ export class UI {
         // HUD-failure log-once flags (see updateScore).
         this._scoreHudFailed = false;
         this._levelHudFailed = false;
+        this._timerHudFailed = false;
     }
 
     ensureElement(id, className) {
@@ -146,10 +147,18 @@ export class UI {
     }
 
     updateTimer(timeRemaining) {
-        if (this.timerElement) {
+        // Same isConnected + log-once discipline as updateScore/updateLevel
+        // (S3): this writer also runs every frame, and a detached node must
+        // not fail silently while the clock still kills the player.
+        if (this.timerElement && this.timerElement.isConnected) {
             const minutes = Math.floor(timeRemaining / 60);
             const seconds = Math.floor(timeRemaining % 60);
             this.timerElement.textContent = `Time: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+            this._timerHudFailed = false;
+        } else if (!this._timerHudFailed) {
+            this._timerHudFailed = true;
+            console.error('HUD timer display unavailable; time remaining:',
+                timeRemaining);
         }
     }
 

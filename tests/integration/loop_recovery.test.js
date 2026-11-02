@@ -69,6 +69,30 @@ test("errors persisting through the second window hand off to MENU", () => {
     }
 });
 
+// I1 regression: a render fault accumulates its streak while PAUSED (draw()
+// runs inside loop()'s try), and recovery's success path flips straight to
+// PLAYING via publishLevel. Without closing the overlay the run would resume
+// live behind a still-visible "Game Paused" modal, breaking the invariant
+// "pause-screen visible ⇔ state === PAUSED".
+test("recovery from PAUSED closes the pause overlay when the game resumes", () => {
+    const game = startPlaying();
+    game.togglePause();
+    expect(game.state).toBe(STATE.PAUSED);
+    expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(false);
+
+    game.update = () => { throw new Error('injected failure'); };
+    try {
+        failFrames(game, RECOVERY_FRAMES); // recovery engages from PAUSED
+        expect(game.state).toBe(STATE.PLAYING);
+        expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
+        // Focus must not linger on the just-hidden menu's button: Space would
+        // stay swallowed there instead of jumping (see togglePause comment).
+        expect(document.activeElement?.id).not.toBe('resume-btn');
+    } finally {
+        game.ui.hideErrorMessage();
+    }
+});
+
 test("a clean frame ends the episode so a later streak can recover again", () => {
     const game = startPlaying();
     let failing = true;

@@ -339,6 +339,16 @@ export class Level {
         }
     }
 
+    // Spawn tile in canonical right-facing generation space (before the
+    // 'left' column flip): the single spelling shared by placeSpikes'
+    // keep-if-harmless gate and generateLevel's marker reachability pass,
+    // so neither can drift from the other.
+    canonicalSpawnTile() {
+        return this.direction === 'vertical'
+            ? this.getSpawnTile()
+            : { x: SPAWN_TILE_X, y: this.height - 4 };
+    }
+
     generateLevel() {
         const tiles = Array(this.height).fill(null).map(() =>
             Array(this.width).fill(0)
@@ -356,6 +366,21 @@ export class Level {
         // Order matters: hazards and enemy markers exist in the grid before
         // the constructor's computeReachable pass validates the level.
         this.placeSpikes(tiles);
+        // Marker candidates must be judged against the final terrain plus
+        // spikes (I2): a spike can strip a ledge of its only legal approach,
+        // and deriveEnemySpawns would then silently drop every marker on it,
+        // exhausting whole constructions on vertical maps (~6% at level 13).
+        // Same BFS, spawn tile and headroom rule as the constructor's pass on
+        // this same grid — markers that survive here deploy for real. Computed
+        // in canonical (pre-mirror) space; the movement model is symmetric
+        // in x, so 'left' reachability mirrors exactly.
+        this.generationReachable = computeReachable(
+            tiles,
+            this.width,
+            this.height,
+            this.canonicalSpawnTile(),
+            this.direction === 'vertical'
+        );
         this.placeEnemyMarkers(tiles);
 
         // 'left' generates entirely in canonical right-facing space — spawn
@@ -628,12 +653,30 @@ export class Level {
         // afterwards and the movement model is symmetric in x, so a mirrored
         // route mirrors its validation exactly.
         const headroom = this.direction === 'vertical';
-        const spawn = this.direction === 'vertical'
-            ? this.getSpawnTile()
-            : { x: SPAWN_TILE_X, y: this.height - 4 };
-        const portalStillReachable = () => {
+        const spawn = this.canonicalSpawnTile();
+        // Keep-if-harmless gate, two survival requirements (I2):
+        // 1. Portal reachability: a surface spike makes its entire column
+        //    unlandable (the movement model breaks downward landing scans on
+        //    hazards — falling onto a spike kills), so a spike on a pit rim
+        //    or capping a riser can silently wall the corridor off. Blind
+        //    placement plus whole-map retries starved the advanced-tier sizes
+        //    (~98% of attempts unreachable at level 15, throwing after
+        //    MAX_GENERATION_ATTEMPTS); testing each placement against the
+        //    same validation the constructor applies rejects severing spikes
+        //    at the source instead.
+        // 2. Marker-site survival: a spike that strips the last deployable
+        //    enemy site forces whole-map rejection by the constructor's
+        //    deployed-spawn guard — on vertical level 13 that coupling burned
+        //    ~6% of construction budgets. Requiring one surviving site per
+        //    accepted placement measured 0/400 exhaustion (was 22-48/400).
+        // Bounded by the candidate list, like everything else here. Evaluated
+        // in canonical right-facing space: 'left' mirrors afterwards and the
+        // movement model is symmetric in x, so a mirrored route mirrors its
+        // validation exactly.
+        const placementSafe = () => {
             const reachable = computeReachable(
                 tiles, this.width, this.height, spawn, headroom);
+            let portalBand = false;
             for (const key of reachable) {
                 const x = key % this.width;
                 const y = Math.floor(key / this.width);
@@ -643,6 +686,15 @@ export class Level {
                 // success. Canonical (pre-mirror) space is required here —
                 // 'left' mirrors only after generateLevel returns.
                 if (this.inCanonicalPortalBand(x, y)) {
+                    portalBand = true;
+                    break;
+                }
+            }
+            if (!portalBand) return false;
+            for (const key of reachable) {
+                if (this.isMarkerSite(
+                    tiles, key % this.width,
+                    Math.floor(key / this.width), reachable)) {
                     return true;
                 }
             }
@@ -667,13 +719,38 @@ export class Level {
                 continue;
             }
             tiles[c.y][c.x] = 2;
-            if (portalStillReachable()) {
+            if (placementSafe()) {
                 usedColumns.add(c.x);
                 placed++;
             } else {
                 tiles[c.y][c.x] = 0;
             }
         }
+    }
+
+    // Single-cell enemy marker site predicate, shared by placeEnemyMarkers'
+    // candidate scan and placeSpikes' keep-if-harmless gate (I2): allowed
+    // coordinate band (rows on vertical), air on solid ground, off the
+    // constructed route, reachable in the given set, and a patrol span of at
+    // least two columns after clamping to the direction's band — one column
+    // would spawn a body that fits its bounds exactly and never moves. One
+    // spelling so the gate cannot drift from placement while both report
+    // success (same reasoning as deriveEnemySpawns sharing spawnEnemies).
+    isMarkerSite(tiles, x, y, reachable) {
+        if (!this.hazardPlacementAllowed(
+            this.direction === 'vertical' ? y : x)) {
+            return false;
+        }
+        if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1) return false;
+        if (this.pathCells && this.pathCells.has(y * this.width + x)) {
+            return false;
+        }
+        if (!reachable.has(y * this.width + x)) return false;
+        const span = this.patrolSpan(tiles, x, y);
+        if (!span) return false;
+        const [bandMin, bandMax] = this.patrolBandBounds();
+        return Math.min(span.right, bandMax) -
+            Math.max(span.left, bandMin) + 1 >= 2;
     }
 
     placeEnemyMarkers(tiles) {
@@ -689,10 +766,6 @@ export class Level {
             Math.floor(this.levelNumber / 2)
         );
 
-        const solidAt = (x, y) =>
-            x >= 0 && x < this.width && y >= 0 && y < this.height &&
-            tiles[y][x] === 1;
-
         // Markers need a standable air tile whose FREE patrol span beneath
         // is at least 3 columns wide, so every spawned enemy gets a real
         // walkable patrol (patrolSpan: rock and spikes on the walk row end
@@ -702,32 +775,16 @@ export class Level {
         // (those are no longer air), and vertical route cells are off
         // limits: an enemy sweeping a jump-off/landing cell makes the only
         // validated climb periodically lethal with no stomp mechanic (S10).
+        // isMarkerSite adds reachability (I2): deriveEnemySpawns drops
+        // unreachable markers, so placing on one buys a raw marker count
+        // while the guard demands deployed spawns — on vertical maps every
+        // marker could land on an off-route ledge and burn the whole
+        // 200-attempt budget. Requiring reach here makes placed ≈ deployed.
         const candidates = [];
         for (let y = 0; y < this.height - 1; y++) {
             for (let x = 0; x < this.width; x++) {
-                if (!this.hazardPlacementAllowed(
-                    this.direction === 'vertical' ? y : x)) {
-                    continue;
-                }
-                if (tiles[y][x] !== 0 || !solidAt(x, y + 1)) continue;
-                if (this.pathCells &&
-                    this.pathCells.has(y * this.width + x)) {
-                    continue;
-                }
-                const span = this.patrolSpan(tiles, x, y);
-                // The candidate must offer at least 2 patrollable columns
-                // AFTER clamping the free span to the direction's band.
-                // Ground runs routinely extend into the forced-flat spawn
-                // zone; requiring the raw run to sit fully inside the band
-                // would reject nearly every ground marker on Phase-2
-                // terrain, while a 1-column clamped window would spawn a
-                // body that fits its bounds exactly and never moves. Two
-                // columns = every patrol visibly walks. The clamp itself is
-                // what keeps patrols out of excluded columns (I3).
-                const [bandMin, bandMax] = this.patrolBandBounds();
-                const left = Math.max(span ? span.left : 0, bandMin);
-                const right = Math.min(span ? span.right : -1, bandMax);
-                if (span && right - left + 1 >= 2) {
+                if (this.isMarkerSite(
+                    tiles, x, y, this.generationReachable)) {
                     candidates.push({ x, y });
                 }
             }

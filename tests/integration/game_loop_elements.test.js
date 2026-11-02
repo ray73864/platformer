@@ -322,6 +322,44 @@ test("level advance keeps currentLevel and LEVEL_COMPLETE intact when generation
     expect(game.currentLevel).toBe(finishedLevel + 1);
 });
 
+// S1: the transition retry is bounded — persistent failure hands off to MENU
+// on the same terms as loop-error recovery, instead of rebuilding every
+// frame forever (a frozen tab, silent after one log line).
+test("a persistently failing level transition hands off to MENU after the stall cap", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    const portal = game.level.portal;
+    game.player.x = portal.x;
+    game.player.y = portal.y;
+    game.player.markPortalReached();
+    game.update(DT);
+    expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+
+    const originalConsole = console.error;
+    console.error = () => {};
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = () => null;
+    try {
+        // Must match LEVEL_TRANSITION_MAX_STALL_FRAMES in main.js. The first
+        // update(3) expires the 2 s budget and burns stall frame #1; 120 more
+        // failing frames cross the cap and trip the handoff.
+        game.update(3);
+        for (let i = 0; i < 120; i++) game.update(DT);
+        expect(game.state).toBe(STATE.MENU);
+        // No orphan overlays: the complete screen closes, the menu is up,
+        // and the player gets the same notice as loop-recovery's give-up.
+        expect(document.getElementById('level-complete-screen').classList.contains('hidden')).toBe(true);
+        expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(false);
+        expect(document.getElementById('error-message').classList.contains('hidden')).toBe(false);
+    } finally {
+        console.error = originalConsole;
+        Level.prototype.pickPortalTile = original;
+        game.ui.hideErrorMessage();
+    }
+});
+
 // --- Construct-before-publish on the run-flow entries (S5 review) -----------
 
 test("startGame keeps end-screen state intact when generation exhausts", () => {
@@ -332,17 +370,25 @@ test("startGame keeps end-screen state intact when generation exhausts", () => {
     game.score = 500;
     game.currentLevel = 15;
 
+    const originalConsole = console.error;
+    console.error = () => {};
     const original = Level.prototype.pickPortalTile;
     Level.prototype.pickPortalTile = () => null;
     try {
-        expect(() => game.startGame()).toThrow(/no reachable portal/);
+        // I3: persistent generation failure is caught at the click boundary
+        // (after one inline re-attempt) and surfaced as a message — never an
+        // uncaught throw escaping into the button listener.
+        expect(game.startGame()).toBe(false);
+        expect(document.getElementById('error-message').classList.contains('hidden')).toBe(false);
         // Nothing was zeroed before the fallible construction: the visible
         // GAME_COMPLETE screen still describes the run it shows.
         expect(game.state).toBe(STATE.GAME_COMPLETE);
         expect(game.score).toBe(500);
         expect(game.currentLevel).toBe(15);
     } finally {
+        console.error = originalConsole;
         Level.prototype.pickPortalTile = original;
+        game.ui.hideErrorMessage();
     }
 });
 
@@ -354,15 +400,49 @@ test("retryLevel keeps the game-over overlay and state when generation exhausts"
     game.update(DT);
     expect(game.state).toBe(STATE.GAME_OVER);
 
+    const originalConsole = console.error;
+    console.error = () => {};
     const original = Level.prototype.pickPortalTile;
     Level.prototype.pickPortalTile = () => null;
     try {
-        expect(() => game.retryLevel()).toThrow(/no reachable portal/);
+        // I3: no throw into the click listener; a message explains the dead
+        // press and both attempts leave state untouched.
+        game.retryLevel();
+        expect(document.getElementById('error-message').classList.contains('hidden')).toBe(false);
         // Overlay and state survive intact: the retry button is still there
         // to press once generation works again.
         expect(game.state).toBe(STATE.GAME_OVER);
         expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(false);
     } finally {
+        console.error = originalConsole;
+        Level.prototype.pickPortalTile = original;
+        game.ui.hideErrorMessage();
+    }
+});
+
+test("a single exhausted construction self-heals via the inline re-attempt", () => {
+    mountFixture();
+    const game = new Game();
+    // Fail exactly one full construction: pickPortalTile is called once per
+    // generation attempt, so nulling the first 200 calls (MAX_GENERATION_
+    // ATTEMPTS in level.js) exhausts the first `new Level`, and the next call
+    // — from tryConstructLevel's inline re-attempt — succeeds.
+    let calls = 0;
+    const originalConsole = console.error;
+    console.error = () => {};
+    const original = Level.prototype.pickPortalTile;
+    Level.prototype.pickPortalTile = function (...args) {
+        calls++;
+        return calls <= 200 ? null : original.apply(this, args);
+    };
+    try {
+        expect(game.startGame()).toBe(true);
+        expect(calls).toBe(201);
+        expect(game.state).toBe(STATE.PLAYING);
+        // Self-healed: no error message reaches the player.
+        expect(document.getElementById('error-message').classList.contains('hidden')).toBe(true);
+    } finally {
+        console.error = originalConsole;
         Level.prototype.pickPortalTile = original;
     }
 });

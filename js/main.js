@@ -29,6 +29,13 @@ const PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, A
 // to MENU (spec §General Error Handling: state recovery, without the R26
 // per-frame console flood).
 const LOOP_ERROR_RECOVERY_FRAMES = 30;
+// Consecutive failed level-transition constructions before the LEVEL_COMPLETE
+// retry gives up to MENU (S1). Each retry is a fresh randomised generation,
+// so stalls self-heal within a few frames (I2 fix: 0/800 exhaustion at the
+// worst tier); 120 in a row means the generator itself is broken, and
+// rebuilding every frame forever would freeze the tab on up to 200
+// generations+BFS per frame, silent after the first log line.
+const LEVEL_TRANSITION_MAX_STALL_FRAMES = 120;
 
 // Every live Game, so test scaffolding sharing one window can tear down all
 // window listeners at once (see destroy()/destroyAllGames).
@@ -173,11 +180,18 @@ export class Game {
             throw new Error('Game requires #start-btn, #retry-btn, #play-again-btn, ' +
                 '#pause-btn, #resume-btn, #restart-level-btn and #quit-menu-btn elements in the page');
         }
-        startBtn.addEventListener('click', () => this.startGame());
-        retryBtn.addEventListener('click', () => this.retryLevel());
-        playAgainBtn.addEventListener('click', () => {
-            this.startGame();
-            this.ui.hideOverlay('game-complete-screen');
+        // Every listener carries the abort signal (S2): destroy()'s contract
+        // is "instance is inert", and a click landing after teardown would
+        // otherwise resurrect state on a game whose loop no longer runs.
+        const onClick = (el, fn) =>
+            el.addEventListener('click', fn, { signal: this._abort.signal });
+        onClick(startBtn, () => this.startGame());
+        onClick(retryBtn, () => this.retryLevel());
+        onClick(playAgainBtn, () => {
+            // Only close the complete screen when a new run actually started:
+            // on generation failure startGame keeps its state, and the player
+            // needs this screen (and its button) to try again.
+            if (this.startGame()) this.ui.hideOverlay('game-complete-screen');
         });
         // Spec §Accessibility: pause/resume must be keyboard-operable with a
         // toggling accessible name, not Escape-only. A native button gives
@@ -186,7 +200,7 @@ export class Game {
         // Space at keyup, so after a mouse click every later Space press would
         // strobe PAUSED↔PLAYING (input.js suppresses the jump half while a
         // button holds focus, but gameplay must not silently lose it either).
-        pauseBtn.addEventListener('click', () => {
+        onClick(pauseBtn, () => {
             this.togglePause();
             pauseBtn.blur();
         });
@@ -194,15 +208,15 @@ export class Game {
         // Pause menu options (R29). Each click came from either a real click
         // or native Enter/Space activation of the focused option; blur in
         // every handler so focus never lingers on the overlay it just closed.
-        resumeBtn.addEventListener('click', () => {
+        onClick(resumeBtn, () => {
             this.togglePause();
             resumeBtn.blur();
         });
-        restartLevelBtn.addEventListener('click', () => {
+        onClick(restartLevelBtn, () => {
             this.restartCurrentLevel('pause-screen');
             restartLevelBtn.blur();
         });
-        quitMenuBtn.addEventListener('click', () => {
+        onClick(quitMenuBtn, () => {
             this.quitToMenu();
             quitMenuBtn.blur();
         });
@@ -314,10 +328,11 @@ export class Game {
 
     startGame() {
         // Construct before mutating anything (same discipline as startLevel):
-        // if generation exhausts and throws, a GAME_COMPLETE/GAME_OVER screen
+        // if generation exhausts and fails, a GAME_COMPLETE/GAME_OVER screen
         // keeps its state and overlay instead of being stranded over zeroed
         // run data.
-        const level = new Level(1, TILE_SIZE);
+        const level = this.tryConstructLevel(1);
+        if (!level) return false;
         this.score = 0;
         this.currentLevel = 1;
         // A brand-new run always gets a fresh clock; whether it ticks at all
@@ -326,6 +341,28 @@ export class Game {
         this.publishLevel(level);
         this.ui.showHUD();
         this.ui.hideOverlay('menu-screen');
+        return true;
+    }
+
+    // Generation can exhaust its 200-attempt budget (I2 measured ~6% at level
+    // 13 before the marker-reachability fix). A throw from a button listener
+    // is a dead button that only logs to devtools, so the click-boundary
+    // entries catch here: one inline re-attempt — a full generation costs a
+    // few ms — absorbs transient exhaustion; on second failure the game keeps
+    // its current state and overlay intact and the player gets a message.
+    tryConstructLevel(levelNumber) {
+        try {
+            return new Level(levelNumber, TILE_SIZE);
+        } catch (first) {
+            console.error('Level generation failed; re-attempting once:', first);
+        }
+        try {
+            return new Level(levelNumber, TILE_SIZE);
+        } catch (second) {
+            console.error('Level generation failed again:', second);
+            this.ui.showErrorMessage('Could not prepare that level — try again.');
+            return null;
+        }
     }
 
     startLevel() {
@@ -405,8 +442,10 @@ export class Game {
         // Construct before mutating anything (same discipline as startGame):
         // on generation failure the game stays in its current state with the
         // overlay and its controls intact, instead of a bare state with no
-        // way back in.
-        const level = new Level(this.currentLevel, TILE_SIZE);
+        // way back in. tryConstructLevel absorbs transient exhaustion and
+        // messages the player on persistent failure.
+        const level = this.tryConstructLevel(this.currentLevel);
+        if (!level) return;
         // Roll the score back to the level-start snapshot first: the level
         // regenerates on restart, so keeping mid-level pickups would let
         // repeated die-and-retry runs farm coins.
@@ -425,6 +464,7 @@ export class Game {
         this.ui.setPauseEnabled(false);
         this.levelCompleteTimer = 2; // 2 seconds transition
         this.levelTransitionStalled = false;
+        this.levelTransitionStallFrames = 0;
 
         this.ui.showOverlay('level-complete-screen');
 
@@ -596,9 +636,22 @@ export class Game {
                         // stick in LEVEL_COMPLETE. Keep forcing the transition
                         // every frame past the nominal 2 s budget — each retry
                         // is a fresh randomised generation, so this self-heals
-                        // (R26: 0/1000 throws) — but log once per stall
-                        // instead of flooding console.error through the loop.
-                        if (!this.levelTransitionStalled) {
+                        // fast (I2 fix: 0/800 exhaustion) — but log once per
+                        // stall instead of flooding console.error through the
+                        // loop. Persistent failure hands off to MENU on the
+                        // same terms as loop-error recovery (S1): a generator
+                        // that fails LEVEL_TRANSITION_MAX_STALL_FRAMES frames
+                        // in a row is broken, not unlucky, and unbounded
+                        // per-frame rebuilds freeze the tab silently.
+                        this.levelTransitionStallFrames++;
+                        if (this.levelTransitionStallFrames >
+                            LEVEL_TRANSITION_MAX_STALL_FRAMES) {
+                            console.error(
+                                'Level transition failed persistently; returning to menu:', error);
+                            this.ui.hideOverlay('level-complete-screen');
+                            this.returnToMenu();
+                            this.ui.showErrorMessage('Something went wrong. Returning to main menu.');
+                        } else if (!this.levelTransitionStalled) {
                             console.error('Level transition stalled; retrying:', error);
                             this.levelTransitionStalled = true;
                         }
@@ -690,6 +743,13 @@ export class Game {
             // adopting a half-built level.
             const level = new Level(this.currentLevel, TILE_SIZE);
             this.ui.showErrorMessage('Something went wrong — recovering…');
+            // Recovery can fire while PAUSED (draw() runs inside the loop's
+            // try during pause), and publishLevel flips straight to PLAYING:
+            // close the pause overlay first or the run resumes live behind a
+            // still-visible "Game Paused" modal. Mirrors togglePause's
+            // PAUSED→PLAYING branch; both are no-ops when not paused.
+            this.ui.blurPauseControls();
+            this.ui.hideOverlay('pause-screen');
             this.publishLevel(level);
         } catch (inner) {
             console.error('Recovery failed; returning to menu:', inner);
