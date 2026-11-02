@@ -1,5 +1,11 @@
 import { Entity } from './entities.js';
 
+// Ground brake: linear deceleration applied when no direction key is held.
+// Exponential decay left a long visual tail (~0.5 s drift, ~20 px slide)
+// that read as ice — punishing on tight 2-tile platforms at high zoom.
+// 2400 px/s² stops full speed (200 px/s) in ~0.08 s over ~8 px: crisp.
+const PLAYER_STOP_DECEL = 2400;
+
 export class Player extends Entity {
     constructor(x, y, speed, jumpForce) {
         super(x, y, 32, 32);
@@ -9,28 +15,25 @@ export class Player extends Entity {
     }
 
     update(dt, left = false, right = false) {
-        // Apply velocity to position and grounded friction (Entity base)
+        // Apply velocity to position (base integrates x).
         super.update(dt, left, right);
 
-        // Held-direction keys re-assert speed each frame: base friction is
-        // live now that physics maintains `grounded`, so a single keydown's
-        // vx would otherwise decay away while the key is still held.
         if (left && !right) {
+            // Held-direction keys re-assert speed each frame so movement is
+            // instant and reversals are immediate.
             this.vx = -this.speed;
         } else if (right && !left) {
             this.vx = this.speed;
-        } else if (!this.grounded) {
-            // Decelerate in the air only, when neither direction is active.
-            // While grounded the base friction in Entity.update already runs;
-            // applying this decay on top doubled it, halting ground stops at
-            // roughly half the air distance despite the parity comment.
-            const decel = 10; // Matches the base friction coefficient
-            this.vx -= this.vx * decel * dt;
-
-            if (Math.abs(this.vx) < 0.1) {
-                this.vx = 0;
-            }
+        } else if (this.grounded) {
+            // Coasting on the ground: hard linear brake, exact stop.
+            const drop = PLAYER_STOP_DECEL * dt;
+            this.vx = Math.abs(this.vx) <= drop ? 0 : this.vx - Math.sign(this.vx) * drop;
         }
+        // Airborne coast is deliberately untouched: jumps stay ballistic so
+        // releasing a key mid-flight never drops the player short of the
+        // ledge they were aiming for. (The legacy per-frame air decay bled
+        // ~17% of horizontal speed per 60 Hz frame — the main source of
+        // unpredictable landings.)
     }
 
     moveLeft() {

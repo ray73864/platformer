@@ -234,13 +234,6 @@
     }
     update(dt, _moveLeft = false, _moveRight = false) {
       this.x += this.vx * dt;
-      if (this.grounded) {
-        const friction = 10;
-        this.vx -= this.vx * friction * dt;
-        if (Math.abs(this.vx) < 0.1) {
-          this.vx = 0;
-        }
-      }
     }
     isGrounded() {
       return this.grounded;
@@ -248,6 +241,8 @@
   }
 
   // js/player.js
+  var PLAYER_STOP_DECEL = 2400;
+
   class Player extends Entity {
     constructor(x, y, speed, jumpForce) {
       super(x, y, 32, 32);
@@ -261,12 +256,9 @@
         this.vx = -this.speed;
       } else if (right && !left) {
         this.vx = this.speed;
-      } else if (!this.grounded) {
-        const decel = 10;
-        this.vx -= this.vx * decel * dt;
-        if (Math.abs(this.vx) < 0.1) {
-          this.vx = 0;
-        }
+      } else if (this.grounded) {
+        const drop = PLAYER_STOP_DECEL * dt;
+        this.vx = Math.abs(this.vx) <= drop ? 0 : this.vx - Math.sign(this.vx) * drop;
       }
     }
     moveLeft() {

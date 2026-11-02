@@ -15,16 +15,9 @@ export class Entity {
         // gravity/jump displacement every frame.
         this.x += this.vx * dt;
 
-        // Apply ground friction if grounded
-        if (this.grounded) {
-            const friction = 10; // Friction coefficient
-            this.vx -= this.vx * friction * dt;
-
-            // Stop completely if very slow
-            if (Math.abs(this.vx) < 0.1) {
-                this.vx = 0;
-            }
-        }
+        // No friction here: Player owns its stop model (exponential decay
+        // here read as ice-skating at high zoom), and enemies set vx fresh
+        // every patrol frame. Entities without ground contact never decay.
     }
 
     isGrounded() {
