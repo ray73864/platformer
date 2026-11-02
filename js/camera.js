@@ -7,7 +7,7 @@ export class Camera {
         this.initialized = false;
     }
 
-    follow(player, levelWidthPx, levelHeightPx) {
+    follow(player, levelWidthPx, levelHeightPx, dt = 1 / 60) {
         // Tests govern: the horizontal test expects exactly player.x - width/2,
         // so no +player.width/2 term (see task-6-report.md).
         const targetX = player.x - this.width / 2;
@@ -21,8 +21,17 @@ export class Camera {
             this.y = targetY;
             this.initialized = true;
         } else {
-            this.x += (targetX - this.x) * 0.1;
-            this.y += (targetY - this.y) * 0.1;
+            // Frame-rate independent snappy follow (~12/s convergence): the
+            // old fixed 0.1-per-frame lag let the world keep streaming past
+            // for half a second after the player stopped — read as sliding
+            // on ice even though the player itself halted in ~0.08 s.
+            const alpha = 1 - Math.exp(-12 * (dt || 1 / 60));
+            this.x += (targetX - this.x) * alpha;
+            this.y += (targetY - this.y) * alpha;
+            // Snap the last pixel so a stopped player's camera settles dead
+            // on target instead of asymptotically creeping.
+            if (Math.abs(targetX - this.x) < 0.5) this.x = targetX;
+            if (Math.abs(targetY - this.y) < 0.5) this.y = targetY;
         }
 
         // Centre the world on both axes whenever it is smaller than the

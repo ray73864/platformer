@@ -1127,7 +1127,7 @@
       this.y = 0;
       this.initialized = false;
     }
-    follow(player, levelWidthPx, levelHeightPx) {
+    follow(player, levelWidthPx, levelHeightPx, dt = 1 / 60) {
       const targetX = player.x - this.width / 2;
       const targetY = this.height / 2 - (player.y + player.height / 2);
       if (!this.initialized) {
@@ -1135,8 +1135,13 @@
         this.y = targetY;
         this.initialized = true;
       } else {
-        this.x += (targetX - this.x) * 0.1;
-        this.y += (targetY - this.y) * 0.1;
+        const alpha = 1 - Math.exp(-12 * (dt || 1 / 60));
+        this.x += (targetX - this.x) * alpha;
+        this.y += (targetY - this.y) * alpha;
+        if (Math.abs(targetX - this.x) < 0.5)
+          this.x = targetX;
+        if (Math.abs(targetY - this.y) < 0.5)
+          this.y = targetY;
       }
       if (levelWidthPx <= this.width) {
         this.x = (levelWidthPx - this.width) / 2;
@@ -1921,6 +1926,9 @@
         this.coyoteTimer = this.player.grounded ? COYOTE_TIME : this.coyoteTimer - dt;
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
+          if (!this.input.isLeft() && !this.input.isRight()) {
+            this.player.vx = 0;
+          }
         } else if (!this.player.grounded && this._prevGrounded && this.player.vy >= 0) {
           this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
         }
@@ -1959,7 +1967,7 @@
         if (this.player.hasReachedPortal()) {
           this.handleWin();
         }
-        this.camera.follow(this.player, this.level.width * this.level.tileSize, this.level.height * this.level.tileSize);
+        this.camera.follow(this.player, this.level.width * this.level.tileSize, this.level.height * this.level.tileSize, dt);
         this.ui.updateScore(this.score);
         this.ui.updateLevel(this.currentLevel);
       } else if (this.state === STATE.LEVEL_COMPLETE) {

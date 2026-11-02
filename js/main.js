@@ -596,6 +596,14 @@ export class Game {
             // A jump leaves with vy < 0 and is deliberately excluded.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
+                // Landing brake: touching down with no direction held kills
+                // the carried horizontal speed outright. Without it, jump
+                // momentum marches the player off a narrow landing before
+                // the (already hard) ground brake can act — the residual
+                // "sliding" complaint on 2-tile platforms next to spikes.
+                if (!this.input.isLeft() && !this.input.isRight()) {
+                    this.player.vx = 0;
+                }
             } else if (!this.player.grounded && this._prevGrounded &&
                        this.player.vy >= 0) {
                 this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
@@ -679,7 +687,8 @@ export class Game {
             this.camera.follow(
                 this.player,
                 this.level.width * this.level.tileSize,
-                this.level.height * this.level.tileSize
+                this.level.height * this.level.tileSize,
+                dt
             );
 
             // Update UI
