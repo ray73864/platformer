@@ -434,6 +434,13 @@ export class Game {
         this.enemyManager = level.getEnemyManager();
         this.collectibles = level.getCollectibles();
         this.hazards = level.getHazards();
+        // Coin chip reflects this level's progress: fresh on first play,
+        // carried over on a retry (collected flags transfer with the seed).
+        this.ui.updateCoins(
+            this.collectibles.getCoins().length -
+                this.collectibles.getUncollectedCoins().length,
+            this.collectibles.getCoins().length
+        );
         // Snapshot before any of this level's coins can be collected.
         this.levelStartScore = this.score;
         this.jumpBufferTimer = 0;
@@ -486,17 +493,26 @@ export class Game {
     // Shared by Retry (GAME_OVER) and the pause menu's Restart Level: one
     // restart contract regardless of which screen initiated it.
     restartCurrentLevel(overlayId) {
-        // Construct before mutating anything (same discipline as startGame):
-        // on generation failure the game stays in its current state with the
-        // overlay and its controls intact, instead of a bare state with no
-        // way back in. tryConstructLevel absorbs transient exhaustion and
-        // messages the player on persistent failure.
+        // Snapshot which coins this attempt banked BEFORE rebuilding. The
+        // replay is seeded-identical, so coin indices transfer 1:1: dying
+        // on a replayed level never re-collects (they stay collected) and
+        // never refunds (their score stays). Progress converges across
+        // attempts instead of resetting — the retry loop rewards persistence
+        // instead of punishing it.
+        const keptIndices = this.collectibles
+            ? this.collectibles.getCoins()
+                .map((coin, i) => (coin.collected ? i : -1))
+                .filter(i => i >= 0)
+            : [];
         const level = this.tryConstructLevel(this.currentLevel);
         if (!level) return;
-        // Roll the score back to the level-start snapshot first: the replayed
-        // level still holds every coin, so keeping mid-level pickups would
-        // let a die-and-retry run collect them twice.
-        this.score = this.levelStartScore;
+        const replayCoins = level.getCollectibles().getCoins();
+        for (const i of keptIndices) {
+            if (replayCoins[i]) level.getCollectibles().collectCoin(i);
+        }
+        // Banked coins are already in this.score; re-snapshot so the next
+        // restart keeps them too (no rollback: nothing here can double-pay).
+        this.levelStartScore = this.score;
         // A fresh attempt gets a fresh clock: without this, retrying after a
         // time-out would kill the player on the very next tick.
         this.timer.timeRemaining = this.timer.baseTime;
@@ -519,7 +535,7 @@ export class Game {
         // a parallel setTimeout here used to double-advance and leak timers.
     }
 
-    handleGameOver() {
+    handleGameOver(cause) {
         this.setState(STATE.GAME_OVER);
         // Death feedback (visual-only): a short camera shake plus a red
         // burst at the player so the moment of loss is unmistakable.
@@ -533,7 +549,7 @@ export class Game {
         this.ui.setPauseEnabled(false);
         // Single game-over presentation path: UI.showGameOver writes the
         // #final-score node and reveals the overlay.
-        this.ui.showGameOver(this.score);
+        this.ui.showGameOver(this.score, cause);
     }
 
     handleGameComplete() {
@@ -578,7 +594,7 @@ export class Game {
                 this.timer.update(dt);
                 this.ui.updateTimer(this.timer.getTimeRemaining());
                 if (this.timer.isTimeUp()) {
-                    this.handleGameOver();
+                    this.handleGameOver('time');
                     return;
                 }
             }
@@ -651,12 +667,12 @@ export class Game {
                     '#c96bf5', 10);
             }
             if (contact.deadly) {
-                this.handleGameOver();
+                this.handleGameOver('enemy');
                 return;
             }
 
             if (this.hazards.checkPlayerSpikes(this.player)) {
-                this.handleGameOver();
+                this.handleGameOver('spike');
                 return;
             }
 
@@ -666,7 +682,7 @@ export class Game {
             // which would move the death line (and could place it above the
             // spawn ground on short windows).
             if (this.hazards.checkPitFall(this.player, this.level.height * this.level.tileSize)) {
-                this.handleGameOver();
+                this.handleGameOver('pit');
                 return;
             }
 
@@ -692,6 +708,11 @@ export class Game {
                 // timer tier (level 5) are already on it when it starts
                 // ticking — no separate pending-bonus ledger needed.
                 for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
+                this.ui.updateCoins(
+                    this.collectibles.getCoins().length -
+                        this.collectibles.getUncollectedCoins().length,
+                    this.collectibles.getCoins().length
+                );
             }
 
             // Check portal contact; ghosted and inert until every coin is

@@ -188,7 +188,7 @@ test("collected coins add 10 points each to the running total across levels", ()
     expect(game.score).toBe(2 * COIN_POINTS + 3 * COIN_POINTS);
 });
 
-test("retrying restores the score snapshot taken when the level started", () => {
+test("retrying preserves banked coins and their score (deterministic replay)", () => {
     const game = startPlaying();
     clearGeneratedThreats(game);
 
@@ -211,18 +211,20 @@ test("retrying restores the score snapshot taken when the level started", () => 
 
     document.getElementById('retry-btn').click();
 
-    // Score is back to what it was when this level began — repeated retries
-    // of a regenerated level cannot farm coins — and the element systems are
-    // rewired to the fresh level instance.
+    // The replay is seeded-identical, so banked coins transfer with it: the
+    // score KEEPS mid-level pickups (each coin scores exactly once ever —
+    // collected flags persist, nothing can double-pay). Retry progress
+    // converges instead of resetting. Element systems are rewired to the
+    // rebuilt level instance.
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(COIN_POINTS);
-    expect(game.levelStartScore).toBe(COIN_POINTS);
+    expect(game.score).toBe(3 * COIN_POINTS);
+    expect(game.levelStartScore).toBe(3 * COIN_POINTS);
     expect(game.collectibles).toBe(game.level.getCollectibles());
     expect(game.enemyManager).toBe(game.level.getEnemyManager());
     expect(game.hazards).toBe(game.level.getHazards());
 });
 
-test("retrying a failed first level resets the score to zero", () => {
+test("retrying a failed first level keeps whatever was banked", () => {
     const game = startPlaying();
     clearGeneratedThreats(game);
 
@@ -236,7 +238,7 @@ test("retrying a failed first level resets the score to zero", () => {
 
     document.getElementById('retry-btn').click();
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(0);
+    expect(game.score).toBe(COIN_POINTS);
 });
 
 test("pit death fires at the exact world-pixel threshold via the delegated check", () => {

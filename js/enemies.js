@@ -3,7 +3,7 @@
  *
  * Contract:
  * - An Enemy is a 32x32 body walking back and forth along [minX, maxX] in
- *   pixel space at ENEMY_SPEED (50 px/s). Patrol bounds come from real
+ *   pixel space at ENEMY_SPEED (40 px/s). Patrol bounds come from real
  *   terrain geometry (the contiguous solid run under its walk row, derived
  *   by Level.spawnEnemies), never a fixed radius around the spawn point.
  * - At a bound the enemy clamps flush against it and reverses; it never
@@ -28,7 +28,8 @@
 import { aabbOverlap } from './physics.js';
 
 const ENEMY_WIDTH = 32;const ENEMY_HEIGHT = 32;
-const ENEMY_SPEED = 50; // px/s
+const ENEMY_SPEED = 40; // px/s (was 50: dodging on narrow shelves read as
+// frame-perfect; 40 keeps patrols threatening without demanding precision)
 // Lethal hitbox inset from the body rect: the shipped creature art leaves
 // transparent margins at the cell edges (slime body spans roughly x+4..x-4
 // at tile scale), so contact only registers on visible flesh.
@@ -36,7 +37,7 @@ const ENEMY_HITBOX_INSET_X = 4;
 const ENEMY_HITBOX_INSET_TOP = 4;
 // Feet-above-top window for a stomp: falling contacts whose previous feet
 // position was within this of the enemy's top edge squash instead of kill.
-const ENEMY_STOMP_TOLERANCE = 12;
+const ENEMY_STOMP_TOLERANCE = 18; // was 12: reward sloppy-but-intended stomps
 
 export class Enemy {
     constructor(x, y, minX, maxX) {

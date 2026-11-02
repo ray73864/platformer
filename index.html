@@ -26,6 +26,7 @@
         <div id="game-over-screen" class="overlay hidden">
             <div class="panel">
                 <h2>Game Over</h2>
+                <p id="death-cause" hidden></p>
                 <p id="final-score">Score: 0</p>
                 <button id="retry-btn" aria-label="Retry Level">Retry Level</button>
             </div>
@@ -62,6 +63,9 @@
         <div id="hud">
             <span id="score-display">Score: 0</span>
             <span id="level-display">Level: 1</span>
+            <!-- All-coins portal gate needs visible progress: players must
+                 see what the portal is still asking for. -->
+            <span id="coins-display">Coins: 0/0</span>
             <!-- Timer is timed-levels-only (level 5+); a later task toggles visibility. -->
             <span id="timer-display" class="hidden">Time: 1:00</span>
             <!-- Keyboard-operable pause per spec §Accessibility; the accessible

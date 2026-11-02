@@ -408,10 +408,10 @@
   // js/enemies.js
   var ENEMY_WIDTH = 32;
   var ENEMY_HEIGHT = 32;
-  var ENEMY_SPEED = 50;
+  var ENEMY_SPEED = 40;
   var ENEMY_HITBOX_INSET_X = 4;
   var ENEMY_HITBOX_INSET_TOP = 4;
-  var ENEMY_STOMP_TOLERANCE = 12;
+  var ENEMY_STOMP_TOLERANCE = 18;
 
   class Enemy {
     constructor(x, y, minX, maxX) {
@@ -570,6 +570,8 @@
   var VERTICAL_HEIGHT = 24;
   var VERTICAL_PORTAL_MAX_Y = 4;
   var VERTICAL_SPAWN_EXCL_ROWS = 6;
+  var COIN_SPIKE_MARGIN = 2;
+  var HAZARD_SPAWN_EXCLUDE_COLS = 9;
   function directionForLevel(levelNumber) {
     if (levelNumber < PHASE2_FIRST_LEVEL)
       return "right";
@@ -827,16 +829,16 @@
       if (this.direction === "vertical") {
         return coord > VERTICAL_PORTAL_MAX_Y && coord < this.height - VERTICAL_SPAWN_EXCL_ROWS;
       }
-      return coord >= 6 && coord <= this.width - 6;
+      return coord >= HAZARD_SPAWN_EXCLUDE_COLS && coord <= this.width - 6;
     }
     patrolBandBounds() {
       if (this.direction === "left") {
-        return [5, this.width - 7];
+        return [5, this.width - 1 - HAZARD_SPAWN_EXCLUDE_COLS];
       }
       if (this.direction === "vertical") {
         return [0, this.width - 1];
       }
-      return [6, this.width - 6];
+      return [HAZARD_SPAWN_EXCLUDE_COLS, this.width - 6];
     }
     patrolSpan(tiles, x, y) {
       const solidAt = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height && tiles[cy][cx] === 1;
@@ -880,6 +882,29 @@
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
         return;
       const target = Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), Math.floor(this.width * this.height * 0.1));
+      const surfaceTop = [];
+      for (let x = 0;x < this.width; x++) {
+        surfaceTop[x] = -1;
+        for (let y = 0;y < this.height; y++) {
+          if (tiles[y][x] === 1) {
+            surfaceTop[x] = y;
+            break;
+          }
+        }
+      }
+      const besideDropOff = (x) => {
+        const base = surfaceTop[x] < 0 ? this.height : surfaceTop[x];
+        for (let dx = -3;dx <= 3; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= this.width)
+            continue;
+          if (dx !== 0 && surfaceTop[nx] < 0)
+            return true;
+          if (dx !== 0 && surfaceTop[nx] >= 0 && surfaceTop[nx] <= base - 2)
+            return true;
+        }
+        return false;
+      };
       const candidates = [];
       for (let y = 0;y < this.height - 1; y++) {
         for (let x = 0;x < this.width; x++) {
@@ -891,6 +916,8 @@
           if (this.pathCells && this.pathCells.has(y * this.width + x)) {
             continue;
           }
+          if (this.direction !== "vertical" && besideDropOff(x))
+            continue;
           candidates.push({ x, y });
         }
       }
@@ -919,15 +946,22 @@
       };
       let placed = 0;
       const usedColumns = new Set;
+      const THREAT_SPACING = 4;
       for (const c of candidates) {
         if (placed >= target)
           break;
-        if (usedColumns.has(c.x - 1) || usedColumns.has(c.x) || usedColumns.has(c.x + 1)) {
-          continue;
+        let blocked = false;
+        for (let dx = -THREAT_SPACING;dx <= THREAT_SPACING && !blocked; dx++) {
+          if (usedColumns.has(c.x + dx))
+            blocked = true;
         }
+        if (blocked)
+          continue;
         tiles[c.y][c.x] = 2;
         if (placementSafe()) {
-          usedColumns.add(c.x);
+          for (let dx = -THREAT_SPACING;dx <= THREAT_SPACING; dx++) {
+            usedColumns.add(c.x + dx);
+          }
           placed++;
         } else {
           tiles[c.y][c.x] = 0;
@@ -945,6 +979,15 @@
       }
       if (!reachable.has(y * this.width + x))
         return false;
+      for (let dx = -4;dx <= 4; dx++) {
+        const nx = x + dx;
+        if (nx < 0 || nx >= this.width)
+          continue;
+        if (tiles[y][nx] === 2)
+          return false;
+        if (y > 0 && tiles[y - 1][nx] === 2)
+          return false;
+      }
       const span = this.patrolSpan(tiles, x, y);
       if (!span)
         return false;
@@ -1029,6 +1072,18 @@
           patrolCovered.add(s.y * this.width + cx);
         }
       }
+      const spikeNear = (x, y) => {
+        for (let dy = -COIN_SPIKE_MARGIN;dy <= COIN_SPIKE_MARGIN; dy++) {
+          for (let dx = -COIN_SPIKE_MARGIN;dx <= COIN_SPIKE_MARGIN; dx++) {
+            const cx = x + dx;
+            const cy = y + dy;
+            if (cx >= 0 && cx < this.width && cy >= 0 && cy < this.height && this.tiles[cy][cx] === 2) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
       const candidates = [];
       for (const key of this.reachableTiles) {
         if (key === spawnKey || key === portalKey)
@@ -1037,7 +1092,7 @@
           continue;
         const x = key % this.width;
         const y = Math.floor(key / this.width);
-        candidates.push({ x, y });
+        candidates.push({ x, y, safe: !spikeNear(x, y) });
       }
       shuffle(candidates, this.rng);
       const addCoin = (x, y) => {
@@ -1056,6 +1111,12 @@
       };
       for (const tile of candidates) {
         if (coins.length >= target)
+          break;
+        if (tile.safe)
+          addCoin(tile.x, tile.y);
+      }
+      for (const tile of candidates) {
+        if (coins.length >= Math.min(target, 5))
           break;
         addCoin(tile.x, tile.y);
       }
@@ -1219,6 +1280,7 @@
     constructor() {
       this.scoreElement = this.ensureElement("score-display");
       this.levelElement = this.ensureElement("level-display");
+      this.coinsElement = this.ensureElement("coins-display");
       this.finalScoreElement = this.ensureElement("final-score");
       this.gameCompleteScoreElement = this.ensureElement("game-complete-score");
       this.highScoreElement = this.ensureElement("high-score");
@@ -1302,6 +1364,15 @@
       if (element)
         element.classList.add("hidden");
     }
+    updateCoins(collected, total) {
+      if (this.coinsElement && this.coinsElement.isConnected) {
+        const text = `Coins: ${collected}/${total}`;
+        if (this.coinsElement.textContent !== text) {
+          this.coinsElement.textContent = text;
+        }
+        this.coinsElement.classList.toggle("coins-done", collected >= total);
+      }
+    }
     updateScore(score) {
       if (this.scoreElement && this.scoreElement.isConnected) {
         this.scoreElement.textContent = `Score: ${score}`;
@@ -1348,9 +1419,21 @@
         overlay.classList.add("hidden");
       }
     }
-    showGameOver(score) {
+    static DEATH_CAUSE_TEXT = {
+      time: "Time ran out",
+      enemy: "Touched a patrol",
+      spike: "Landed on spikes",
+      pit: "Fell into the void"
+    };
+    showGameOver(score, cause) {
       if (this.finalScoreElement) {
         this.finalScoreElement.textContent = `Score: ${score}`;
+      }
+      const causeEl = document.getElementById("death-cause");
+      if (causeEl) {
+        const text = UI.DEATH_CAUSE_TEXT[cause] || "";
+        causeEl.textContent = text;
+        causeEl.hidden = !text;
       }
       this.showOverlay("game-over-screen");
     }
@@ -1891,6 +1974,7 @@
       this.enemyManager = level.getEnemyManager();
       this.collectibles = level.getCollectibles();
       this.hazards = level.getHazards();
+      this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
       this.levelStartScore = this.score;
       this.jumpBufferTimer = 0;
       this.coyoteTimer = 0;
@@ -1915,10 +1999,16 @@
       this.restartCurrentLevel("game-over-screen");
     }
     restartCurrentLevel(overlayId) {
+      const keptIndices = this.collectibles ? this.collectibles.getCoins().map((coin, i) => coin.collected ? i : -1).filter((i) => i >= 0) : [];
       const level = this.tryConstructLevel(this.currentLevel);
       if (!level)
         return;
-      this.score = this.levelStartScore;
+      const replayCoins = level.getCollectibles().getCoins();
+      for (const i of keptIndices) {
+        if (replayCoins[i])
+          level.getCollectibles().collectCoin(i);
+      }
+      this.levelStartScore = this.score;
       this.timer.timeRemaining = this.timer.baseTime;
       this.ui.hideOverlay(overlayId);
       this.publishLevel(level);
@@ -1931,14 +2021,14 @@
       this.levelTransitionStallFrames = 0;
       this.ui.showOverlay("level-complete-screen");
     }
-    handleGameOver() {
+    handleGameOver(cause) {
       this.setState(STATE.GAME_OVER);
       this.shakeTime = 0.35;
       if (this.player) {
         spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ff5a5a", 16);
       }
       this.ui.setPauseEnabled(false);
-      this.ui.showGameOver(this.score);
+      this.ui.showGameOver(this.score, cause);
     }
     handleGameComplete() {
       this.setState(STATE.GAME_COMPLETE);
@@ -1967,7 +2057,7 @@
           this.timer.update(dt);
           this.ui.updateTimer(this.timer.getTimeRemaining());
           if (this.timer.isTimeUp()) {
-            this.handleGameOver();
+            this.handleGameOver("time");
             return;
           }
         }
@@ -2001,15 +2091,15 @@
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
         }
         if (contact.deadly) {
-          this.handleGameOver();
+          this.handleGameOver("enemy");
           return;
         }
         if (this.hazards.checkPlayerSpikes(this.player)) {
-          this.handleGameOver();
+          this.handleGameOver("spike");
           return;
         }
         if (this.hazards.checkPitFall(this.player, this.level.height * this.level.tileSize)) {
-          this.handleGameOver();
+          this.handleGameOver("pit");
           return;
         }
         const collectedCoins = this.collectibles.checkCollection(this.player);
@@ -2018,6 +2108,7 @@
           this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
           for (let i = 0;i < collectedCoins; i++)
             this.timer.addCoinBonus();
+          this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
         }
         const portal = this.level.getPortal();
         if (portal && !this.player.hasReachedPortal() && this.collectibles.meetsPortalRequirement() && this.physics.checkAABB(this.player, portal)) {

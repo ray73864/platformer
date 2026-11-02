@@ -348,7 +348,7 @@ test("arrow keys cycle the pause menu selection and wrap around", () => {
     expect(document.activeElement.id).toBe('quit-menu-btn');
 });
 
-test("pause menu actions: Resume, Restart Level with score rollback, Quit to Menu", () => {
+test("pause menu actions: Resume, Restart Level (progress kept), Quit to Menu", () => {
     mountFixture();
     const game = new Game();
     document.getElementById('start-btn').click();
@@ -363,7 +363,8 @@ test("pause menu actions: Resume, Restart Level with score rollback, Quit to Men
     pressEscape();
     document.getElementById('restart-level-btn').click();
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(0); // rolled back to levelStartScore
+    // Deterministic replay keeps progress: score carries, the clock refills.
+    expect(game.score).toBe(123);
     expect(game.timer.getTimeRemaining()).toBe(game.timer.baseTime);
     expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
 

@@ -2,6 +2,7 @@ export class UI {
     constructor() {
         this.scoreElement = this.ensureElement('score-display');
         this.levelElement = this.ensureElement('level-display');
+        this.coinsElement = this.ensureElement('coins-display');
         this.finalScoreElement = this.ensureElement('final-score');
         this.gameCompleteScoreElement = this.ensureElement('game-complete-score');
         this.highScoreElement = this.ensureElement('high-score');
@@ -118,6 +119,18 @@ export class UI {
     // missing/detached node logs once per failure episode — never per frame
     // (the R26 flood lesson). isConnected catches nodes removed from the
     // document after construction; the flag re-arms on the next success.
+    updateCoins(collected, total) {
+        if (this.coinsElement && this.coinsElement.isConnected) {
+            const text = `Coins: ${collected}/${total}`;
+            if (this.coinsElement.textContent !== text) {
+                this.coinsElement.textContent = text;
+            }
+            // Gold while the gate is still shut, green once the portal is
+            // unlocked: readable at a glance without reading the numbers.
+            this.coinsElement.classList.toggle('coins-done', collected >= total);
+        }
+    }
+
     updateScore(score) {
         if (this.scoreElement && this.scoreElement.isConnected) {
             this.scoreElement.textContent = `Score: ${score}`;
@@ -176,11 +189,26 @@ export class UI {
         }
     }
 
-    showGameOver(score) {
+    // Deaths name themselves on the game-over screen: "got near something and
+    // died" is not feedback. Unknown/absent causes fall back to silence.
+    static DEATH_CAUSE_TEXT = {
+        time: 'Time ran out',
+        enemy: 'Touched a patrol',
+        spike: 'Landed on spikes',
+        pit: 'Fell into the void'
+    };
+
+    showGameOver(score, cause) {
         // The game-over overlay reads its score from #final-score, not the
         // HUD counter (the HUD is hidden behind the overlay).
         if (this.finalScoreElement) {
             this.finalScoreElement.textContent = `Score: ${score}`;
+        }
+        const causeEl = document.getElementById('death-cause');
+        if (causeEl) {
+            const text = UI.DEATH_CAUSE_TEXT[cause] || '';
+            causeEl.textContent = text;
+            causeEl.hidden = !text;
         }
         this.showOverlay('game-over-screen');
     }

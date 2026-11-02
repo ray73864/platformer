@@ -21,6 +21,13 @@ const VERTICAL_HEIGHT = 24;
 // neighborhood (y >= height - VERTICAL_SPAWN_EXCL_ROWS) clear.
 const VERTICAL_PORTAL_MAX_Y = 4;
 const VERTICAL_SPAWN_EXCL_ROWS = 6;
+// Tile radius kept clear of spikes around a coin: dropping past a coin one
+// tile off-line must never land the player on a tooth (playtest screenshot:
+// coin over a spike corridor, uncollectable without dying).
+const COIN_SPIKE_MARGIN = 2;
+// Columns at each end of a horizontal map kept free of hazards and enemy
+// markers (see hazardPlacementAllowed): spawn runway and portal apron.
+const HAZARD_SPAWN_EXCLUDE_COLS = 9;
 
 // Travel direction is deterministic from the level number so tests and E2E
 // flows can rely on it: the shipped Phase 1 ramp (levels 1-4) stays
@@ -553,7 +560,11 @@ export class Level {
             return coord > VERTICAL_PORTAL_MAX_Y &&
                 coord < this.height - VERTICAL_SPAWN_EXCL_ROWS;
         }
-        return coord >= 6 && coord <= this.width - 6;
+        // Nine columns of opening runway: hazards/patrols inside the first
+        // screenful of the level kill players before they have any context
+        // (playtest ruling: ambushes at spawn read as cheating, not hard).
+        return coord >= HAZARD_SPAWN_EXCLUDE_COLS &&
+            coord <= this.width - 6;
     }
 
     // Tile bounds of the band a patrol may sweep, per direction: mirrors
@@ -563,12 +574,12 @@ export class Level {
     // connects to terrain beyond column 5.
     patrolBandBounds() {
         if (this.direction === 'left') {
-            return [5, this.width - 7];
+            return [5, this.width - 1 - HAZARD_SPAWN_EXCLUDE_COLS];
         }
         if (this.direction === 'vertical') {
             return [0, this.width - 1];
         }
-        return [6, this.width - 6];
+        return [HAZARD_SPAWN_EXCLUDE_COLS, this.width - 6];
     }
 
     // Free patrol span around a marker candidate (x, y): contiguous columns
@@ -643,9 +654,34 @@ export class Level {
         );
 
         // Surface hazards only: air tiles directly above solid ground, never
-        // inside the direction's exclusion zones, and never on a vertical
+        // inside the direction's exclusion zones, never on a vertical
         // route's jump-off/landing cells (a spike there would sever the one
-        // constructed climb and burn retries).
+        // constructed climb and burn retries), and never beside a drop-off:
+        // players WALK off ledges, and a spike one column from a 2+ tile
+        // cliff kills anyone who steps instead of jumps (playtest ruling —
+        // deaths must be explainable and avoidable by ordinary movement).
+        const surfaceTop = [];
+        for (let x = 0; x < this.width; x++) {
+            surfaceTop[x] = -1;
+            for (let y = 0; y < this.height; y++) {
+                if (tiles[y][x] === 1) { surfaceTop[x] = y; break; }
+            }
+        }
+        const besideDropOff = (x) => {
+            const base = surfaceTop[x] < 0 ? this.height : surfaceTop[x];
+            // Radius 3: a full-speed landing runs several tiles past a pit
+            // lip, and a spike inside that rollout is undodgeable even for
+            // players who saw it coming.
+            for (let dx = -3; dx <= 3; dx++) {
+                const nx = x + dx;
+                if (nx < 0 || nx >= this.width) continue;
+                if (dx !== 0 && surfaceTop[nx] < 0) return true; // pit nearby
+                // Cliff two or more tiles above the spike's own surface.
+                if (dx !== 0 && surfaceTop[nx] >= 0 &&
+                    surfaceTop[nx] <= base - 2) return true;
+            }
+            return false;
+        };
         const candidates = [];
         for (let y = 0; y < this.height - 1; y++) {
             for (let x = 0; x < this.width; x++) {
@@ -658,6 +694,7 @@ export class Level {
                     this.pathCells.has(y * this.width + x)) {
                     continue;
                 }
+                if (this.direction !== 'vertical' && besideDropOff(x)) continue;
                 candidates.push({ x, y });
             }
         }
@@ -727,24 +764,28 @@ export class Level {
 
         let placed = 0;
         const usedColumns = new Set();
+        // Threat isolation: a jump travels ~142px (4+ tiles) with no air
+        // control, so hazards closer together than a full arc force chained
+        // frame-perfect takeoffs (playtest bot + human reports agreed this
+        // reads as unfair, not hard). Each spike claims THREAT_SPACING
+        // columns on both sides against every other spike.
+        const THREAT_SPACING = 4;
         for (const c of candidates) {
             if (placed >= target) break;
             // shortcut: on heavily fragmented advanced-tier maps fewer safe
             // sites exist than the target count, so realized spike density
-            // runs below target there (~3.5 vs 7 at level 15); presence is
-            // guaranteed by the constructor's zero-spike rejection instead.
-            // Keep spikes at least two columns apart: each hazard stays a
-            // comfortable single hop within verified jump range, so spikes
-            // can never combine into an unjumpable barrier. The keep-if-
-            // harmless gate below is the backstop either way.
-            if (usedColumns.has(c.x - 1) ||
-                usedColumns.has(c.x) ||
-                usedColumns.has(c.x + 1)) {
-                continue;
+            // runs below target there; presence is guaranteed by the
+            // constructor's zero-spike rejection instead.
+            let blocked = false;
+            for (let dx = -THREAT_SPACING; dx <= THREAT_SPACING && !blocked; dx++) {
+                if (usedColumns.has(c.x + dx)) blocked = true;
             }
+            if (blocked) continue;
             tiles[c.y][c.x] = 2;
             if (placementSafe()) {
-                usedColumns.add(c.x);
+                for (let dx = -THREAT_SPACING; dx <= THREAT_SPACING; dx++) {
+                    usedColumns.add(c.x + dx);
+                }
                 placed++;
             } else {
                 tiles[c.y][c.x] = 0;
@@ -770,6 +811,19 @@ export class Level {
             return false;
         }
         if (!reachable.has(y * this.width + x)) return false;
+        // No spike-enemy ambush combos: a patrol standing next to a tooth
+        // turns "dodge the enemy" into "land on the spike" (playtest bot:
+        // this pairing alone accounted for every level-5 death). Checks the
+        // marker row AND the row above it — a spike on the shelf beside the
+        // patrol stands one row higher than the marker cell itself. THREAT_
+        // SPACING matches placeSpikes' claim window: one jump decision at
+        // a time, never a chained frame-perfect sequence.
+        for (let dx = -4; dx <= 4; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= this.width) continue;
+            if (tiles[y][nx] === 2) return false;
+            if (y > 0 && tiles[y - 1][nx] === 2) return false;
+        }
         const span = this.patrolSpan(tiles, x, y);
         if (!span) return false;
         const [bandMin, bandMax] = this.patrolBandBounds();
@@ -905,13 +959,26 @@ export class Level {
                 patrolCovered.add(s.y * this.width + cx);
             }
         }
+        const spikeNear = (x, y) => {
+            for (let dy = -COIN_SPIKE_MARGIN; dy <= COIN_SPIKE_MARGIN; dy++) {
+                for (let dx = -COIN_SPIKE_MARGIN; dx <= COIN_SPIKE_MARGIN; dx++) {
+                    const cx = x + dx;
+                    const cy = y + dy;
+                    if (cx >= 0 && cx < this.width && cy >= 0 && cy < this.height &&
+                        this.tiles[cy][cx] === 2) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
         const candidates = [];
         for (const key of this.reachableTiles) {
             if (key === spawnKey || key === portalKey) continue;
             if (patrolCovered.has(key)) continue;
             const x = key % this.width;
             const y = Math.floor(key / this.width);
-            candidates.push({ x, y });
+            candidates.push({ x, y, safe: !spikeNear(x, y) });
         }
 
         // Fisher-Yates shuffle: bounded, no unbounded random retry loop.
@@ -931,8 +998,15 @@ export class Level {
             return true;
         };
 
+        // Safe candidates first; only if they cannot fill the target does
+        // the margin relax (a slightly exposed coin beats an uncollectable
+        // shortfall against the all-coins gate).
         for (const tile of candidates) {
             if (coins.length >= target) break;
+            if (tile.safe) addCoin(tile.x, tile.y);
+        }
+        for (const tile of candidates) {
+            if (coins.length >= Math.min(target, 5)) break;
             addCoin(tile.x, tile.y);
         }
 
