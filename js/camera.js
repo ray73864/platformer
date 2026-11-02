@@ -25,14 +25,26 @@ export class Camera {
             this.y += (targetY - this.y) * 0.1;
         }
 
-        this.x = Math.max(0, Math.min(this.x, levelWidthPx - this.width));
+        // Centre the world on both axes whenever it is smaller than the
+        // viewport (small levels, big zoomed-out screens); otherwise clamp to
+        // the world edges as before.
+        if (levelWidthPx <= this.width) {
+            this.x = (levelWidthPx - this.width) / 2;
+        } else {
+            this.x = Math.max(0, Math.min(this.x, levelWidthPx - this.width));
+        }
 
         // World top stays within [0, max(0, levelHeight - view height)] when a
         // level height is given; without it there is no lower bound (2-arg
         // calls in unit tests rely on the unclamped-below behavior).
         if (levelHeightPx !== undefined) {
-            const minCamY = -(Math.max(0, levelHeightPx - this.height));
-            this.y = Math.min(Math.max(this.y, minCamY), 0);
+            if (levelHeightPx <= this.height) {
+                // screen_y = world_y + camera.y: positive centres downward.
+                this.y = (this.height - levelHeightPx) / 2;
+            } else {
+                const minCamY = -(levelHeightPx - this.height);
+                this.y = Math.min(Math.max(this.y, minCamY), 0);
+            }
         } else {
             this.y = Math.min(this.y, 0);
         }

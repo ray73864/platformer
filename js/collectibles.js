@@ -62,20 +62,19 @@ export class Collectibles {
         return this.coins.filter(coin => !coin.collected);
     }
 
-    // Portal coin-gate (spec: 70% of coins). The collected > total guard is
-    // defensive per spec; direct flag counting makes it unreachable in
-    // practice. With no coins at all the gate opens: the spec's own threshold
-    // max(1, floor(0 * 0.7)) = 1 would demand a coin that does not exist and
-    // make such a level unwinnable by construction (generation ships ≥ 5 per
-    // level; Game.publishLevel warns below the spec's floor of 3).
+    // Portal coin gate: ALL coins must be collected (owner ruling
+    // 2026-11-03, superseding the spec's 70% threshold — at 70% a stray
+    // touch of the unlocked portal ended the level with coins still on the
+    // map). A locked portal is inert, so no coin can ever be lost to an
+    // accidental brush-past. With no coins at all the gate opens trivially
+    // (generation ships >= 5 per level; Game.publishLevel warns below the
+    // spec floor of 3).
     meetsPortalRequirement() {
         const total = this.coins.length;
         if (total === 0) return true;
 
         const collected = this.coins.filter(coin => coin.collected).length;
-        if (collected > total) return true;
-
-        return collected >= Math.max(1, Math.floor(total * 0.7));
+        return collected >= total;
     }
 
     checkCollection(player) {

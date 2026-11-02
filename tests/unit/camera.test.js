@@ -14,14 +14,25 @@ test("Camera follows player horizontally", () => {
     expect(camera.x).toBeCloseTo(500 - 800 / 2, 0);
 });
 
-test("Camera stays within level bounds", () => {
+test("Camera centres a level narrower than the viewport", () => {
     const camera = new Camera(800, 600);
     const player = { x: 100, y: 100, width: 32, height: 32 };
 
     camera.follow(player, 500); // Level is narrower than view
 
-    // Camera should not go negative
-    expect(camera.x).toBe(0);
+    // Centred: negative offset puts equal sky on both flanks (the old
+    // clamp-to-0 pinned small levels against the left edge).
+    expect(camera.x).toBe((500 - 800) / 2);
+});
+
+test("Camera centres a level shorter than the viewport", () => {
+    const camera = new Camera(800, 600);
+    const player = { x: 200, y: 100, width: 32, height: 32 };
+
+    camera.follow(player, 1000, 400); // Level is shorter than view
+
+    // screen_y = world_y + camera.y: positive pushes the world down to centre.
+    expect(camera.y).toBe((600 - 400) / 2);
 });
 
 test("Camera resets correctly", () => {

@@ -30,6 +30,17 @@ export const TILES = {
     FLAG_B: 112     // goal flag, pennant wave variant B
 };
 
+// Green band of the grass-cap tile (tile 2): source rows 2..8 of its 18px
+// cell — measured from the shipped sheet; rows 0-1 and 16-17 are baked dark
+// borders that must not be drawn when tiles stack.
+const GRASS_BAND_Y = 2;
+const GRASS_BAND_H = 7;
+const GRASS_BAND_SRC = 18;
+
+// One tile cell: matches main.js TILE_SIZE (kept local so the sprite layer
+// stays dependency-free). Used to stand the portal flag on the ground line.
+const PORTAL_CELL = 32;
+
 // Frames into characters.png. Player: tan astronaut idle/run. Enemies:
 // spiked-shelled slime and bat, both 3-frame walk/flap cycles.
 export const CHARS = {
@@ -162,9 +173,18 @@ export class Sprites {
                 const t = level.tiles[ty][tx];
                 if (t === 1) {
                     const above = ty > 0 ? level.tiles[ty - 1][tx] : 0;
-                    this._drawSheet(ctx, 'tiles',
-                        above === 1 ? TILES.DIRT : TILES.GRASS_TOP,
+                    this._drawSheet(ctx, 'tiles', TILES.DIRT,
                         tx * size, ty * size, drawn, drawn);
+                    if (above !== 1) {
+                        // Exposed surface: overlay only the green band of
+                        // the cap tile (source rows 2..8). The full cap cell
+                        // carries baked dark top/bottom borders which read
+                        // as black seams when tiles stack.
+                        const cap = sheetRect('tiles', TILES.GRASS_TOP);
+                        ctx.drawImage(this.images.tiles,
+                            cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H,
+                            tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
+                    }
                 } else if (t === 2) {
                     this._drawSheet(ctx, 'tiles', TILES.SPIKE,
                         tx * size, ty * size, drawn, drawn);
@@ -196,10 +216,17 @@ export class Sprites {
     drawPortal(ctx, portal, unlocked) {
         if (!portal) return;
         const frame = (this.clock % 0.8) < 0.4 ? TILES.FLAG_A : TILES.FLAG_B;
+        // Anchor the flag's base on the ground line (the portal cell's
+        // bottom, one TILE_SIZE below the cell top): the trigger rect is
+        // deliberately taller than a tile, and filling it made the pennant
+        // sink into the terrain. Draw upward from the feet instead.
+        const w = 36;
+        const h = 52;
+        const feetY = portal.y + PORTAL_CELL;
         ctx.save();
         if (!unlocked) ctx.globalAlpha = 0.35;
         this._drawSheet(ctx, 'tiles', frame,
-            portal.x, portal.y, portal.width, portal.height);
+            portal.x + portal.width / 2 - w / 2, feetY - h, w, h);
         ctx.restore();
     }
 
@@ -212,12 +239,23 @@ export class Sprites {
 
     drawPlayer(ctx, player, squash = 1) {
         const moving = Math.abs(player.vx) > 5;
-        const frame = moving || !player.grounded ? CHARS.PLAYER_RUN : CHARS.PLAYER_IDLE;
+        // Two-frame sheet (idle + stride): alternating them at ~8 steps/s
+        // reads as a run cycle; airborne holds the stride frame.
+        let frame = CHARS.PLAYER_IDLE;
+        if (!player.grounded) {
+            frame = CHARS.PLAYER_RUN;
+        } else if (moving) {
+            frame = Math.floor(this.clock * 8) % 2 === 0
+                ? CHARS.PLAYER_RUN
+                : CHARS.PLAYER_IDLE;
+        }
         const face = this._faceOf(player);
         const w = 44;                       // slight overhang past the 32px hitbox
         const h = 44 * squash;
         const cx = player.x + player.width / 2;
-        const feet = player.y + player.height;
+        // Small vertical bob while running lifts each footfall off the floor.
+        const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 8 * Math.PI)) * 2 : 0;
+        const feet = player.y + player.height - bob;
         ctx.save();
         ctx.translate(cx, feet);
         ctx.scale(face, 1);

@@ -10,7 +10,7 @@ A procedurally generated 2D platformer game built with vanilla JavaScript.
 - Level progression with increasing platform difficulty
 - Score tracking and level progression
 - **Phase 2:** coins, spike hazards, and patrolling enemies
-- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked at 70% of coins, an arrow-navigable pause menu, and a 15-level run ending in a game-complete screen with a saved high score
+- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked by collecting every coin, an arrow-navigable pause menu, and a 15-level run ending in a game-complete screen with a saved high score
 
 ## Controls
 
@@ -178,7 +178,7 @@ game/
 
 ### Hidden portal
 
-- The portal stays hidden and inert until at least 70% of the level's coins are collected (the threshold is rounded down, with a minimum of one coin)
+- The portal stays ghosted and inert until every coin in the level is collected (owner ruling 2026-11-03, superseding the spec's original 70% threshold, which let a stray touch end the level with coins still on the map)
 - Reaching the unlocked portal completes the level
 
 ### Pause

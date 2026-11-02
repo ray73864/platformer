@@ -159,9 +159,8 @@ test("loadCoins adopts externally generated coins by reference", () => {
 test("meetsPortalRequirement opens the gate when the level has no coins", () => {
     const collectibles = new Collectibles();
 
-    // The 70% formula's minimum (max(1, floor(0*0.7)) = 1) could never be met
-    // with zero coins: an unwinnable level. Nothing to collect means nothing
-    // to gate.
+    // With zero coins there is nothing to gate: the all-or-nothing rule must
+    // not demand a coin that does not exist (unwinnable level).
     expect(collectibles.meetsPortalRequirement()).toBe(true);
 });
 
@@ -177,16 +176,28 @@ test("meetsPortalRequirement is false at 6 of 10 coins", () => {
     expect(collectibles.meetsPortalRequirement()).toBe(false); // 6/10
 });
 
-test("meetsPortalRequirement is true at 7 of 10 coins", () => {
+test("meetsPortalRequirement is false at 9 of 10 coins (all-or-nothing gate)", () => {
     const collectibles = new Collectibles();
     for (let i = 0; i < 10; i++) {
         collectibles.addCoin(i * 32, 0);
     }
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 9; i++) {
         collectibles.collectCoin(i);
     }
 
-    expect(collectibles.meetsPortalRequirement()).toBe(true); // 7/10
+    expect(collectibles.meetsPortalRequirement()).toBe(false); // 9/10
+});
+
+test("meetsPortalRequirement is true at 10 of 10 coins", () => {
+    const collectibles = new Collectibles();
+    for (let i = 0; i < 10; i++) {
+        collectibles.addCoin(i * 32, 0);
+    }
+    for (let i = 0; i < 10; i++) {
+        collectibles.collectCoin(i);
+    }
+
+    expect(collectibles.meetsPortalRequirement()).toBe(true); // 10/10
 });
 
 test("meetsPortalRequirement is true at 3 of 3 coins", () => {

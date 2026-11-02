@@ -1071,7 +1071,7 @@ export class Level {
         // Draw enemies (EnemyManager owns per-enemy drawing).
         this.enemyManager.drawAll(ctx, sprites);
 
-        // Draw portal; hidden until the 70% coin gate is met.
+        // Draw portal; ghosted until the all-coins gate is met.
         if (art) {
             sprites.drawPortal(ctx, this.portal, this.collectibles.meetsPortalRequirement());
         } else if (this.portal && this.collectibles.meetsPortalRequirement()) {

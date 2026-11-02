@@ -14,12 +14,16 @@ export function aabbOverlap(rect1, rect2) {
     );
 }
 
+// Slack for the prev-frame landing check: resting contact re-penetrates by a
+// fraction of a pixel each frame (gravity applies before resolution), so feet
+// sitting exactly on a surface must still count as "was above".
+const LANDING_TOLERANCE = 0.5;
+
 export class Physics {
     constructor(gravity = 980, maxFallSpeed = 600) {
         this.gravity = gravity;
         this.maxFallSpeed = maxFallSpeed;
     }
-
     applyGravity(entity, dt) {
         entity.vy += this.gravity * dt;
 
@@ -93,6 +97,34 @@ export class Physics {
                         player.y += overlap;
                         player.vy = 0;
                     } else {
+                        // Landing credibility checks (skipped entirely for
+                        // entities without tracked history, e.g. unit-test
+                        // fakes, which keep the legacy always-land behaviour):
+                        //
+                        // 1. Side hit: feet were already BELOW the platform
+                        //    top before this frame's movement — sinking into
+                        //    a gap alongside a wall must not snap onto the
+                        //    wall's top corner.
+                        // 2. Level-corner clip: feet were exactly at the
+                        //    platform's top height and only entered its
+                        //    horizontal span this frame — walking off one
+                        //    ledge into the lip of a same-height platform is
+                        //    hitting a wall, not landing on a floor. Without
+                        //    this, players glide across 1-2 tile gaps.
+                        if (player.prevY !== undefined) {
+                            const prevBottom = player.prevY + player.height;
+                            if (prevBottom > platform.y + LANDING_TOLERANCE) {
+                                continue; // Side contact: resolveXCollision handles it
+                            }
+                            const prevXOverlap = player.prevX === undefined ||
+                                (player.prevX < platform.x + platform.width &&
+                                 player.prevX + player.width > platform.x);
+                            if (!prevXOverlap &&
+                                prevBottom >= platform.y - LANDING_TOLERANCE) {
+                                continue; // Level-corner clip: not a landing
+                            }
+                        }
+
                         // Player center is above platform center, push up (landing)
                         player.y -= overlap;
                         player.vy = 0;

@@ -43,6 +43,7 @@
     Game: () => Game,
     STATE: () => STATE,
     TILE_SIZE: () => TILE_SIZE,
+    computeZoom: () => computeZoom,
     destroyAllGames: () => destroyAllGames,
     init: () => init
   });
@@ -141,6 +142,7 @@
   function aabbOverlap(rect1, rect2) {
     return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x && rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
   }
+  var LANDING_TOLERANCE = 0.5;
 
   class Physics {
     constructor(gravity = 980, maxFallSpeed = 600) {
@@ -199,6 +201,16 @@
               player.y += overlap;
               player.vy = 0;
             } else {
+              if (player.prevY !== undefined) {
+                const prevBottom = player.prevY + player.height;
+                if (prevBottom > platform.y + LANDING_TOLERANCE) {
+                  continue;
+                }
+                const prevXOverlap = player.prevX === undefined || player.prevX < platform.x + platform.width && player.prevX + player.width > platform.x;
+                if (!prevXOverlap && prevBottom >= platform.y - LANDING_TOLERANCE) {
+                  continue;
+                }
+              }
               player.y -= overlap;
               player.vy = 0;
               player.grounded = true;
@@ -334,9 +346,7 @@
       if (total === 0)
         return true;
       const collected = this.coins.filter((coin) => coin.collected).length;
-      if (collected > total)
-        return true;
-      return collected >= Math.max(1, Math.floor(total * 0.7));
+      return collected >= total;
     }
     checkCollection(player) {
       let collectedNow = 0;
@@ -1136,10 +1146,18 @@
         this.x += (targetX - this.x) * 0.1;
         this.y += (targetY - this.y) * 0.1;
       }
-      this.x = Math.max(0, Math.min(this.x, levelWidthPx - this.width));
+      if (levelWidthPx <= this.width) {
+        this.x = (levelWidthPx - this.width) / 2;
+      } else {
+        this.x = Math.max(0, Math.min(this.x, levelWidthPx - this.width));
+      }
       if (levelHeightPx !== undefined) {
-        const minCamY = -Math.max(0, levelHeightPx - this.height);
-        this.y = Math.min(Math.max(this.y, minCamY), 0);
+        if (levelHeightPx <= this.height) {
+          this.y = (this.height - levelHeightPx) / 2;
+        } else {
+          const minCamY = -(levelHeightPx - this.height);
+          this.y = Math.min(Math.max(this.y, minCamY), 0);
+        }
       } else {
         this.y = Math.min(this.y, 0);
       }
@@ -1356,6 +1374,10 @@
     FLAG_A: 111,
     FLAG_B: 112
   };
+  var GRASS_BAND_Y = 2;
+  var GRASS_BAND_H = 7;
+  var GRASS_BAND_SRC = 18;
+  var PORTAL_CELL = 32;
   var CHARS = {
     PLAYER_IDLE: 9,
     PLAYER_RUN: 10,
@@ -1449,7 +1471,11 @@
           const t = level.tiles[ty][tx];
           if (t === 1) {
             const above = ty > 0 ? level.tiles[ty - 1][tx] : 0;
-            this._drawSheet(ctx, "tiles", above === 1 ? TILES.DIRT : TILES.GRASS_TOP, tx * size, ty * size, drawn, drawn);
+            this._drawSheet(ctx, "tiles", TILES.DIRT, tx * size, ty * size, drawn, drawn);
+            if (above !== 1) {
+              const cap = sheetRect("tiles", TILES.GRASS_TOP);
+              ctx.drawImage(this.images.tiles, cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H, tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
+            }
           } else if (t === 2) {
             this._drawSheet(ctx, "tiles", TILES.SPIKE, tx * size, ty * size, drawn, drawn);
           }
@@ -1477,10 +1503,13 @@
       if (!portal)
         return;
       const frame = this.clock % 0.8 < 0.4 ? TILES.FLAG_A : TILES.FLAG_B;
+      const w = 36;
+      const h = 52;
+      const feetY = portal.y + PORTAL_CELL;
       ctx.save();
       if (!unlocked)
         ctx.globalAlpha = 0.35;
-      this._drawSheet(ctx, "tiles", frame, portal.x, portal.y, portal.width, portal.height);
+      this._drawSheet(ctx, "tiles", frame, portal.x + portal.width / 2 - w / 2, feetY - h, w, h);
       ctx.restore();
     }
     _faceOf(entity) {
@@ -1496,12 +1525,18 @@
     }
     drawPlayer(ctx, player, squash = 1) {
       const moving = Math.abs(player.vx) > 5;
-      const frame = moving || !player.grounded ? CHARS.PLAYER_RUN : CHARS.PLAYER_IDLE;
+      let frame = CHARS.PLAYER_IDLE;
+      if (!player.grounded) {
+        frame = CHARS.PLAYER_RUN;
+      } else if (moving) {
+        frame = Math.floor(this.clock * 8) % 2 === 0 ? CHARS.PLAYER_RUN : CHARS.PLAYER_IDLE;
+      }
       const face = this._faceOf(player);
       const w = 44;
       const h = 44 * squash;
       const cx = player.x + player.width / 2;
-      const feet = player.y + player.height;
+      const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 8 * Math.PI)) * 2 : 0;
+      const feet = player.y + player.height - bob;
       ctx.save();
       ctx.translate(cx, feet);
       ctx.scale(face, 1);
@@ -1573,12 +1608,16 @@
 
   // js/main.js
   var TILE_SIZE = 32;
+  function computeZoom(viewportHeight) {
+    return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
+  }
   var GRAVITY = 980;
   var PLAYER_SPEED = 200;
   var JUMP_FORCE = 350;
   var MAX_FALL_SPEED = 600;
   var JUMP_BUFFER_TIME = 0.12;
   var COYOTE_TIME = 0.1;
+  var LEDGE_FALL_SEED = 140;
   var FINAL_LEVEL = 15;
   var HIGH_SCORE_KEY = "platformerHighScore";
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
@@ -1611,7 +1650,8 @@
       window.addEventListener("resize", () => this.resize(), { signal: this._abort.signal });
       this.input = new InputHandler;
       this.physics = new Physics(GRAVITY, MAX_FALL_SPEED);
-      this.camera = new Camera(window.innerWidth, window.innerHeight);
+      this.zoom = computeZoom(window.innerHeight);
+      this.camera = new Camera(window.innerWidth / this.zoom, window.innerHeight / this.zoom);
       this.ui = new UI;
       this.ui.hideHUD();
       this.ui.setPauseEnabled(false);
@@ -1657,8 +1697,9 @@
       this.ctx.scale(dpr, dpr);
       this.ctx.imageSmoothingEnabled = false;
       if (this.camera) {
-        this.camera.width = window.innerWidth;
-        this.camera.height = window.innerHeight;
+        this.zoom = computeZoom(window.innerHeight);
+        this.camera.width = window.innerWidth / this.zoom;
+        this.camera.height = window.innerHeight / this.zoom;
       }
     }
     bindEvents() {
@@ -1876,6 +1917,8 @@
             return;
           }
         }
+        this.player.prevX = this.player.x;
+        this.player.prevY = this.player.y;
         this.player.update(dt, this.input.isLeft(), this.input.isRight());
         this.physics.applyGravity(this.player, dt);
         const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
@@ -1883,6 +1926,8 @@
         this.coyoteTimer = this.player.grounded ? COYOTE_TIME : this.coyoteTimer - dt;
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
+        } else if (!this.player.grounded && this._prevGrounded && this.player.vy >= 0) {
+          this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
         }
         this._prevGrounded = this.player.grounded;
         if (this.jumpBufferTimer > 0) {
@@ -1959,9 +2004,13 @@
         this.ctx.save();
         const viewW = window.innerWidth;
         const viewH = window.innerHeight;
+        const zoom = this.zoom;
+        const effW = viewW / zoom;
+        const effH = viewH / zoom;
         if (sprites) {
-          const worldBottom = this.level.height * this.level.tileSize + this.camera.y;
-          sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottom);
+          const worldBottom = this.level.height * this.level.tileSize;
+          const worldBottomScreen = (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
+          sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottomScreen);
         }
         let shakeX = 0;
         let shakeY = 0;
@@ -1970,9 +2019,11 @@
           shakeX = (Math.random() * 2 - 1) * mag;
           shakeY = (Math.random() * 2 - 1) * mag;
         }
-        this.ctx.translate(-this.camera.x + shakeX, this.camera.y + shakeY);
+        this.ctx.translate(viewW / 2 + shakeX, viewH / 2 + shakeY);
+        this.ctx.scale(zoom, zoom);
+        this.ctx.translate(-(this.camera.x + effW / 2), this.camera.y - effH / 2);
         if (sprites)
-          sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, viewW, viewH);
+          sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
         this.level.draw(this.ctx, sprites);
         const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;
         this.player.draw(this.ctx, sprites, squash);

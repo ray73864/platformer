@@ -12,6 +12,15 @@ import { spawnBurst, stepParticles, drawParticles } from './particles.js';
 
 // Game constants
 export const TILE_SIZE = 32;
+
+// Integer world zoom: on large displays the pixel art scales up to fill the
+// viewport instead of sitting small in the top-left. Target ~540 CSS px of
+// visible world height per zoom step (1080p -> 2x, 1440p+ -> 3x, laptops
+// stay 1x so generation geometry stays legible).
+export function computeZoom(viewportHeight) {
+    return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
+}
+
 const GRAVITY = 980;
 const PLAYER_SPEED = 200;
 const JUMP_FORCE = 350;
@@ -21,6 +30,9 @@ const MAX_FALL_SPEED = 600;
 // (coyote), so presses straddling the grounded transition are not dropped.
 const JUMP_BUFFER_TIME = 0.12;
 const COYOTE_TIME = 0.1;
+// Downward velocity seeded when the player walks off a ledge without jumping:
+// gravity from vy=0 drifts over narrow gaps instead of dropping cleanly.
+const LEDGE_FALL_SEED = 140;
 // Winning this level finishes the whole run instead of generating another.
 const FINAL_LEVEL = 15;
 const HIGH_SCORE_KEY = 'platformerHighScore';
@@ -84,8 +96,11 @@ export class Game {
         // Initialize systems
         this.input = new InputHandler();
         this.physics = new Physics(GRAVITY, MAX_FALL_SPEED);
-        // Camera viewport is in CSS pixels, not the device-pixel backing store.
-        this.camera = new Camera(window.innerWidth, window.innerHeight);
+        // Integer world zoom so pixel art fills large screens instead of
+        // hugging the top-left corner; the camera viewport is measured in
+        // zoomed world units (CSS pixels / zoom), not device pixels.
+        this.zoom = computeZoom(window.innerHeight);
+        this.camera = new Camera(window.innerWidth / this.zoom, window.innerHeight / this.zoom);
         this.ui = new UI();
         // MENU baseline: with no run in progress the HUD has nothing to show,
         // and hiding it also takes #pause-btn out of the tab order on a fresh
@@ -172,12 +187,13 @@ export class Game {
         // fallback shapes): bilinear filtering would smear 18px tiles.
         this.ctx.imageSmoothingEnabled = false;
 
-        // The camera works in CSS pixels; keep its viewport current so the
-        // follow/clamp math matches the resized window. Guard for the first
-        // call from the constructor, before this.camera exists.
+        // The camera works in zoomed world units; keep its viewport current
+        // so the follow/clamp math matches the resized window. Guard for the
+        // first call from the constructor, before this.camera exists.
         if (this.camera) {
-            this.camera.width = window.innerWidth;
-            this.camera.height = window.innerHeight;
+            this.zoom = computeZoom(window.innerHeight);
+            this.camera.width = window.innerWidth / this.zoom;
+            this.camera.height = window.innerHeight / this.zoom;
         }
     }
 
@@ -416,10 +432,10 @@ export class Game {
                 this.timer.baseTime, 'seconds');
             this.timer.timeRemaining = this.timer.baseTime;
         }
-        // Spec §Error Handling (coin count validation): the 70% portal gate is
-        // only meaningful with enough coins to divide. Generation ships more
-        // than this on every tier; a level below the floor is a generator bug
-        // — warn and continue (the gate itself never becomes unwinnable).
+        // Spec §Error Handling (coin count validation): the all-coins portal
+        // gate needs enough coins to be a goal. Generation ships more than
+        // this on every tier; a level below the floor is a generator bug —
+        // warn and continue (the gate itself never becomes unwinnable).
         if (this.collectibles.getCoins().length < 3) {
             console.warn('Level generated with fewer than 3 coins:',
                 this.collectibles.getCoins().length);
@@ -551,6 +567,12 @@ export class Game {
                 }
             }
 
+            // Record pre-movement position (before x integration and gravity):
+            // the collision resolver needs it to tell a genuine landing from
+            // side-wall or level-corner contact at a gap.
+            this.player.prevX = this.player.x;
+            this.player.prevY = this.player.y;
+
             // Update player
             this.player.update(dt, this.input.isLeft(), this.input.isRight());
 
@@ -567,9 +589,16 @@ export class Game {
                 ? COYOTE_TIME
                 : this.coyoteTimer - dt;
 
-            // Landing squash edge (visual-only): fire on air-to-ground.
+            // Grounded-state edges (both visual-tuning hooks, physics-safe):
+            // air-to-ground fires the landing squash; ground-to-air without a
+            // jump (walked off a ledge) seeds a small downward velocity so
+            // the drop starts decisively instead of drifting over the gap.
+            // A jump leaves with vy < 0 and is deliberately excluded.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
+            } else if (!this.player.grounded && this._prevGrounded &&
+                       this.player.vy >= 0) {
+                this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
             }
             this._prevGrounded = this.player.grounded;
 
@@ -630,10 +659,10 @@ export class Game {
                 for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
             }
 
-            // Check portal contact; hidden until the 70% coin gate is met,
-            // so locked contact does nothing. Same Collectibles instance the
-            // loop scores through (publishLevel adopts it from the level) —
-            // one access path, no aliasing against this.level.
+            // Check portal contact; ghosted and inert until every coin is
+            // collected, so locked contact does nothing. Same Collectibles
+            // instance the loop scores through (publishLevel adopts it from
+            // the level) — one access path, no aliasing against this.level.
             const portal = this.level.getPortal();
             if (portal && !this.player.hasReachedPortal() &&
                 this.collectibles.meetsPortalRequirement() &&
@@ -720,10 +749,19 @@ export class Game {
 
             const viewW = window.innerWidth;
             const viewH = window.innerHeight;
+            const zoom = this.zoom;
+            // Visible world extent at the current zoom.
+            const effW = viewW / zoom;
+            const effH = viewH / zoom;
+
             if (sprites) {
-                // Screen y of the world floor: screenY = worldY + camera.y.
-                const worldBottom = this.level.height * this.level.tileSize + this.camera.y;
-                sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottom);
+                // Screen y of the world floor under the full transform:
+                // screen = (world + camera.y - effH/2) * zoom + viewH/2.
+                const worldBottom = this.level.height * this.level.tileSize;
+                const worldBottomScreen =
+                    (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
+                sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x,
+                    viewW, viewH, worldBottomScreen);
             }
 
             // Death screen-shake: a decaying random offset on the camera
@@ -736,12 +774,17 @@ export class Game {
                 shakeY = (Math.random() * 2 - 1) * mag;
             }
 
-            // Apply camera transform (camera.y is negative of the world-top offset)
-            this.ctx.translate(-this.camera.x + shakeX, this.camera.y + shakeY);
+            // World transform: centre the (zoomed) viewport on the camera's
+            // top-left corner. At zoom 1 this reduces exactly to the legacy
+            // translate(-camera.x, +camera.y). Camera clamping centres the
+            // whole level when it is smaller than the viewport.
+            this.ctx.translate(viewW / 2 + shakeX, viewH / 2 + shakeY);
+            this.ctx.scale(zoom, zoom);
+            this.ctx.translate(-(this.camera.x + effW / 2), this.camera.y - effH / 2);
 
-            // Draw level (terrain comes from the sprite layer's culled grid
-            // pass; level.draw owns entities either way)
-            if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, viewW, viewH);
+            // Terrain comes from the sprite layer's culled grid pass (in
+            // world units of the zoomed viewport); level.draw owns entities.
+            if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
             this.level.draw(this.ctx, sprites);
 
             // Draw player (landing squash compresses height only)
