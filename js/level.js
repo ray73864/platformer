@@ -459,9 +459,12 @@ export class Level {
 
     generatePlatforms(tiles) {
         const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
-        // Difficulty scales past the old cap of 4 into the Phase 2 band;
-        // the game tops out at level 9. The early-level ramp is unchanged.
-        const difficulty = Math.min(this.levelNumber, 9);
+        // The early-level ramp (levels 1-4, the only consumer below) is
+        // unchanged. The old Math.min(levelNumber, 9) clamp here claimed the
+        // game tops out at level 9 — false since the run reached FINAL_LEVEL
+        // 15, and behaviorally dead: every read of this value sits in the
+        // non-phase-2 branch where levelNumber <= 4 (backlog 1b3c51aa).
+        const difficulty = this.levelNumber;
         // Phase 2 widens gaps and drops. Rise stays capped at 1 tile because
         // the verified jump rise (~62px) cannot clear a 2-tile climb; the
         // spec's "max height difference 3" is satisfied through drops.
