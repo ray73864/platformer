@@ -1374,6 +1374,8 @@
     FLAG_A: 111,
     FLAG_B: 112
   };
+  var SPIKE_BAND_Y = 9;
+  var SPIKE_BAND_H = 9;
   var GRASS_BAND_Y = 2;
   var GRASS_BAND_H = 7;
   var GRASS_BAND_SRC = 18;
@@ -1477,7 +1479,8 @@
               ctx.drawImage(this.images.tiles, cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H, tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
             }
           } else if (t === 2) {
-            this._drawSheet(ctx, "tiles", TILES.SPIKE, tx * size, ty * size, drawn, drawn);
+            const spike = sheetRect("tiles", TILES.SPIKE);
+            ctx.drawImage(this.images.tiles, spike.sx, spike.sy + SPIKE_BAND_Y, spike.sw, SPIKE_BAND_H, tx * size, ty * size, drawn, drawn);
           }
         }
       }

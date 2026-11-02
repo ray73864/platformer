@@ -30,6 +30,11 @@ export const TILES = {
     FLAG_B: 112     // goal flag, pennant wave variant B
 };
 
+// Opaque tooth band of the spike tile (tile 68): source rows 9..17 of its
+// 18px cell — measured from the shipped sheet; rows 0-8 are empty.
+const SPIKE_BAND_Y = 9;
+const SPIKE_BAND_H = 9;
+
 // Green band of the grass-cap tile (tile 2): source rows 2..8 of its 18px
 // cell — measured from the shipped sheet; rows 0-1 and 16-17 are baked dark
 // borders that must not be drawn when tiles stack.
@@ -186,7 +191,15 @@ export class Sprites {
                             tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
                     }
                 } else if (t === 2) {
-                    this._drawSheet(ctx, 'tiles', TILES.SPIKE,
+                    // Stretch the tooth band (source rows 9..17 — measured
+                    // opaque extent) across the full cell so the VISIBLE
+                    // metal matches the lethal core (the tile rect inset 4px
+                    // per side). Drawing the raw 18px cell left the teeth in
+                    // the bottom half only, and players died to an invisible
+                    // kill zone above the tips.
+                    const spike = sheetRect('tiles', TILES.SPIKE);
+                    ctx.drawImage(this.images.tiles,
+                        spike.sx, spike.sy + SPIKE_BAND_Y, spike.sw, SPIKE_BAND_H,
                         tx * size, ty * size, drawn, drawn);
                 }
             }
