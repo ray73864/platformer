@@ -50,6 +50,9 @@ body {
 #game-canvas {
     display: block;
     image-rendering: pixelated;
+    /* Fallback text (no-canvas browsers) inherits here: ink reads on the
+       sky container background, cream did not (1:1 contrast). */
+    color: var(--ink);
 }
 
 .overlay {
@@ -152,7 +155,7 @@ button:active {
 
 .overlay .pause-hint {
     margin-top: 0.75rem;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     line-height: 1.8;
     color: var(--dirt-deep);
 }
@@ -199,14 +202,14 @@ button:focus-visible {
     border: 3px solid var(--ink);
     box-shadow: 0 3px 0 rgba(26, 16, 10, 0.6);
     padding: 10px 14px;
-    font-size: 0.7rem;
+    font-size: 0.75rem; /* >= 11px functional-text floor */
     letter-spacing: 0.05em;
 }
 
 #hud > button {
     background: var(--gold);
     color: var(--ink);
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     min-height: 40px;
     padding: 8px 16px;
 }
@@ -227,7 +230,7 @@ button:focus-visible {
 
     #hud > span,
     #hud > button {
-        font-size: 0.55rem;
+        font-size: 0.7rem; /* stays on the 11px floor when chips wrap */
         padding: 8px 10px;
     }
 }
