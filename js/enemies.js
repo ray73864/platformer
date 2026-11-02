@@ -66,8 +66,15 @@ export class Enemy {
         return this.dead;
     }
 
-    draw(ctx) {
+    // Optional sprite layer: slime/bat frames by spawn index (assigned by
+    // EnemyManager.drawAll), feet-anchored and facing-flipped.
+    draw(ctx, sprites = null, index = 0) {
         if (this.dead) return;
+
+        if (sprites && sprites.ready()) {
+            sprites.drawEnemy(ctx, this, index);
+            return;
+        }
 
         // Draw enemy as red rectangle (fallback placeholder)
         ctx.fillStyle = '#ff0000';
@@ -112,9 +119,7 @@ export class EnemyManager {
         this.enemies.length = 0;
     }
 
-    drawAll(ctx) {
-        for (const enemy of this.enemies) {
-            enemy.draw(ctx);
-        }
+    drawAll(ctx, sprites = null) {
+        this.enemies.forEach((enemy, index) => enemy.draw(ctx, sprites, index));
     }
 }

@@ -1018,49 +1018,65 @@ export class Level {
         return this.reachableTiles.has(key);
     }
 
-    draw(ctx) {
-        // Draw platforms
-        ctx.fillStyle = '#8B4513'; // Brown
+    // Optional `sprites`: when the Kenney sheets are loaded, terrain tiles
+    // and spikes come from Game's culled grid pass (Sprites.drawWorld) and
+    // this method only owns entities; without them every element falls back
+    // to the legacy flat-shape renderer (tests, missing files).
+    draw(ctx, sprites = null) {
+        const art = sprites && sprites.ready();
 
-        for (const platform of this.platforms) {
-            ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+        if (!art) {
+            // Draw platforms
+            ctx.fillStyle = '#8B4513'; // Brown
 
-            // Add platform border
-            ctx.strokeStyle = '#654321';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+            for (const platform of this.platforms) {
+                ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+
+                // Add platform border
+                ctx.strokeStyle = '#654321';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+            }
         }
 
         // Draw coins
-        ctx.fillStyle = '#FFD700'; // Gold
+        if (art) {
+            sprites.drawCoins(ctx, this.coins);
+        } else {
+            ctx.fillStyle = '#FFD700'; // Gold
 
-        for (const coin of this.coins) {
-            if (!coin.collected) {
+            for (const coin of this.coins) {
+                if (!coin.collected) {
+                    ctx.beginPath();
+                    ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // Draw hazards (spikes). Art path: the tooth tile was painted by
+        // drawWorld straight from the grid — nothing left to do here.
+        if (!art) {
+            ctx.fillStyle = '#ff4444';
+
+            for (const spike of this.hazards.getSpikes()) {
                 ctx.beginPath();
-                ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
+                ctx.moveTo(spike.x, spike.y + spike.height);
+                ctx.lineTo(spike.x + spike.width / 2, spike.y);
+                ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
                 ctx.fill();
             }
         }
 
-        // Draw hazards (spikes) as red triangles filling the tile: sharp
-        // silhouette keeps them visually distinct from platforms and coins.
-        ctx.fillStyle = '#ff4444';
-
-        for (const spike of this.hazards.getSpikes()) {
-            ctx.beginPath();
-            ctx.moveTo(spike.x, spike.y + spike.height);
-            ctx.lineTo(spike.x + spike.width / 2, spike.y);
-            ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
-            ctx.fill();
-        }
-
         // Draw enemies (EnemyManager owns per-enemy drawing).
-        this.enemyManager.drawAll(ctx);
+        this.enemyManager.drawAll(ctx, sprites);
 
         // Draw portal; hidden until the 70% coin gate is met.
-        ctx.fillStyle = '#9400D3'; // Purple
+        if (art) {
+            sprites.drawPortal(ctx, this.portal, this.collectibles.meetsPortalRequirement());
+        } else if (this.portal && this.collectibles.meetsPortalRequirement()) {
+            ctx.fillStyle = '#9400D3'; // Purple
 
-        if (this.portal && this.collectibles.meetsPortalRequirement()) {
             ctx.fillRect(
                 this.portal.x,
                 this.portal.y,

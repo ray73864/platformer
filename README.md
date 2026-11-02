@@ -87,9 +87,9 @@ bun run format
 bun run verify
 ```
 
-Hard gate driven by [`assets/manifest.json`](assets/manifest.json). Each entry declares `{ "path", "source", "license", "required" }`: an entry with `"required": true` that is missing, not a regular file, or zero-byte fails verification (exit 1); absent optional entries (`"required": false`) only print warnings. The `build` script runs `verify` first, so a required-asset violation blocks the build. An unreadable or malformed manifest is itself a hard failure. Art assets are currently all optional (procedural placeholders remain the source of truth), so `verify` passes with warnings until entries are promoted.
+Hard gate driven by [`assets/manifest.json`](assets/manifest.json). Each entry declares `{ "path", "source", "license", "required" }`: an entry with `"required": true` that is missing, not a regular file, or zero-byte fails verification (exit 1); absent optional entries (`"required": false`) only print warnings. The `build` script runs `verify` first, so a required-asset violation blocks the build. An unreadable or malformed manifest is itself a hard failure. The shipped Kenney sheets and the pixel font are required entries; the renderer still degrades to flat shapes at runtime if an image cannot load, so a corrupted checkout shows a playable (plain) game rather than a blank one.
 
-**Licensing rule:** an entry may only be promoted to `"required": true` (and its art committed under `assets/`) when its license permits redistribution — this repository is MIT-licensed. The current CraftPix-sourced entries are explicitly *not* redistributable and must stay optional with no files committed; promotion additionally requires the verified license recorded in the entry itself.
+**Licensing rule (owner ruling 2026-11-03):** committed art must carry a license that permits redistribution into this MIT tree — currently Kenney "Pixel Platformer" (CC0) and Press Start 2P (OFL 1.1); attribution lives next to each asset (`LICENSE.txt` / `OFL.txt`). Non-redistributable packs (e.g. CraftPix freebies, which also require an account download) are never committed: they stay optional manifest entries and can be dropped into `assets/dropin/` locally (gitignored) for personal overrides.
 
 ## Project Structure
 
@@ -113,13 +113,18 @@ game/
 │   ├── collectibles.js    # Coin collection and scoring (Phase 2)
 │   ├── hazards.js         # Spike hazard detection (Phase 2)
 │   ├── timer.js           # Run clock with coin bonus (Phase 3)
-│   └── difficulty.js      # Difficulty tiers: size, enemy caps, timer flag (Phase 3)
+│   ├── difficulty.js      # Difficulty tiers: size, enemy caps, timer flag (Phase 3)
+│   ├── sprites.js         # Kenney sheet sprite layer (fallback-safe)
+│   └── particles.js       # Coin/death particle bursts (game feel)
 ├── tests/
 │   ├── setup/             # Test setup helpers
 │   ├── unit/              # Unit tests
 │   ├── integration/       # Integration tests
 │   └── e2e/               # E2E tests
 ├── assets/                # Game assets (declared in manifest.json)
+│   ├── kenney_pixel-platformer/  # Shipped CC0 sheets + LICENSE.txt
+│   ├── fonts/             # Press Start 2P (OFL 1.1) + OFL.txt
+│   └── dropin/            # Optional local overrides (gitignored)
 └── scripts/               # Utility scripts
 ```
 

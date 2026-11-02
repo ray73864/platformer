@@ -275,7 +275,11 @@
     markPortalReached() {
       this.reachedPortal = true;
     }
-    draw(ctx) {
+    draw(ctx, sprites = null, squash = 1) {
+      if (sprites && sprites.ready()) {
+        sprites.drawPlayer(ctx, this, squash);
+        return;
+      }
       ctx.fillStyle = "#0066ff";
       ctx.fillRect(this.x, this.y, this.width, this.height);
       ctx.fillStyle = "#fff";
@@ -437,9 +441,13 @@
     isDead() {
       return this.dead;
     }
-    draw(ctx) {
+    draw(ctx, sprites = null, index = 0) {
       if (this.dead)
         return;
+      if (sprites && sprites.ready()) {
+        sprites.drawEnemy(ctx, this, index);
+        return;
+      }
       ctx.fillStyle = "#ff0000";
       ctx.fillRect(this.x, this.y, this.width, this.height);
       ctx.fillStyle = "#fff";
@@ -474,10 +482,8 @@
     clear() {
       this.enemies.length = 0;
     }
-    drawAll(ctx) {
-      for (const enemy of this.enemies) {
-        enemy.draw(ctx);
-      }
+    drawAll(ctx, sprites = null) {
+      this.enemies.forEach((enemy, index) => enemy.draw(ctx, sprites, index));
     }
   }
 
@@ -1064,33 +1070,44 @@
       const key = this.portalTile.y * this.width + this.portalTile.x;
       return this.reachableTiles.has(key);
     }
-    draw(ctx) {
-      ctx.fillStyle = "#8B4513";
-      for (const platform of this.platforms) {
-        ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
-        ctx.strokeStyle = "#654321";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+    draw(ctx, sprites = null) {
+      const art = sprites && sprites.ready();
+      if (!art) {
+        ctx.fillStyle = "#8B4513";
+        for (const platform of this.platforms) {
+          ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+          ctx.strokeStyle = "#654321";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+        }
       }
-      ctx.fillStyle = "#FFD700";
-      for (const coin of this.coins) {
-        if (!coin.collected) {
+      if (art) {
+        sprites.drawCoins(ctx, this.coins);
+      } else {
+        ctx.fillStyle = "#FFD700";
+        for (const coin of this.coins) {
+          if (!coin.collected) {
+            ctx.beginPath();
+            ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+      if (!art) {
+        ctx.fillStyle = "#ff4444";
+        for (const spike of this.hazards.getSpikes()) {
           ctx.beginPath();
-          ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
+          ctx.moveTo(spike.x, spike.y + spike.height);
+          ctx.lineTo(spike.x + spike.width / 2, spike.y);
+          ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
           ctx.fill();
         }
       }
-      ctx.fillStyle = "#ff4444";
-      for (const spike of this.hazards.getSpikes()) {
-        ctx.beginPath();
-        ctx.moveTo(spike.x, spike.y + spike.height);
-        ctx.lineTo(spike.x + spike.width / 2, spike.y);
-        ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
-        ctx.fill();
-      }
-      this.enemyManager.drawAll(ctx);
-      ctx.fillStyle = "#9400D3";
-      if (this.portal && this.collectibles.meetsPortalRequirement()) {
+      this.enemyManager.drawAll(ctx, sprites);
+      if (art) {
+        sprites.drawPortal(ctx, this.portal, this.collectibles.meetsPortalRequirement());
+      } else if (this.portal && this.collectibles.meetsPortalRequirement()) {
+        ctx.fillStyle = "#9400D3";
         ctx.fillRect(this.portal.x, this.portal.y, this.portal.width, this.portal.height);
         ctx.strokeStyle = "#DA70D6";
         ctx.lineWidth = 3;
@@ -1325,6 +1342,235 @@
     }
   }
 
+  // js/sprites.js
+  var SHEETS = {
+    tiles: { src: "./assets/kenney_pixel-platformer/tiles.png", cols: 20, cell: 18 },
+    characters: { src: "./assets/kenney_pixel-platformer/characters.png", cols: 9, cell: 24 },
+    backgrounds: { src: "./assets/kenney_pixel-platformer/backgrounds.png" }
+  };
+  var TILES = {
+    GRASS_TOP: 2,
+    DIRT: 104,
+    SPIKE: 68,
+    COIN: 151,
+    FLAG_A: 111,
+    FLAG_B: 112
+  };
+  var CHARS = {
+    PLAYER_IDLE: 9,
+    PLAYER_RUN: 10,
+    SLIME: [15, 16, 17],
+    BAT: [24, 25, 26]
+  };
+  var THEMES = [
+    { x: 0, w: 96, sky: "#dff6f5", ground: "#c2e3e8" },
+    { x: 96, w: 48, sky: "#fbc97b", ground: "#cb815e" },
+    { x: 144, w: 48, sky: "#7ff0a5", ground: "#2eb082" }
+  ];
+  function sheetRect(sheetKey, index) {
+    const { cols, cell } = SHEETS[sheetKey];
+    if (!Number.isInteger(index) || index < 0) {
+      throw new Error(`sprite index must be a non-negative integer: ${index}`);
+    }
+    return {
+      sx: index % cols * cell,
+      sy: Math.floor(index / cols) * cell,
+      sw: cell,
+      sh: cell
+    };
+  }
+  var SHEET_TILE_COUNTS = { tiles: 20 * 9, characters: 9 * 3 };
+
+  class Sprites {
+    constructor() {
+      this.images = {};
+      this.loaded = false;
+      this.clock = 0;
+      this._facing = new WeakMap;
+      if (typeof Image === "undefined")
+        return;
+      let pending = Object.keys(SHEETS).length;
+      for (const [key, spec] of Object.entries(SHEETS)) {
+        const img = new Image;
+        img.onload = () => {
+          this.images[key] = img;
+          if (--pending === 0)
+            this.loaded = true;
+        };
+        img.onerror = () => {};
+        img.src = spec.src;
+      }
+    }
+    ready() {
+      return this.loaded;
+    }
+    advance(dt) {
+      this.clock += dt;
+    }
+    _drawSheet(ctx, sheetKey, index, dx, dy, dw, dh) {
+      const img = this.images[sheetKey];
+      const { sx, sy, sw, sh } = sheetRect(sheetKey, index);
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+    drawBackground(ctx, levelNumber, cameraX, viewW, viewH, worldBottomScreen = Infinity) {
+      const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      ctx.fillStyle = theme.sky;
+      ctx.fillRect(0, 0, viewW, viewH);
+      if (!this.images.backgrounds)
+        return;
+      const img = this.images.backgrounds;
+      const decoH = 16 * 2;
+      const decoY = viewH * 0.42 - decoH;
+      this._tileStrip(ctx, img, theme.x, 32, theme.w, 16, decoH, cameraX * 0.25, decoY, viewW);
+      const groundH = 24 * 2;
+      const bandY = Math.min(viewH - groundH, worldBottomScreen);
+      this._tileStrip(ctx, img, theme.x, 48, theme.w, 24, groundH, cameraX * 0.5, bandY, viewW);
+      if (bandY + groundH < viewH) {
+        ctx.fillStyle = theme.ground;
+        ctx.fillRect(0, bandY + groundH, viewW, viewH - bandY - groundH);
+      }
+    }
+    _tileStrip(ctx, img, sx, sy, srcW, srcH, chunkH, scrollX, y, viewW) {
+      const chunkW = srcW * 2;
+      const offset = -((scrollX % chunkW + chunkW) % chunkW);
+      for (let x = offset;x < viewW; x += chunkW) {
+        ctx.drawImage(img, sx, sy, srcW, srcH, x, y, chunkW, chunkH);
+      }
+    }
+    drawWorld(ctx, level, cameraX, cameraY, viewW, viewH) {
+      const size = level.tileSize;
+      const drawn = size + 1;
+      const c0 = Math.max(0, Math.floor(cameraX / size));
+      const c1 = Math.min(level.width - 1, Math.ceil((cameraX + viewW) / size));
+      const r0 = Math.max(0, Math.floor(-cameraY / size));
+      const r1 = Math.min(level.height - 1, Math.ceil((-cameraY + viewH) / size));
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          const t = level.tiles[ty][tx];
+          if (t === 1) {
+            const above = ty > 0 ? level.tiles[ty - 1][tx] : 0;
+            this._drawSheet(ctx, "tiles", above === 1 ? TILES.DIRT : TILES.GRASS_TOP, tx * size, ty * size, drawn, drawn);
+          } else if (t === 2) {
+            this._drawSheet(ctx, "tiles", TILES.SPIKE, tx * size, ty * size, drawn, drawn);
+          }
+        }
+      }
+    }
+    drawCoins(ctx, coins) {
+      const bobPhase = this.clock * 3;
+      for (const coin of coins) {
+        if (coin.collected)
+          continue;
+        const phase = coin.x * 0.11 + coin.y * 0.07;
+        const cx = coin.x + coin.width / 2;
+        const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + phase) * 3;
+        const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * 4 + phase)));
+        const s = 26;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(spin, 1);
+        this._drawSheet(ctx, "tiles", TILES.COIN, -s / 2, -s / 2, s, s);
+        ctx.restore();
+      }
+    }
+    drawPortal(ctx, portal, unlocked) {
+      if (!portal)
+        return;
+      const frame = this.clock % 0.8 < 0.4 ? TILES.FLAG_A : TILES.FLAG_B;
+      ctx.save();
+      if (!unlocked)
+        ctx.globalAlpha = 0.35;
+      this._drawSheet(ctx, "tiles", frame, portal.x, portal.y, portal.width, portal.height);
+      ctx.restore();
+    }
+    _faceOf(entity) {
+      if (entity.vx > 1) {
+        this._facing.set(entity, 1);
+        return 1;
+      }
+      if (entity.vx < -1) {
+        this._facing.set(entity, -1);
+        return -1;
+      }
+      return this._facing.get(entity) ?? 1;
+    }
+    drawPlayer(ctx, player, squash = 1) {
+      const moving = Math.abs(player.vx) > 5;
+      const frame = moving || !player.grounded ? CHARS.PLAYER_RUN : CHARS.PLAYER_IDLE;
+      const face = this._faceOf(player);
+      const w = 44;
+      const h = 44 * squash;
+      const cx = player.x + player.width / 2;
+      const feet = player.y + player.height;
+      ctx.save();
+      ctx.translate(cx, feet);
+      ctx.scale(face, 1);
+      this._drawSheet(ctx, "characters", frame, -w / 2, -h, w, h);
+      ctx.restore();
+    }
+    drawEnemy(ctx, enemy, index) {
+      if (enemy.dead)
+        return;
+      const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
+      const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
+      const face = this._faceOf(enemy);
+      const w = 42;
+      const h = 42;
+      const cx = enemy.x + enemy.width / 2;
+      const feet = enemy.y + enemy.height;
+      ctx.save();
+      ctx.translate(cx, feet);
+      ctx.scale(face, 1);
+      this._drawSheet(ctx, "characters", frame, -w / 2, -h, w, h);
+      ctx.restore();
+    }
+  }
+
+  // js/particles.js
+  var MAX_PARTICLES = 120;
+  function spawnBurst(list, x, y, color, count = 10) {
+    for (let i = 0;i < count; i++) {
+      const angle = Math.PI * 2 * i / count + Math.random() * 0.5;
+      const speed = 60 + Math.random() * 90;
+      list.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        life: 0.5 + Math.random() * 0.3,
+        maxLife: 0.8,
+        size: 3 + Math.random() * 3,
+        color
+      });
+    }
+    if (list.length > MAX_PARTICLES) {
+      list.splice(0, list.length - MAX_PARTICLES);
+    }
+    return list;
+  }
+  function stepParticles(list, dt) {
+    for (let i = list.length - 1;i >= 0; i--) {
+      const p = list[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        list.splice(i, 1);
+        continue;
+      }
+      p.vy += 260 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+    return list;
+  }
+  function drawParticles(ctx, list) {
+    for (const p of list) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // js/main.js
   var TILE_SIZE = 32;
   var GRAVITY = 980;
@@ -1372,6 +1618,11 @@
       this.difficulty = new Difficulty;
       this.timer = new Timer(60);
       this.timerActive = false;
+      this.sprites = new Sprites;
+      this.particles = [];
+      this.shakeTime = 0;
+      this.squashTimer = 0;
+      this._prevGrounded = true;
       this.state = STATE.MENU;
       this.level = null;
       this.player = null;
@@ -1404,6 +1655,7 @@
       this.canvas.style.width = window.innerWidth + "px";
       this.canvas.style.height = window.innerHeight + "px";
       this.ctx.scale(dpr, dpr);
+      this.ctx.imageSmoothingEnabled = false;
       if (this.camera) {
         this.camera.width = window.innerWidth;
         this.camera.height = window.innerHeight;
@@ -1586,6 +1838,10 @@
     }
     handleGameOver() {
       this.setState(STATE.GAME_OVER);
+      this.shakeTime = 0.35;
+      if (this.player) {
+        spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ff5a5a", 16);
+      }
       this.ui.setPauseEnabled(false);
       this.ui.showGameOver(this.score);
     }
@@ -1605,6 +1861,12 @@
       this.ui.showGameComplete(this.score, highScore);
     }
     update(dt) {
+      this.sprites.advance(dt);
+      stepParticles(this.particles, dt);
+      if (this.shakeTime > 0)
+        this.shakeTime = Math.max(0, this.shakeTime - dt);
+      if (this.squashTimer > 0)
+        this.squashTimer = Math.max(0, this.squashTimer - dt);
       if (this.state === STATE.PLAYING) {
         if (this.timerActive) {
           this.timer.update(dt);
@@ -1619,6 +1881,10 @@
         const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
         this.physics.resolveCollisions(this.player, collisions);
         this.coyoteTimer = this.player.grounded ? COYOTE_TIME : this.coyoteTimer - dt;
+        if (this.player.grounded && !this._prevGrounded) {
+          this.squashTimer = 0.12;
+        }
+        this._prevGrounded = this.player.grounded;
         if (this.jumpBufferTimer > 0) {
           this.jumpBufferTimer -= dt;
           if (this.player.grounded) {
@@ -1641,6 +1907,7 @@
         }
         const collectedCoins = this.collectibles.checkCollection(this.player);
         if (collectedCoins > 0) {
+          spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ffd23f", 12);
           this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
           for (let i = 0;i < collectedCoins; i++)
             this.timer.addCoinBonus();
@@ -1685,13 +1952,32 @@
       }
     }
     draw() {
+      const sprites = this.sprites.ready() ? this.sprites : null;
       this.ctx.fillStyle = "#87CEEB";
       this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       if (this.state === STATE.PLAYING || this.state === STATE.LEVEL_COMPLETE || this.state === STATE.PAUSED) {
         this.ctx.save();
-        this.ctx.translate(-this.camera.x, this.camera.y);
-        this.level.draw(this.ctx);
-        this.player.draw(this.ctx);
+        const viewW = window.innerWidth;
+        const viewH = window.innerHeight;
+        if (sprites) {
+          const worldBottom = this.level.height * this.level.tileSize + this.camera.y;
+          sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottom);
+        }
+        let shakeX = 0;
+        let shakeY = 0;
+        if (this.shakeTime > 0) {
+          const mag = 9 * (this.shakeTime / 0.35);
+          shakeX = (Math.random() * 2 - 1) * mag;
+          shakeY = (Math.random() * 2 - 1) * mag;
+        }
+        this.ctx.translate(-this.camera.x + shakeX, this.camera.y + shakeY);
+        if (sprites)
+          sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, viewW, viewH);
+        this.level.draw(this.ctx, sprites);
+        const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;
+        this.player.draw(this.ctx, sprites, squash);
+        if (this.particles.length)
+          drawParticles(this.ctx, this.particles);
         this.ctx.restore();
       }
     }

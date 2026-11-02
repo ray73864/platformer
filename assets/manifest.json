@@ -1,21 +1,33 @@
 {
   "assets": [
     {
-      "path": "tilesets/ancient-titan-remains.png",
-      "source": "https://craftpix.net/freebies/free-ancient-titan-remains-2d-platformer-tileset/",
-      "license": "CraftPix free license (not CC0; no Kenney equivalent exists; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
-      "required": false
+      "path": "kenney_pixel-platformer/tiles.png",
+      "source": "https://kenney.nl/assets/pixel-platformer",
+      "license": "CC0 1.0 Universal (public domain; redistributable — committed to this MIT tree)",
+      "required": true
     },
     {
-      "path": "characters/seer-chibi.png",
-      "source": "https://craftpix.net/freebies/free-seer-chibi-character-sprites/",
-      "license": "CraftPix free license (not CC0; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
-      "required": false
+      "path": "kenney_pixel-platformer/characters.png",
+      "source": "https://kenney.nl/assets/pixel-platformer",
+      "license": "CC0 1.0 Universal (public domain; redistributable — committed to this MIT tree)",
+      "required": true
     },
     {
-      "path": "enemies/fantasy-enemies.png",
-      "source": "https://craftpix.net/freebies/free-fantasy-enemies-pixel-art-sprite-pack/",
-      "license": "CraftPix free license (not CC0; NOT redistributable - never commit art files to this MIT tree without a verified redistributable license)",
+      "path": "kenney_pixel-platformer/backgrounds.png",
+      "source": "https://kenney.nl/assets/pixel-platformer",
+      "license": "CC0 1.0 Universal (public domain; redistributable — committed to this MIT tree)",
+      "required": true
+    },
+    {
+      "path": "fonts/PressStart2P-Regular.ttf",
+      "source": "https://fonts.google.com/specimen/Press+Start+2P",
+      "license": "SIL Open Font License 1.1 (redistributable with attribution; see assets/fonts/OFL.txt)",
+      "required": true
+    },
+    {
+      "path": "dropin/README.txt",
+      "source": "owner-provided art (e.g. https://craftpix.net freebies — account download, NOT redistributable)",
+      "license": "Owner ruling 2026-11-03: licensing policy defers to the owner; non-redistributable packs stay OPTIONAL and are never committed. Drop files here locally to override shipped art.",
       "required": false
     }
   ]

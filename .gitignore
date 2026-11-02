@@ -8,4 +8,7 @@ assets/*.zip
 assets/*.psd
 assets/*.ai
 assets/*.eps
+# Owner-supplied overrides stay local (see assets/dropin/README.txt).
+assets/dropin/*
+!assets/dropin/README.txt
 .DS_Store

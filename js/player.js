@@ -67,7 +67,15 @@ export class Player extends Entity {
         this.reachedPortal = true;
     }
 
-    draw(ctx) {
+    // Optional sprite layer: when loaded, the Kenney astronaut stands in
+    // for the placeholder rectangle (feet-anchored, facing-aware). `squash`
+    // compresses only the drawn height on landing — never the hitbox.
+    draw(ctx, sprites = null, squash = 1) {
+        if (sprites && sprites.ready()) {
+            sprites.drawPlayer(ctx, this, squash);
+            return;
+        }
+
         // Draw player as blue rectangle (fallback placeholder)
         ctx.fillStyle = '#0066ff';
         ctx.fillRect(this.x, this.y, this.width, this.height);

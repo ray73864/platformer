@@ -1,3 +1,29 @@
+/* Pixel-art theme derived from the Kenney "Pixel Platformer" sheets
+   (assets/kenney_pixel-platformer/, CC0). Press Start 2P is OFL-licensed
+   and served from a local file so double-click file:// play stays offline:
+   relative to this stylesheet, ../assets/fonts/. */
+@font-face {
+    font-family: 'Press Start 2P';
+    src: url('../assets/fonts/PressStart2P-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: block;
+}
+
+:root {
+    /* Palette sampled from the shipped art. */
+    --ink: #35231a;          /* dark brown text/outlines            */
+    --cream: #fdf6e8;        /* panel background                    */
+    --dirt: #c07a53;         /* tile body                           */
+    --dirt-deep: #7d4630;    /* tile shadow                         */
+    --grass: #3ecf6a;        /* tile cap                            */
+    --grass-deep: #1f7a44;
+    --gold: #ffd23f;         /* coins                               */
+    --amber: #f4a460;        /* legacy accent, kept for continuity  */
+    --sky: #dff6f5;
+    --scrim: rgba(26, 16, 10, 0.82);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -5,9 +31,9 @@
 }
 
 body {
-    background: #1a1a1a;
-    color: #fff;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #241610;
+    color: var(--cream);
+    font-family: 'Press Start 2P', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     overflow: hidden;
 }
 
@@ -18,7 +44,7 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    background: #87CEEB;
+    background: var(--sky);
 }
 
 #game-canvas {
@@ -32,7 +58,7 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.85);
+    background: var(--scrim);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -49,54 +75,86 @@ body {
     display: none;
 }
 
+/* Framed card every overlay presents its content on: cream face, hard
+   pixel border and drop shadow — no blur anywhere, matching the art. */
+.panel {
+    background: var(--cream);
+    color: var(--ink);
+    border: 4px solid var(--ink);
+    box-shadow: 0 8px 0 var(--dirt-deep), 0 8px 0 4px var(--ink);
+    padding: clamp(1.5rem, 4vw, 3rem) clamp(1.5rem, 5vw, 4rem);
+    max-width: min(90vw, 640px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 1.25rem;
+}
+
 .overlay h1 {
-    font-size: 3rem;
-    margin-bottom: 2rem;
-    color: #f4a460;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    font-size: clamp(1.1rem, 3.5vw, 2rem);
+    line-height: 1.5;
+    color: var(--grass-deep);
+    text-shadow: 2px 2px 0 var(--gold);
 }
 
 .overlay h2 {
-    font-size: 2.5rem;
-    margin-bottom: 1rem;
-    color: #f4a460;
+    font-size: clamp(1rem, 3vw, 1.6rem);
+    line-height: 1.5;
+    color: var(--dirt-deep);
 }
 
 .overlay p {
-    font-size: 1.2rem;
-    margin-bottom: 2rem;
-    color: #ddd;
+    font-size: 0.85rem;
+    line-height: 1.8;
+    color: var(--ink);
 }
 
 button {
-    padding: 12px 32px;
-    font-size: 1.2rem;
-    background: #f4a460;
-    color: #1a1a1a;
-    border: none;
-    border-radius: 8px;
+    padding: 14px 28px;
+    min-height: 44px; /* WCAG 2.5.5 touch target */
+    font-family: inherit;
+    font-size: 0.8rem;
+    background: var(--gold);
+    color: var(--ink);
+    border: 3px solid var(--ink);
+    box-shadow: 0 4px 0 var(--ink);
     cursor: pointer;
-    transition: transform 0.1s, background 0.2s;
+    transition: transform 0.06s, box-shadow 0.06s, background 0.15s;
 }
 
 button:hover {
-    background: #e89450;
-    transform: scale(1.05);
+    background: #ffe27a;
 }
 
 button:active {
-    transform: scale(0.95);
+    transform: translateY(4px);
+    box-shadow: 0 0 0 var(--ink);
+}
+
+/* Secondary actions read quieter than the primary CTA of each screen. */
+#quit-menu-btn,
+#restart-level-btn {
+    background: var(--cream);
+    color: var(--ink);
+}
+
+#quit-menu-btn:hover,
+#restart-level-btn:hover {
+    background: #efe3cd;
 }
 
 /* Stacked overlay controls (pause menu) need vertical rhythm; single-button
    overlays are unaffected. */
 .overlay button + button {
-    margin-top: 1rem;
+    margin-top: 0.25rem;
 }
 
 .overlay .pause-hint {
-    margin: 2rem 0 0;
-    font-size: 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.6rem;
+    line-height: 1.8;
+    color: var(--dirt-deep);
 }
 
 /* Loop-error notice (see UI.showErrorMessage). Above every overlay. */
@@ -105,11 +163,13 @@ button:active {
     top: 12%;
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(178, 34, 34, 0.92);
+    background: #b3261e;
     color: #fff;
-    padding: 12px 24px;
-    border-radius: 8px;
-    font-size: 1.1rem;
+    border: 3px solid var(--ink);
+    box-shadow: 0 4px 0 var(--ink);
+    padding: 14px 24px;
+    font-size: 0.75rem;
+    line-height: 1.6;
     z-index: 20;
 }
 
@@ -117,17 +177,40 @@ button:active {
    WCAG 2.4.7): the UA default outline is unreliable on this palette. */
 button:focus-visible {
     outline: 3px solid #ffffff;
-    outline-offset: 2px;
+    outline-offset: 3px;
 }
 
 #hud {
     position: absolute;
-    top: 20px;
-    left: 20px;
+    top: 16px;
+    left: 16px;
     display: flex;
-    gap: 2rem;
-    font-size: 1.2rem;
-    font-weight: bold;
+    gap: 0.75rem;
+    align-items: center;
     z-index: 5;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* HUD chips: opaque tabs so the counters stay readable over any sky theme
+   or parallax strip (the old white-on-sky text vanished on pale skies). */
+#hud > span,
+#hud > button {
+    background: var(--scrim);
+    color: var(--cream);
+    border: 3px solid var(--ink);
+    box-shadow: 0 3px 0 rgba(26, 16, 10, 0.6);
+    padding: 10px 14px;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+}
+
+#hud > button {
+    background: var(--gold);
+    color: var(--ink);
+    font-size: 0.65rem;
+    min-height: 40px;
+    padding: 8px 16px;
+}
+
+#hud > button:hover {
+    background: #ffe27a;
 }

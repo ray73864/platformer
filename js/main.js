@@ -7,6 +7,8 @@ import { UI } from './ui.js';
 import { COIN_POINTS } from './collectibles.js';
 import { Difficulty } from './difficulty.js';
 import { Timer } from './timer.js';
+import { Sprites } from './sprites.js';
+import { spawnBurst, stepParticles, drawParticles } from './particles.js';
 
 // Game constants
 export const TILE_SIZE = 32;
@@ -99,6 +101,16 @@ export class Game {
         this.timer = new Timer(60);
         this.timerActive = false;
 
+        // Sprite layer (Kenney CC0 sheets). Never blocks: draws fall back to
+        // flat shapes until (and unless) every sheet has loaded.
+        this.sprites = new Sprites();
+        // Game-feel state: coin/death sparks, death screen-shake, landing
+        // squash. All visual-only — physics and hitboxes are untouched.
+        this.particles = [];
+        this.shakeTime = 0;
+        this.squashTimer = 0;
+        this._prevGrounded = true;
+
         // Game state
         this.state = STATE.MENU;
         this.level = null;
@@ -156,6 +168,9 @@ export class Game {
         // why scale() must be re-applied after every resize and does not
         // stack across resizes.
         this.ctx.scale(dpr, dpr);
+        // Nearest-neighbour scaling for the pixel-art sheets (and crisp
+        // fallback shapes): bilinear filtering would smear 18px tiles.
+        this.ctx.imageSmoothingEnabled = false;
 
         // The camera works in CSS pixels; keep its viewport current so the
         // follow/clamp math matches the resized window. Guard for the first
@@ -474,6 +489,15 @@ export class Game {
 
     handleGameOver() {
         this.setState(STATE.GAME_OVER);
+        // Death feedback (visual-only): a short camera shake plus a red
+        // burst at the player so the moment of loss is unmistakable.
+        this.shakeTime = 0.35;
+        if (this.player) {
+            spawnBurst(this.particles,
+                this.player.x + this.player.width / 2,
+                this.player.y + this.player.height / 2,
+                '#ff5a5a', 16);
+        }
         this.ui.setPauseEnabled(false);
         // Single game-over presentation path: UI.showGameOver writes the
         // #final-score node and reveals the overlay.
@@ -506,6 +530,14 @@ export class Game {
     }
 
     update(dt) {
+        // Visual-only clocks run in every state: sprites animate behind the
+        // overlays, particles finish their bursts, and the death shake plays
+        // out on the GAME_OVER screen.
+        this.sprites.advance(dt);
+        stepParticles(this.particles, dt);
+        if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - dt);
+        if (this.squashTimer > 0) this.squashTimer = Math.max(0, this.squashTimer - dt);
+
         if (this.state === STATE.PLAYING) {
             // Run clock first: a tick that crosses zero is death before any
             // other outcome of the same frame. The PLAYING-only gate means
@@ -534,6 +566,12 @@ export class Game {
             this.coyoteTimer = this.player.grounded
                 ? COYOTE_TIME
                 : this.coyoteTimer - dt;
+
+            // Landing squash edge (visual-only): fire on air-to-ground.
+            if (this.player.grounded && !this._prevGrounded) {
+                this.squashTimer = 0.12;
+            }
+            this._prevGrounded = this.player.grounded;
 
             // Consume a buffered jump press as soon as the player is grounded.
             if (this.jumpBufferTimer > 0) {
@@ -575,6 +613,12 @@ export class Game {
             // length can wrap the score into negative territory.
             const collectedCoins = this.collectibles.checkCollection(this.player);
             if (collectedCoins > 0) {
+                // Sparkle at the player: pickups read as events, not silent
+                // counter bumps. Gold matches the coin sprite.
+                spawnBurst(this.particles,
+                    this.player.x + this.player.width / 2,
+                    this.player.y + this.player.height / 2,
+                    '#ffd23f', 12);
                 this.score = Math.min(
                     this.score + collectedCoins * COIN_POINTS,
                     Number.MAX_SAFE_INTEGER
@@ -662,7 +706,10 @@ export class Game {
     }
 
     draw() {
-        // Clear canvas
+        const sprites = this.sprites.ready() ? this.sprites : null;
+
+        // Clear canvas (legacy sky colour; themed parallax paints over it
+        // when sheets are loaded).
         this.ctx.fillStyle = '#87CEEB';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -671,14 +718,37 @@ export class Game {
             this.state === STATE.PAUSED) {
             this.ctx.save();
 
+            const viewW = window.innerWidth;
+            const viewH = window.innerHeight;
+            if (sprites) {
+                // Screen y of the world floor: screenY = worldY + camera.y.
+                const worldBottom = this.level.height * this.level.tileSize + this.camera.y;
+                sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottom);
+            }
+
+            // Death screen-shake: a decaying random offset on the camera
+            // only — physics and hitboxes never see it.
+            let shakeX = 0;
+            let shakeY = 0;
+            if (this.shakeTime > 0) {
+                const mag = 9 * (this.shakeTime / 0.35);
+                shakeX = (Math.random() * 2 - 1) * mag;
+                shakeY = (Math.random() * 2 - 1) * mag;
+            }
+
             // Apply camera transform (camera.y is negative of the world-top offset)
-            this.ctx.translate(-this.camera.x, this.camera.y);
+            this.ctx.translate(-this.camera.x + shakeX, this.camera.y + shakeY);
 
-            // Draw level
-            this.level.draw(this.ctx);
+            // Draw level (terrain comes from the sprite layer's culled grid
+            // pass; level.draw owns entities either way)
+            if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, viewW, viewH);
+            this.level.draw(this.ctx, sprites);
 
-            // Draw player
-            this.player.draw(this.ctx);
+            // Draw player (landing squash compresses height only)
+            const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;
+            this.player.draw(this.ctx, sprites, squash);
+
+            if (this.particles.length) drawParticles(this.ctx, this.particles);
 
             this.ctx.restore();
         }
