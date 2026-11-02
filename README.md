@@ -35,6 +35,17 @@ bun install
 
 ### Running
 
+**Double-click `index.html`** — the game runs straight from the filesystem
+(no server, no install). This works because `index.html` loads
+`dist/bundle.js`, a classic IIFE bundle committed alongside the source.
+Browsers CORS-check `<script type="module">` even from `file://` (the page
+origin is `null`), so the ES-module sources under `js/` cannot be the entry.
+After editing anything in `js/`, rebuild with `bun run build` — the E2E
+suite (`test:e2e` / `test:all`) rebuilds automatically, so a stale bundle
+only affects direct file:// play.
+
+Or serve it locally:
+
 ```bash
 bun run start
 ```
@@ -58,6 +69,10 @@ The E2E suite requires the [agent-browser](https://www.npmjs.com/package/agent-b
 ```bash
 bun run build
 ```
+
+Bundles the `js/` ES modules into `dist/bundle.js` as a classic IIFE
+(`--format=iife`) — that format is what makes file:// double-click play
+possible (see Running above) — after verifying asset manifest entries.
 
 ### Linting and Formatting
 

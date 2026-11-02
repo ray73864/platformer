@@ -1,5 +1,9 @@
 node_modules/
-dist/
+# dist/ (not dist/) so the negation below can re-include the runtime bundle:
+# index.html loads dist/bundle.js as a classic script — double-clicking the
+# page must work on a fresh checkout, so the bundle ships with the source.
+dist/*
+!dist/bundle.js
 assets/*.zip
 assets/*.psd
 assets/*.ai

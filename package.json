@@ -8,13 +8,13 @@
   "scripts": {
     "start": "bunx serve -l tcp://127.0.0.1:3000 .",
     "test": "bun test tests/unit tests/integration",
-    "test:e2e": "bun test tests/e2e",
-    "test:all": "bun test",
+    "test:e2e": "bun run build && bun test tests/e2e",
+    "test:all": "bun run build && bun test",
     "test:watch": "bun test --watch tests/unit tests/integration",
     "test:coverage": "bun test --coverage tests/unit tests/integration",
     "lint": "bunx eslint js/ tests/ scripts/",
     "format": "bunx prettier --write js/ css/ index.html",
-    "build": "bun run verify && bun build --target=browser --outfile=dist/bundle.js js/main.js",
+    "build": "bun run verify && bun build --target=browser --format=iife --outfile=dist/bundle.js js/main.js",
     "verify": "bun scripts/verify-assets.js"
   },
   "keywords": [

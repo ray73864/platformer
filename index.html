@@ -63,6 +63,13 @@
         <div id="error-message" class="hidden" role="alert"></div>
     </div>
 
-    <script type="module" src="js/main.js"></script>
+    <!-- Classic (non-module) script by necessity: browsers CORS-check
+         <script type="module"> even from file://, where the page origin is
+         null — a module entry makes double-clicking index.html fail with
+         "Cross origin requests are only supported for...". The bundle is an
+         IIFE built from the ES-module sources by `bun run build` (js/ stays
+         zero-dependency ESM; tests import it directly). Rebuild after any
+         js/ change; committed here so a fresh checkout plays by double-click. -->
+    <script src="./dist/bundle.js" defer></script>
 </body>
 </html>
