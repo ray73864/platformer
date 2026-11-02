@@ -132,6 +132,9 @@ export class Game {
         // Game state
         this.state = STATE.MENU;
         this.level = null;
+        // Fresh per-run seed for deterministic level layouts (see seedFor);
+        // startGame re-rolls it for each new run.
+        this.runSeed = 1;
         this.player = null;
         // Per-level element systems: assigned from the Level's getters in
         // startLevel(), null until a level exists (MENU stays safe because
@@ -365,6 +368,9 @@ export class Game {
         // if generation exhausts and fails, a GAME_COMPLETE/GAME_OVER screen
         // keeps its state and overlay instead of being stranded over zeroed
         // run data.
+        // Fresh layout seed for this run: retries replay its levels, Play
+        // Again does not. Rolled before construction so level 1 uses it.
+        this.runSeed = (Math.random() * 0xffffffff) >>> 0;
         const level = this.tryConstructLevel(1);
         if (!level) return false;
         this.score = 0;
@@ -384,14 +390,21 @@ export class Game {
     // entries catch here: one inline re-attempt — a full generation costs a
     // few ms — absorbs transient exhaustion; on second failure the game keeps
     // its current state and overlay intact and the player gets a message.
+    // Deterministic per-level seed: retrying or error-recovering a level
+    // rebuilds the exact map you died on (dying to reroll for a friendier
+    // layout is not a strategy). New runs roll a fresh runSeed in startGame.
+    seedFor(levelNumber) {
+        return (this.runSeed + Math.imul(levelNumber, 0x9E3779B1)) >>> 0;
+    }
+
     tryConstructLevel(levelNumber) {
         try {
-            return new Level(levelNumber, TILE_SIZE);
+            return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
         } catch (first) {
             console.error('Level generation failed; re-attempting once:', first);
         }
         try {
-            return new Level(levelNumber, TILE_SIZE);
+            return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
         } catch (second) {
             console.error('Level generation failed again:', second);
             this.ui.showErrorMessage('Could not prepare that level — try again.');
@@ -404,7 +417,7 @@ export class Game {
         // throws, the game keeps its previous state and system references
         // instead of being left PLAYING with a null/stale level, where the
         // loop's catch would log per-frame errors forever.
-        const level = new Level(this.currentLevel, TILE_SIZE);
+        const level = new Level(this.currentLevel, TILE_SIZE, this.seedFor(this.currentLevel));
         this.publishLevel(level);
     }
 
@@ -480,9 +493,9 @@ export class Game {
         // messages the player on persistent failure.
         const level = this.tryConstructLevel(this.currentLevel);
         if (!level) return;
-        // Roll the score back to the level-start snapshot first: the level
-        // regenerates on restart, so keeping mid-level pickups would let
-        // repeated die-and-retry runs farm coins.
+        // Roll the score back to the level-start snapshot first: the replayed
+        // level still holds every coin, so keeping mid-level pickups would
+        // let a die-and-retry run collect them twice.
         this.score = this.levelStartScore;
         // A fresh attempt gets a fresh clock: without this, retrying after a
         // time-out would kill the player on the very next tick.
@@ -723,7 +736,7 @@ export class Game {
                     // double-advancing via the stale portal flag.
                     const next = this.currentLevel + 1;
                     try {
-                        const level = new Level(next, TILE_SIZE);
+                        const level = new Level(next, TILE_SIZE, this.seedFor(next));
                         this.currentLevel = next;
                         this.publishLevel(level);
                         this.ui.hideOverlay('level-complete-screen');
@@ -877,7 +890,8 @@ export class Game {
             // Construct before publishing (same discipline as startGame): if
             // generation throws, fall through to the MENU handoff rather than
             // adopting a half-built level.
-            const level = new Level(this.currentLevel, TILE_SIZE);
+            const level = new Level(this.currentLevel, TILE_SIZE,
+                this.seedFor(this.currentLevel));
             this.ui.showErrorMessage('Something went wrong — recovering…');
             // Recovery can fire while PAUSED (draw() runs inside the loop's
             // try during pause), and publishLevel flips straight to PLAYING:

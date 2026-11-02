@@ -575,9 +575,19 @@
       return "right";
     return ["right", "left", "vertical"][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
   }
-  function shuffle(items) {
+  function makeRng(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = s + 1831565813 >>> 0;
+      let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function shuffle(items, rng = Math.random) {
     for (let i = items.length - 1;i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rng() * (i + 1));
       [items[i], items[j]] = [items[j], items[i]];
     }
     return items;
@@ -662,9 +672,10 @@
     return reachable;
   }
   class Level {
-    constructor(levelNumber, tileSize) {
+    constructor(levelNumber, tileSize, seed) {
       this.levelNumber = levelNumber;
       this.tileSize = tileSize;
+      this.rng = makeRng(seed === undefined ? Math.random() * 4294967295 >>> 0 : seed >>> 0);
       this.direction = directionForLevel(levelNumber);
       if (this.direction === "vertical") {
         this.width = VERTICAL_WIDTH;
@@ -750,14 +761,14 @@
       }
       this.pathCells = new Set;
       let x = Math.floor(w / 2);
-      let dir = Math.random() < 0.5 ? 1 : -1;
+      let dir = this.rng() < 0.5 ? 1 : -1;
       for (let row = h - 4;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-        let c = x + dir * (Math.random() < 0.4 ? 2 : 1);
+        let c = x + dir * (this.rng() < 0.4 ? 2 : 1);
         if (c < 1 || c > w - 2) {
           dir = -dir;
           c = x + dir;
         }
-        const ext = 2 + Math.floor(Math.random() * 4);
+        const ext = 2 + Math.floor(this.rng() * 4);
         const lo = dir === 1 ? c : c - ext;
         const hi = dir === 1 ? c + ext : c;
         for (let cx = Math.max(0, lo);cx <= Math.min(w - 1, hi); cx++) {
@@ -772,17 +783,15 @@
     }
     generatePlatforms(tiles) {
       const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
-      const difficulty = this.levelNumber;
-      const maxGap = isPhase2 ? 3 : 2;
-      const maxRise = 1;
-      const maxDrop = isPhase2 ? 3 : 2;
-      const gapChance = isPhase2 ? 0.22 + 0.02 * (this.levelNumber - 4) : 0.18 + 0.04 * difficulty;
+      const maxGap = this.levelNumber >= 3 ? 3 : 2;
+      const gapChance = isPhase2 ? 0.22 + 0.02 * (this.levelNumber - 4) : 0.18 + 0.04 * this.levelNumber;
+      let segRemaining = 0;
       let currentY = this.height - 3;
       let gapStreak = 0;
       for (let x = 0;x < this.width; x++) {
         const isSpawnZone = x < 6;
         const isEndZone = x >= this.width - 5;
-        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && Math.random() < gapChance) {
+        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && segRemaining === 0 && this.rng() < gapChance) {
           gapStreak++;
           continue;
         }
@@ -790,10 +799,23 @@
         gapStreak = 0;
         if (isSpawnZone) {
           currentY = this.height - 3;
+          segRemaining = 0;
+        } else if (segRemaining > 0) {
+          segRemaining--;
         } else {
-          const minDelta = resumedAfterWideGap ? 0 : -maxRise;
-          const delta = Math.floor(Math.random() * (maxDrop - minDelta + 1)) + minDelta;
-          currentY = Math.min(this.height - 3, Math.max(3, currentY + delta));
+          const atTop = currentY <= 3;
+          const atFloor = currentY >= this.height - 3;
+          let step;
+          if (resumedAfterWideGap)
+            step = 1;
+          else if (atTop)
+            step = 1;
+          else if (atFloor)
+            step = -1;
+          else
+            step = this.rng() < 0.55 ? 1 : -1;
+          currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
+          segRemaining = 1 + Math.floor(this.rng() * 4);
         }
         for (let y = currentY;y < this.height; y++) {
           tiles[y][x] = 1;
@@ -872,7 +894,7 @@
           candidates.push({ x, y });
         }
       }
-      shuffle(candidates);
+      shuffle(candidates, this.rng);
       const headroom = this.direction === "vertical";
       const spawn = this.canonicalSpawnTile();
       const placementSafe = () => {
@@ -941,7 +963,7 @@
           }
         }
       }
-      shuffle(candidates);
+      shuffle(candidates, this.rng);
       let placed = 0;
       for (const c of candidates) {
         if (placed >= target)
@@ -976,7 +998,7 @@
       if (candidates.length === 0) {
         return null;
       }
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      return candidates[Math.floor(this.rng() * candidates.length)];
     }
     extractPlatforms() {
       const platforms = [];
@@ -1017,7 +1039,7 @@
         const y = Math.floor(key / this.width);
         candidates.push({ x, y });
       }
-      shuffle(candidates);
+      shuffle(candidates, this.rng);
       const addCoin = (x, y) => {
         const key = y * this.width + x;
         if (used.has(key))
@@ -1692,6 +1714,7 @@
       this._prevGrounded = true;
       this.state = STATE.MENU;
       this.level = null;
+      this.runSeed = 1;
       this.player = null;
       this.enemyManager = null;
       this.collectibles = null;
@@ -1828,6 +1851,7 @@
       this.returnToMenu();
     }
     startGame() {
+      this.runSeed = Math.random() * 4294967295 >>> 0;
       const level = this.tryConstructLevel(1);
       if (!level)
         return false;
@@ -1839,14 +1863,17 @@
       this.ui.hideOverlay("menu-screen");
       return true;
     }
+    seedFor(levelNumber) {
+      return this.runSeed + Math.imul(levelNumber, 2654435761) >>> 0;
+    }
     tryConstructLevel(levelNumber) {
       try {
-        return new Level(levelNumber, TILE_SIZE);
+        return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
       } catch (first) {
         console.error("Level generation failed; re-attempting once:", first);
       }
       try {
-        return new Level(levelNumber, TILE_SIZE);
+        return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
       } catch (second) {
         console.error("Level generation failed again:", second);
         this.ui.showErrorMessage("Could not prepare that level — try again.");
@@ -1854,7 +1881,7 @@
       }
     }
     startLevel() {
-      const level = new Level(this.currentLevel, TILE_SIZE);
+      const level = new Level(this.currentLevel, TILE_SIZE, this.seedFor(this.currentLevel));
       this.publishLevel(level);
     }
     publishLevel(level) {
@@ -2011,7 +2038,7 @@
           } else {
             const next = this.currentLevel + 1;
             try {
-              const level = new Level(next, TILE_SIZE);
+              const level = new Level(next, TILE_SIZE, this.seedFor(next));
               this.currentLevel = next;
               this.publishLevel(level);
               this.ui.hideOverlay("level-complete-screen");
@@ -2104,7 +2131,7 @@
       this._recoveryAttempted = true;
       console.error("Attempting recovery from repeated game loop errors");
       try {
-        const level = new Level(this.currentLevel, TILE_SIZE);
+        const level = new Level(this.currentLevel, TILE_SIZE, this.seedFor(this.currentLevel));
         this.ui.showErrorMessage("Something went wrong — recovering…");
         this.ui.blurPauseControls();
         this.ui.hideOverlay("pause-screen");

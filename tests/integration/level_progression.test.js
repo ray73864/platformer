@@ -144,3 +144,29 @@ test("vertical levels leave the horizontal size ramp, so tier checks must use ho
     expect(vertical.direction).toBe('vertical');
     expect([vertical.width, vertical.height]).toEqual([15, 24]);
 });
+
+test("retry replays the exact level layout the player died on", () => {
+    const game = startPlaying();
+    const before = JSON.stringify(game.level.tiles);
+
+    game.handleGameOver();
+    expect(game.state).toBe(STATE.GAME_OVER);
+    document.getElementById('retry-btn').click();
+
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(JSON.stringify(game.level.tiles)).toBe(before);
+});
+
+test("a new run rolls fresh layouts", () => {
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    const first = JSON.stringify(game.level.tiles);
+
+    document.getElementById('play-again-btn')?.click(); // hidden; direct call instead
+    game.startGame();
+
+    // Two independent 32-bit seeds: identical level-1 maps would be a
+    // 1-in-4-billion coincidence, not behaviour.
+    expect(JSON.stringify(game.level.tiles)).not.toBe(first);
+});

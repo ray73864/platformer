@@ -173,6 +173,7 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
         SESSION,
         `(() => { const g = window.game;
                   localStorage.removeItem('platformerHighScore');
+                  g.runSeed = (Math.random() * 0xffffffff) >>> 0;
                   g.currentLevel = 15; g.score = 250; g.startLevel();
                   return { timerHidden: document.getElementById('timer-display')
                               .classList.contains('hidden'),
@@ -213,7 +214,9 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
                       return true; })()`
         );
         if (!dropped) {
-            abEvalJSON(SESSION, `(() => { window.game.startLevel(); return true; })()`);
+            abEvalJSON(SESSION, `(() => { const g = window.game;
+                g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+                g.startLevel(); return true; })()`);
             continue;
         }
         abWaitFn(

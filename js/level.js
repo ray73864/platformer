@@ -31,10 +31,24 @@ function directionForLevel(levelNumber) {
     return ['right', 'left', 'vertical'][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
 }
 
+// Seeded PRNG (mulberry32): a Level built with the same seed replays
+// identically, so retrying a level re-runs the map you died on instead of
+// rerolling for a friendier generation.
+function makeRng(seed) {
+    let s = seed >>> 0;
+    return function () {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 // In-place Fisher-Yates shuffle: bounded, no unbounded random retry loops.
-function shuffle(items) {
+function shuffle(items, rng = Math.random) {
     for (let i = items.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(rng() * (i + 1));
         [items[i], items[j]] = [items[j], items[i]];
     }
     return items;
@@ -221,9 +235,14 @@ export function canReach(
 }
 
 export class Level {
-    constructor(levelNumber, tileSize) {
+    constructor(levelNumber, tileSize, seed) {
         this.levelNumber = levelNumber;
         this.tileSize = tileSize;
+        // Seeded when given (Game passes runSeed-per-level so retries are
+        // exact replays); unseeded callers keep fresh random maps.
+        this.rng = makeRng(seed === undefined
+            ? (Math.random() * 0xffffffff) >>> 0
+            : seed >>> 0);
 
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
@@ -421,9 +440,9 @@ export class Level {
         // off the side walls; the constructor's BFS stays the safety net.
         this.pathCells = new Set();
         let x = Math.floor(w / 2); // current standing column
-        let dir = Math.random() < 0.5 ? 1 : -1;
+        let dir = this.rng() < 0.5 ? 1 : -1;
         for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-            let c = x + dir * (Math.random() < 0.4 ? 2 : 1);
+            let c = x + dir * (this.rng() < 0.4 ? 2 : 1);
             if (c < 1 || c > w - 2) {
                 // Bounce off the wall; the flipped step always fits since
                 // every standing column stays inside [1, w-2].
@@ -432,7 +451,7 @@ export class Level {
             }
             // Decorative forward run (>= 2 tiles): gives the ledge body a
             // contiguous top at least 3 columns wide for enemy patrols.
-            const ext = 2 + Math.floor(Math.random() * 4);
+            const ext = 2 + Math.floor(this.rng() * 4);
             const lo = dir === 1 ? c : c - ext;
             const hi = dir === 1 ? c + ext : c;
             for (let cx = Math.max(0, lo); cx <= Math.min(w - 1, hi); cx++) {
@@ -459,21 +478,17 @@ export class Level {
 
     generatePlatforms(tiles) {
         const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
-        // The early-level ramp (levels 1-4, the only consumer below) is
-        // unchanged. The old Math.min(levelNumber, 9) clamp here claimed the
-        // game tops out at level 9 — false since the run reached FINAL_LEVEL
-        // 15, and behaviorally dead: every read of this value sits in the
-        // non-phase-2 branch where levelNumber <= 4 (backlog 1b3c51aa).
-        const difficulty = this.levelNumber;
-        // Phase 2 widens gaps and drops. Rise stays capped at 1 tile because
-        // the verified jump rise (~62px) cannot clear a 2-tile climb; the
-        // spec's "max height difference 3" is satisfied through drops.
-        const maxGap = isPhase2 ? 3 : 2;
-        const maxRise = 1;
-        const maxDrop = isPhase2 ? 3 : 2;
+        // Continuous per-level ramp: gaps widen at level 3+ and become more
+        // frequent every level within what the reachability model validates
+        // (rises stay <= 1 tile via the terrace walk; gaps stay <= 3 columns,
+        // inside the ~142px crossing range at speed 200).
+        const maxGap = this.levelNumber >= 3 ? 3 : 2;
         const gapChance = isPhase2
             ? 0.22 + 0.02 * (this.levelNumber - 4) // .24 at lvl 5 .. .32 at 9
-            : 0.18 + 0.04 * difficulty;            // shipped early-game ramp
+            : 0.18 + 0.04 * this.levelNumber;      // early-game ramp
+        // Terrain reads as designed plateaus, not per-column sawtooth noise:
+        // each elevation holds for a segment, then steps at a junction.
+        let segRemaining = 0;
 
         let currentY = this.height - 3; // Top solid row of the ground column
         let gapStreak = 0;
@@ -483,31 +498,37 @@ export class Level {
             const isEndZone = x >= this.width - 5;
 
             if (!isSpawnZone && !isEndZone && gapStreak < maxGap &&
-                Math.random() < gapChance) {
+                segRemaining === 0 && this.rng() < gapChance) {
                 gapStreak++;
-                continue; // Air column (pit); at most maxGap in a row
+                continue; // Air column (pit) at a segment edge; max maxGap in a row
             }
             const resumedAfterWideGap = gapStreak >= 2;
             gapStreak = 0;
 
             if (isSpawnZone) {
                 currentY = this.height - 3;
+                segRemaining = 0;
+            } else if (segRemaining > 0) {
+                segRemaining--; // Hold this plateau's elevation
             } else {
-                // delta > 0 lowers the surface (drop), delta < 0 raises it.
-                // Range [-maxRise, +maxDrop] keeps rises within the verified
-                // one-tile climb and drops within the band's cap. After a pit
-                // two or more columns wide the landing must sit at same-or-
-                // lower height: rise-jumps reach only dist <= 2 in the
-                // movement model (and ~62px rise against the crossing's hang
-                // time), so a column rising over a wide gap is an uncrossable
-                // wall, not terrain.
-                const minDelta = resumedAfterWideGap ? 0 : -maxRise;
-                const delta = Math.floor(
-                    Math.random() * (maxDrop - minDelta + 1)) + minDelta;
-                currentY = Math.min(
-                    this.height - 3,
-                    Math.max(3, currentY + delta)
-                );
+                // Junction: terrace one step up or down, then hold for the
+                // plateau's length. A reflecting +/-1 walk (slightly biased
+                // down so ceilings don't stick) keeps adjacent heights within
+                // the verified one-tile climb while producing terraced mesa
+                // profiles instead of floor-hugging noise. After a pit two
+                // or more columns wide the landing must sit at same-or-lower
+                // height: rise-jumps reach only dist <= 2 in the movement
+                // model, so a column rising over a wide gap is an uncrossable
+                // wall.
+                const atTop = currentY <= 3;
+                const atFloor = currentY >= this.height - 3;
+                let step;
+                if (resumedAfterWideGap) step = 1;
+                else if (atTop) step = 1;
+                else if (atFloor) step = -1;
+                else step = this.rng() < 0.55 ? 1 : -1;
+                currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
+                segRemaining = 1 + Math.floor(this.rng() * 4);
             }
 
             for (let y = currentY; y < this.height; y++) {
@@ -640,7 +661,7 @@ export class Level {
                 candidates.push({ x, y });
             }
         }
-        shuffle(candidates);
+        shuffle(candidates, this.rng);
 
         // Keep-if-harmless gate: a spike is kept only when the grid still has
         // a reachable portal-band tile after placing it. A surface spike makes
@@ -792,7 +813,7 @@ export class Level {
                 }
             }
         }
-        shuffle(candidates);
+        shuffle(candidates, this.rng);
 
         let placed = 0;
         for (const c of candidates) {
@@ -841,7 +862,7 @@ export class Level {
         if (candidates.length === 0) {
             return null;
         }
-        return candidates[Math.floor(Math.random() * candidates.length)];
+        return candidates[Math.floor(this.rng() * candidates.length)];
     }
 
     extractPlatforms() {
@@ -894,7 +915,7 @@ export class Level {
         }
 
         // Fisher-Yates shuffle: bounded, no unbounded random retry loop.
-        shuffle(candidates);
+        shuffle(candidates, this.rng);
 
         const addCoin = (x, y) => {
             const key = y * this.width + x;

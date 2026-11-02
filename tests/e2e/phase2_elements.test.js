@@ -45,6 +45,10 @@ const noThreatFn = `(g, r, margin) => g.enemyManager.enemies.every(
 //   at drop time inside completeViaPortal).
 const phase2Summary = (levelNumber) => `(() => {
     const g = window.game;
+    // Levels are deterministic per run seed (retry replays the same map);
+    // the harness regenerates until a layout meets its requirement, so each
+    // attempt re-rolls the run seed first.
+    g.runSeed = (Math.random() * 0xffffffff) >>> 0;
     g.currentLevel = ${levelNumber};
     g.startLevel();
     let safeTileX = null;
@@ -92,7 +96,10 @@ function openAtLevel(levelNumber, requirement) {
 
 // In-seam regeneration used by the action-time pick loops below.
 function regenerate() {
-    abEvalJSON(SESSION, `(() => { window.game.startLevel(); return true; })()`);
+    // Re-roll the run seed: startLevel() is deterministic per seed now.
+    abEvalJSON(SESSION, `(() => { const g = window.game;
+        g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+        g.startLevel(); return true; })()`);
 }
 
 // Teleports the player, zeroing velocity and grounded alongside the

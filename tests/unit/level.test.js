@@ -742,3 +742,19 @@ test("extractCoins enforces the 20% density cap (spec §Difficulty Scaling)", ()
         console.warn = originalWarn;
     }
 });
+
+test("same seed replays the identical level; different seeds differ", () => {
+    const a = new Level(5, 32, 1234);
+    const b = new Level(5, 32, 1234);
+    const c = new Level(5, 32, 9999);
+
+    expect(JSON.stringify(a.tiles)).toBe(JSON.stringify(b.tiles));
+    expect(JSON.stringify(a.getCoins())).toBe(JSON.stringify(b.getCoins()));
+    expect(JSON.stringify(a.tiles)).not.toBe(JSON.stringify(c.tiles));
+});
+
+test("unseeded levels stay random", () => {
+    const seen = new Set();
+    for (let i = 0; i < 8; i++) seen.add(JSON.stringify(new Level(5, 32).tiles));
+    expect(seen.size).toBeGreaterThan(1);
+});
