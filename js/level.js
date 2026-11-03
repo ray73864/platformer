@@ -200,15 +200,43 @@ export function computeReachable(
 
                 let clear = true;
                 if (dist === 2) {
-                    // The intermediate column must not be a >=2-tile-high
-                    // wall: its top has to sit within jump rise (~62px). A
-                    // spike capping a one-tile riser counts as that wall:
-                    // clearing its inset core demands feet ≥60px above the
-                    // launch row, leaving ~28.6px of travel against a 56px
-                    // overlap sweep — impossible (see header).
+                    // ANY obstruction in the intermediate column at the
+                    // TARGET row blocks the hop — both orientations are
+                    // physically impossible, only by different mechanisms:
+                    //  - full riser (solid at ty AND at the launch row y):
+                    //    a >=2-tile-high wall whose top sits beyond jump
+                    //    rise (~62px); a spike capping a one-tile riser
+                    //    counts too — clearing its inset core demands feet
+                    //    ≥60px above the launch row, leaving ~28.6px of
+                    //    travel against a 56px overlap sweep (see header);
+                    //  - overhang (solid/hazard at ty, AIR at y): the
+                    //    obstruction's underside sits exactly at landing
+                    //    height while its top is a full tile (64px) above
+                    //    the launch floor — beyond the ~62.5px max rise —
+                    //    and the 32px body fills the tile, so any transit
+                    //    of the mid column at landing height ends in a
+                    //    head-bonk (vy zeroed mid-rise, physics.js) or an
+                    //    X-pin against the riser behind it. Simulation
+                    //    evidence (edgecheck sweep, 440 seeded maps): all
+                    //    729 claimed-but-impossible step-up edges share
+                    //    this signature; the isolated overhang fixture
+                    //    fails under every one of 66 input policies and
+                    //    never once passes.
+                    // Removing the old `&& solid(midX, y)` clause makes the
+                    // model strictly edge-REMOVING (more conservative), so
+                    // validated routes stay physically executable. Cost:
+                    // vertical generation retries rise ~4.5 -> ~12 attempts
+                    // on average (max observed 79 of the 200 budget, all
+                    // builds succeeding across 1600+ seeded sweeps) — still
+                    // ~1 ms per level load. A generator-side protection for
+                    // the bounced-hop overhang case (d2MidCells paint-skip)
+                    // was implemented and REMOVED: measurement showed it
+                    // starved the next landing's support cell instead
+                    // (attempts 11.77 vs 11.70 without it); do not
+                    // reintroduce it without beating the strict-rule-only
+                    // baseline.
                     const midX = x + dir;
-                    if ((solid(midX, ty) || hazard(midX, ty)) &&
-                        solid(midX, y)) {
+                    if (solid(midX, ty) || hazard(midX, ty)) {
                         clear = false;
                     }
                 }
@@ -458,11 +486,14 @@ export class Level {
         let x = Math.floor(w / 2); // current standing column
         let dir = this.rng() < 0.5 ? 1 : -1;
         for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-            let c = x + dir * (this.rng() < 0.15 ? 2 : 1);
+            let step = this.rng() < 0.15 ? 2 : 1;
+            let c = x + dir * step;
             if (c < 1 || c > w - 2) {
                 // Bounce off the wall; the flipped step always fits since
-                // every standing column stays inside [1, w-2].
+                // every standing column stays inside [1, w-2]. A bounced
+                // hop is always dist-1, so it contributes no mid cell.
                 dir = -dir;
+                step = 1;
                 c = x + dir;
             }
             // Decorative forward run (>= 2 tiles): gives the ledge body a

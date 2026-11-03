@@ -61,6 +61,7 @@
       this.onJumpCallback = null;
       this.onReleaseLeftCallback = null;
       this.onReleaseRightCallback = null;
+      this.onReleaseJumpCallback = null;
       this._abort = new AbortController;
       this.bindEvents();
     }
@@ -110,6 +111,8 @@
         this.onReleaseLeftCallback?.();
       } else if (code === "ArrowRight" || code === "KeyD") {
         this.onReleaseRightCallback?.();
+      } else if (code === "Space") {
+        this.onReleaseJumpCallback?.();
       }
     }
     isLeft() {
@@ -120,6 +123,9 @@
     }
     isJump() {
       return this.keys.has("Space");
+    }
+    isWalk() {
+      return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     }
     onMoveLeft(callback) {
       this.onMoveLeftCallback = callback;
@@ -135,6 +141,9 @@
     }
     onReleaseRight(callback) {
       this.onReleaseRightCallback = callback;
+    }
+    onReleaseJump(callback) {
+      this.onReleaseJumpCallback = callback;
     }
   }
 
@@ -242,6 +251,13 @@
 
   // js/player.js
   var PLAYER_STOP_DECEL = 2400;
+  var AIR_BRAKE_DECEL = 900;
+  var JUMP_BUFFER_TIME = 0.12;
+  var COYOTE_TIME = 0.1;
+  var COYOTE_MAX_FALL_SPEED = 120;
+  var JUMP_CUT_FACTOR = 0.45;
+  var WALK_SPEED = 110;
+  var LEDGE_FALL_SEED = 140;
 
   class Player extends Entity {
     constructor(x, y, speed, jumpForce) {
@@ -249,29 +265,69 @@
       this.speed = speed;
       this.jumpForce = jumpForce;
       this.reachedPortal = false;
+      this.jumpBufferTimer = 0;
+      this.coyoteTimer = 0;
+      this.jumpCutAvailable = false;
     }
-    update(dt, left = false, right = false) {
+    update(dt, left = false, right = false, opts = {}) {
       super.update(dt, left, right);
+      const walk = !!opts.walk && this.grounded;
       if (left && !right) {
-        this.vx = -this.speed;
+        this.vx = -(walk ? WALK_SPEED : this.speed);
       } else if (right && !left) {
-        this.vx = this.speed;
+        this.vx = walk ? WALK_SPEED : this.speed;
       } else if (this.grounded) {
         const drop = PLAYER_STOP_DECEL * dt;
         this.vx = Math.abs(this.vx) <= drop ? 0 : this.vx - Math.sign(this.vx) * drop;
+      } else {
+        const drop = AIR_BRAKE_DECEL * dt;
+        this.vx = Math.abs(this.vx) <= drop ? 0 : this.vx - Math.sign(this.vx) * drop;
+      }
+      if (this.grounded) {
+        this.coyoteTimer = COYOTE_TIME;
+      } else if (this.coyoteTimer > 0) {
+        this.coyoteTimer -= dt;
+        if (this.coyoteTimer <= 0 && this.vy >= 0) {
+          this.vy = Math.max(this.vy, LEDGE_FALL_SEED);
+        }
+      }
+      if (this.jumpBufferTimer > 0) {
+        this.jumpBufferTimer -= dt;
+        if (this.grounded)
+          this.jump();
       }
     }
-    moveLeft() {
-      this.vx = -this.speed;
+    moveLeft(walk = false) {
+      this.vx = -(walk && this.grounded ? WALK_SPEED : this.speed);
     }
-    moveRight() {
-      this.vx = this.speed;
+    moveRight(walk = false) {
+      this.vx = walk && this.grounded ? WALK_SPEED : this.speed;
     }
     stopLeft() {}
     stopRight() {}
+    pressJump() {
+      if (this.grounded || this.coyoteTimer > 0 && this.vy < COYOTE_MAX_FALL_SPEED) {
+        this.jump();
+      } else {
+        this.jumpBufferTimer = JUMP_BUFFER_TIME;
+      }
+    }
     jump() {
       this.vy = -this.jumpForce;
       this.grounded = false;
+      this.coyoteTimer = 0;
+      this.jumpBufferTimer = 0;
+      this.jumpCutAvailable = true;
+    }
+    releaseJump() {
+      if (this.vy < 0 && this.jumpCutAvailable) {
+        this.vy *= JUMP_CUT_FACTOR;
+        this.jumpCutAvailable = false;
+      }
+    }
+    cancelJumpFeel() {
+      this.jumpBufferTimer = 0;
+      this.coyoteTimer = 0;
     }
     hasReachedPortal() {
       return this.reachedPortal;
@@ -660,7 +716,7 @@
           let clear = true;
           if (dist === 2) {
             const midX = x + dir;
-            if ((solid(midX, ty) || hazard(midX, ty)) && solid(midX, y)) {
+            if (solid(midX, ty) || hazard(midX, ty)) {
               clear = false;
             }
           }
@@ -766,9 +822,11 @@
       let x = Math.floor(w / 2);
       let dir = this.rng() < 0.5 ? 1 : -1;
       for (let row = h - 4;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-        let c = x + dir * (this.rng() < 0.15 ? 2 : 1);
+        let step = this.rng() < 0.15 ? 2 : 1;
+        let c = x + dir * step;
         if (c < 1 || c > w - 2) {
           dir = -dir;
+          step = 1;
           c = x + dir;
         }
         const ext = 2 + Math.floor(this.rng() * 4);
@@ -2168,9 +2226,6 @@
   var PLAYER_SPEED = 200;
   var JUMP_FORCE = 350;
   var MAX_FALL_SPEED = 600;
-  var JUMP_BUFFER_TIME = 0.12;
-  var COYOTE_TIME = 0.1;
-  var LEDGE_FALL_SEED = 140;
   var STOMP_BOUNCE = 260;
   var FINAL_LEVEL = 15;
   var HIGH_SCORE_KEY = "platformerHighScore";
@@ -2231,8 +2286,6 @@
       this.currentLevel = 1;
       this.lastTime = 0;
       this.levelCompleteTimer = 0;
-      this.jumpBufferTimer = 0;
-      this.coyoteTimer = 0;
       this._loopErrorStreak = 0;
       this._recoveryAttempted = false;
       liveGames.add(this);
@@ -2296,18 +2349,19 @@
       this.input.onJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
           return;
-        if (this.player.grounded || this.coyoteTimer > 0) {
-          this.player.jump();
-        } else {
-          this.jumpBufferTimer = JUMP_BUFFER_TIME;
-        }
+        this.player.pressJump();
+      });
+      this.input.onReleaseJump(() => {
+        if (this.state !== STATE.PLAYING || !this.player)
+          return;
+        this.player.releaseJump();
       });
       const moveIfPlaying = (fn) => () => {
         if (this.state === STATE.PLAYING)
           fn();
       };
-      this.input.onMoveLeft(moveIfPlaying(() => this.player?.moveLeft()));
-      this.input.onMoveRight(moveIfPlaying(() => this.player?.moveRight()));
+      this.input.onMoveLeft(moveIfPlaying(() => this.player?.moveLeft(this.input.isWalk())));
+      this.input.onMoveRight(moveIfPlaying(() => this.player?.moveRight(this.input.isWalk())));
       this.input.onReleaseLeft(() => this.player?.stopLeft());
       this.input.onReleaseRight(() => this.player?.stopRight());
       window.addEventListener("keydown", (e) => {
@@ -2335,6 +2389,7 @@
     togglePause() {
       if (this.state === STATE.PLAYING) {
         this.setState(STATE.PAUSED);
+        this.player?.cancelJumpFeel();
         this.ui.showOverlay("pause-screen");
         this.ui.setPauseLabel(true);
         this.ui.focusPauseMenu();
@@ -2400,8 +2455,6 @@
       this.hazards = level.getHazards();
       this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
       this.levelStartScore = this.score;
-      this.jumpBufferTimer = 0;
-      this.coyoteTimer = 0;
       this.levelCompleteTimer = 0;
       if (!Number.isFinite(this.timer.timeRemaining) || this.timer.timeRemaining < 0 || this.timer.timeRemaining > 9999) {
         console.warn("Run clock invalid at level transition; using default", this.timer.baseTime, "seconds");
@@ -2490,31 +2543,23 @@
         }
         this.player.prevX = this.player.x;
         this.player.prevY = this.player.y;
-        this.player.update(dt, this.input.isLeft(), this.input.isRight());
+        this.player.update(dt, this.input.isLeft(), this.input.isRight(), { walk: this.input.isWalk() });
         this.physics.applyGravity(this.player, dt);
         const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
         this.physics.resolveCollisions(this.player, collisions);
-        this.coyoteTimer = this.player.grounded ? COYOTE_TIME : this.coyoteTimer - dt;
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
           if (!this.input.isLeft() && !this.input.isRight()) {
             this.player.vx = 0;
           }
-        } else if (!this.player.grounded && this._prevGrounded && this.player.vy >= 0) {
-          this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
         }
         this._prevGrounded = this.player.grounded;
-        if (this.jumpBufferTimer > 0) {
-          this.jumpBufferTimer -= dt;
-          if (this.player.grounded) {
-            this.player.jump();
-            this.jumpBufferTimer = 0;
-          }
-        }
         this.enemyManager.updateAll(dt);
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
           this.player.vy = -STOMP_BOUNCE;
+          this.player.coyoteTimer = 0;
+          this.player.jumpCutAvailable = false;
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
         }
         if (contact.deadly) {

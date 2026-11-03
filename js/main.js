@@ -29,14 +29,6 @@ const GRAVITY = 980;
 const PLAYER_SPEED = 200;
 const JUMP_FORCE = 350;
 const MAX_FALL_SPEED = 600;
-// Jump feel windows: a Space press is honoured for this long after it lands
-// (buffer), and ground contact is remembered for this long after it ends
-// (coyote), so presses straddling the grounded transition are not dropped.
-const JUMP_BUFFER_TIME = 0.12;
-const COYOTE_TIME = 0.1;
-// Downward velocity seeded when the player walks off a ledge without jumping:
-// gravity from vy=0 drifts over narrow gaps instead of dropping cleanly.
-const LEDGE_FALL_SEED = 140;
 // Upward velocity after squashing an enemy (stomp bounce): a bit under a
 // full jump so chained stomps stay skillful.
 const STOMP_BOUNCE = 260;
@@ -158,8 +150,6 @@ export class Game {
         this.currentLevel = 1;
         this.lastTime = 0;
         this.levelCompleteTimer = 0;
-        this.jumpBufferTimer = 0;
-        this.coyoteTimer = 0;
         // Loop-error recovery episode state (see _handleLoopError).
         this._loopErrorStreak = 0;
         this._recoveryAttempted = false;
@@ -266,28 +256,34 @@ export class Game {
             quitMenuBtn.blur();
         });
 
-        // Input listener.
-        // Immediate jump while grounded (or within coyote reach of the ground
-        // it just left); otherwise buffer the press so a landing inside the
-        // window still jumps. The initial-press filter lives in InputHandler
-        // (wasDown captured before keys.add), so autorepeat keydowns neither
-        // re-jump nor refresh the buffer.
+        // Input listener. Every jump press routes through Player.pressJump():
+        // immediate while grounded or inside the guarded coyote window,
+        // buffered otherwise (see player.js). The initial-press filter lives
+        // in InputHandler (wasDown captured before keys.add), so autorepeat
+        // keydowns neither re-jump nor refresh the buffer.
         // All closures gate on PLAYING: PAUSED freezes physics, and these are
         // mutation paths that bypass update()'s state gate — a Space press
         // during pause must not launch the player on resume.
         this.input.onJump(() => {
             if (this.state !== STATE.PLAYING || !this.player) return;
-            if (this.player.grounded || this.coyoteTimer > 0) {
-                this.player.jump();
-            } else {
-                this.jumpBufferTimer = JUMP_BUFFER_TIME;
-            }
+            this.player.pressJump();
+        });
+        // Variable jump height: releasing Space mid-rise shortens the hop
+        // (once per jump). Gated on PLAYING like pressJump: PAUSED freezes
+        // physics, so a keyup during pause must not mutate the frozen arc —
+        // the cut flag stays pending and applies to the next rising frame
+        // after resume, exactly like every other input path here.
+        this.input.onReleaseJump(() => {
+            if (this.state !== STATE.PLAYING || !this.player) return;
+            this.player.releaseJump();
         });
         const moveIfPlaying = (fn) => () => {
             if (this.state === STATE.PLAYING) fn();
         };
-        this.input.onMoveLeft(moveIfPlaying(() => this.player?.moveLeft()));
-        this.input.onMoveRight(moveIfPlaying(() => this.player?.moveRight()));
+        // Shift walks: the cap applies only while grounded (Player enforces),
+        // so airborne direction keys keep full speed and committed arcs.
+        this.input.onMoveLeft(moveIfPlaying(() => this.player?.moveLeft(this.input.isWalk())));
+        this.input.onMoveRight(moveIfPlaying(() => this.player?.moveRight(this.input.isWalk())));
         this.input.onReleaseLeft(() => this.player?.stopLeft());
         this.input.onReleaseRight(() => this.player?.stopRight());
 
@@ -337,6 +333,11 @@ export class Game {
     togglePause() {
         if (this.state === STATE.PLAYING) {
             this.setState(STATE.PAUSED);
+            // A buffered press or live coyote window from before the pause
+            // must not fire on resume: pause is an interruption, not a frame
+            // boundary. (Space keyups during pause are ignored outright —
+            // releaseJump is PLAYING-gated like every other input path.)
+            this.player?.cancelJumpFeel();
             this.ui.showOverlay('pause-screen');
             this.ui.setPauseLabel(true);
             // R29: focus lands inside the menu so arrow+Enter work
@@ -455,8 +456,6 @@ export class Game {
         );
         // Snapshot before any of this level's coins can be collected.
         this.levelStartScore = this.score;
-        this.jumpBufferTimer = 0;
-        this.coyoteTimer = 0;
         this.levelCompleteTimer = 0;
         // Spec §Error Handling (level transition): the run clock carries over
         // untouched, but verify the carried value survived intact; an invalid
@@ -620,8 +619,11 @@ export class Game {
             this.player.prevX = this.player.x;
             this.player.prevY = this.player.y;
 
-            // Update player
-            this.player.update(dt, this.input.isLeft(), this.input.isRight());
+            // Update player. Jump-feel timers (buffer/coyote/ledge-seed)
+            // tick inside Player.update against last frame's collision-
+            // derived grounded state; Shift caps ground speed only.
+            this.player.update(dt, this.input.isLeft(), this.input.isRight(),
+                { walk: this.input.isWalk() });
 
             // Apply physics
             this.physics.applyGravity(this.player, dt);
@@ -630,17 +632,10 @@ export class Game {
             const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
             this.physics.resolveCollisions(this.player, collisions);
 
-            // Coyote time: remember ground contact briefly after it ends, so a
-            // jump pressed just after walking off a ledge still fires.
-            this.coyoteTimer = this.player.grounded
-                ? COYOTE_TIME
-                : this.coyoteTimer - dt;
-
-            // Grounded-state edges (both visual-tuning hooks, physics-safe):
-            // air-to-ground fires the landing squash; ground-to-air without a
-            // jump (walked off a ledge) seeds a small downward velocity so
-            // the drop starts decisively instead of drifting over the gap.
-            // A jump leaves with vy < 0 and is deliberately excluded.
+            // Grounded-state edges (visual-tuning hooks, physics-safe):
+            // air-to-ground fires the landing squash. The walked-off-a-ledge
+            // drop seed now lives inside Player.update, deferred until the
+            // coyote window it waits for expires there.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
                 // Landing brake: touching down with no direction held kills
@@ -651,20 +646,8 @@ export class Game {
                 if (!this.input.isLeft() && !this.input.isRight()) {
                     this.player.vx = 0;
                 }
-            } else if (!this.player.grounded && this._prevGrounded &&
-                       this.player.vy >= 0) {
-                this.player.vy = Math.max(this.player.vy, LEDGE_FALL_SEED);
             }
             this._prevGrounded = this.player.grounded;
-
-            // Consume a buffered jump press as soon as the player is grounded.
-            if (this.jumpBufferTimer > 0) {
-                this.jumpBufferTimer -= dt;
-                if (this.player.grounded) {
-                    this.player.jump();
-                    this.jumpBufferTimer = 0;
-                }
-            }
 
             // Phase 2 elements. Death checks run in a fixed order (enemies,
             // spikes, pit) and stop the tick at the first hit, so several
@@ -676,6 +659,14 @@ export class Game {
             const contact = this.enemyManager.resolvePlayerContact(this.player);
             if (contact.stomped > 0) {
                 this.player.vy = -STOMP_BOUNCE;
+                // A stomp is a launch of its own: kill the coyote window or
+                // pressJump's coyote branch steals the input and upgrades
+                // the bounce to a full jump mid-arc, and clear the cut flag
+                // so releaseJump cannot shrink this arc — nor bank a stale
+                // availability that would clip every later stomp on the
+                // first keyup after it.
+                this.player.coyoteTimer = 0;
+                this.player.jumpCutAvailable = false;
                 spawnBurst(this.particles,
                     this.player.x + this.player.width / 2,
                     this.player.y + this.player.height,

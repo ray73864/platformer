@@ -59,6 +59,17 @@ test("Player jumps with spacebar", () => {
                   return true; })()`
     );
 
+    // ADAPTED (variable jump height): a tap now short-hops (keyup cuts rise
+    // by JUMP_CUT_FACTOR), and agent-browser cannot HOLD Space — its
+    // `keydown Space` reaches the page with EMPTY key/code (CLI limitation,
+    // verified live), so a keydown/keyup pair cannot express "held" for the
+    // spacebar. Emulate the hold by neutralising the release hook for this
+    // measurement; the tap-cut contract itself is pinned in
+    // tests/unit/player.test.js. Full-hold remains the model upper bound.
+    abEvalJSON(
+        SESSION,
+        `(() => { window.game.player.releaseJump = () => true; return true; })()`
+    );
     ab(SESSION, "press", "Space");
     // Past apex (falling), then back on the ground: both transitions complete
     // within hang time (~0.7 s), so condition waits replace fixed sleeps.

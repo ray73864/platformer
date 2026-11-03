@@ -118,6 +118,32 @@ test("held keys are released when the window loses focus", () => {
     expect(input.isRight()).toBe(false);
 });
 
+test("Shift is tracked as the walk modifier (both sides)", () => {
+    const input = new InputHandler();
+    expect(input.isWalk()).toBe(false);
+
+    input.handleKeyDown({ code: "ShiftLeft" });
+    expect(input.isWalk()).toBe(true);
+    input.handleKeyUp({ code: "ShiftLeft" });
+    input.handleKeyDown({ code: "ShiftRight" });
+    expect(input.isWalk()).toBe(true);
+
+    // Blur clears held keys like every other binding: no latched walk mode.
+    window.dispatchEvent(new Event("blur"));
+    expect(input.isWalk()).toBe(false);
+});
+
+test("jump keyup fires the release-jump callback (variable jump height)", () => {
+    const input = new InputHandler();
+    let releases = 0;
+    input.onReleaseJump(() => { releases++; });
+
+    input.handleKeyDown({ code: "Space" });
+    expect(releases).toBe(0);                       // press is not a release
+    input.handleKeyUp({ code: "Space" });
+    expect(releases).toBe(1);
+});
+
 test("Space targeting a focused button does not fire the jump callback", () => {
     // Regression for I1: a focused <button> activates on Space at keyup (UI
     // Events spec), so firing the jump callback too made one press both jump

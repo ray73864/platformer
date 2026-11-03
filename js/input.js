@@ -15,6 +15,7 @@ export class InputHandler {
         this.onJumpCallback = null;
         this.onReleaseLeftCallback = null;
         this.onReleaseRightCallback = null;
+        this.onReleaseJumpCallback = null;
 
         // One controller for every listener registered below; destroy()
         // detaches them all (owner: Game).
@@ -93,6 +94,12 @@ export class InputHandler {
             this.onReleaseLeftCallback?.();
         } else if (code === 'ArrowRight' || code === 'KeyD') {
             this.onReleaseRightCallback?.();
+        } else if (code === 'Space') {
+            // Variable jump height (see Player.releaseJump): fires on every
+            // Space keyup, including one a focused <button> also activates
+            // on — cutting a rising jump is strictly arc-shortening, so the
+            // overlap is harmless where the keydown half was not.
+            this.onReleaseJumpCallback?.();
         }
     }
 
@@ -107,6 +114,14 @@ export class InputHandler {
 
     isJump() {
         return this.keys.has('Space');
+    }
+
+    // Walk modifier (Shift, either side): no existing binding uses it —
+    // gameplay keys are arrows/WASD/Space, pause navigation is Escape plus
+    // arrows while PAUSED, so Shift is free. Blur/visibilitychange already
+    // clears the set, so a focus loss can never latch walk mode on.
+    isWalk() {
+        return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     }
 
     // Callback setters
@@ -128,5 +143,9 @@ export class InputHandler {
 
     onReleaseRight(callback) {
         this.onReleaseRightCallback = callback;
+    }
+
+    onReleaseJump(callback) {
+        this.onReleaseJumpCallback = callback;
     }
 }

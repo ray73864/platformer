@@ -111,8 +111,23 @@ test("Space after clicking the pause button jumps without re-pausing", async () 
 
     // One Space press: jumps (vy < 0 observed) and stays PLAYING — before
     // the fix this same press strobed PAUSED↔PLAYING mid-jump.
+    // ADAPTED (variable jump height): a tap's cut hop lives only ~0.3 s, so
+    // a CLI round-trip wait on `vy < 0` would race it (and agent-browser
+    // cannot hold Space — its `keydown Space` delivers empty key/code). The
+    // observation moves in-page: a sampler latches any upward velocity while
+    // the trusted press runs, keeping native button-activation semantics —
+    // the actual I1 subject — intact.
+    abEvalJSON(
+        SESSION,
+        `(() => { window.__sawJump = false;
+                  window.__jumpIv = setInterval(() => {
+                      if (window.game.player && window.game.player.vy < 0) window.__sawJump = true;
+                  }, 8);
+                  return true; })()`
+    );
     ab(SESSION, "press", "Space");
-    abWaitFn(SESSION, "window.game.player.vy < 0");
+    Bun.sleepSync(700);                             // past the tap-hop entirely
+    expect(abEvalJSON(SESSION, "(() => { clearInterval(window.__jumpIv); return window.__sawJump; })()")).toBe(true);
     expect(abEvalJSON(SESSION, "window.game.state")).toBe("PLAYING");
     waitLanded(SESSION);
     expect(abEvalJSON(SESSION, "window.game.state")).toBe("PLAYING");

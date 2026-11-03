@@ -26,6 +26,9 @@ const DT = 0.016;
 // vy with -(GRAVITY * DT) — the identical float expression — leaves the
 // player's y unchanged across the tick.
 const GRAVITY = 980;
+// Mirrors STOMP_BOUNCE in main.js (not exported): the upward velocity a
+// squashed enemy grants.
+const STOMP_BOUNCE = 260;
 const COIN_POINTS = 10; // mirrors COIN_POINTS in collectibles.js
 
 function startPlaying() {
@@ -114,6 +117,52 @@ test("an enemy overlapping the player during a PLAYING tick ends the run", () =>
 
     expect(game.state).toBe(STATE.GAME_OVER);
     expect(document.getElementById('game-over-screen').classList.contains('hidden')).toBe(false);
+});
+
+test("a stomp bounce kills the coyote window and any stale cut flag", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+
+    // Land first so the coyote window is genuinely live: update() refreshes
+    // it on every frame of ground contact, using the PREVIOUS frame's
+    // collision-derived grounded flag — so one settling tick past first
+    // contact is what actually arms it.
+    for (let i = 0; i < 120 && !game.player.grounded; i++) game.update(DT);
+    game.update(DT);
+    expect(game.player.grounded).toBe(true);
+    expect(game.player.coyoteTimer).toBeGreaterThan(0);
+
+    // Drop feet-first onto an enemy placed just below the feet: falling,
+    // previous bottom inside the stomp tolerance of the enemy's top edge
+    // (see resolvePlayerContact in enemies.js). A stale jump-cut flag from
+    // an earlier jump sits armed, as it would mid-combo.
+    game.player.y -= 64;
+    game.player.grounded = false;
+    game.player.vy = 200;
+    game.player.jumpCutAvailable = true;
+    game.enemyManager.addEnemy(
+        game.player.x, game.player.y + game.player.height - 12,
+        game.player.x - 50, game.player.x + 100
+    );
+
+    game.update(DT);
+
+    // Stomped, not died: the bounce replaces the coyote window (otherwise
+    // pressJump's coyote branch re-fires a full jump on top of it — a
+    // double-launch above the modelled rise) and clears the cut flag
+    // (otherwise releaseJump shrinks this arc, and a banked availability
+    // clips every later stomp on its first keyup).
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(game.player.vy).toBe(-STOMP_BOUNCE);
+    expect(game.player.coyoteTimer).toBe(0);
+    expect(game.player.jumpCutAvailable).toBe(false);
+
+    // A press immediately after the bounce must NOT launch: the window is
+    // dead, so it merely buffers for the next landing. Pre-fix, the live
+    // coyote timer turned this into vy = -jumpForce stacked on the bounce.
+    game.player.pressJump();
+    expect(game.player.vy).toBe(-STOMP_BOUNCE);
+    expect(game.player.jumpBufferTimer).toBeGreaterThan(0);
 });
 
 test("spike core contact during a PLAYING tick ends the run", () => {

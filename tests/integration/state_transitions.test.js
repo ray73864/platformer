@@ -458,9 +458,11 @@ test("input while PAUSED does not mutate the player", () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyA' }));
 
     // PAUSED freezes physics: jump/move callbacks must not write velocity,
-    // clear grounded, or arm the jump buffer.
+    // clear grounded, or arm the jump buffer. (ADAPTED: the buffer/coyote
+    // timers moved from Game onto Player in the controls-precision pass —
+    // same assertion, new home.)
     expect(game.player.vx).toBe(vx);
     expect(game.player.vy).toBe(vy);
     expect(game.player.grounded).toBe(grounded);
-    expect(game.jumpBufferTimer).toBe(0);
+    expect(game.player.jumpBufferTimer).toBe(0);
 });

@@ -441,6 +441,59 @@ test("BFS refuses step-up jumps over a spike-capped riser", () => {
     expect(canReach(makeGrid(false), width, height, spawnTile, portalTile)).toBe(true);
 });
 
+test("dist-2 step-up rejects an overhang at the intermediate column", () => {
+    // The mid-column rule blocks ANY obstruction at the hop's TARGET row,
+    // in both orientations. The overhang orientation — solid AT ty, air at
+    // the launch row — used to pass as clear: its underside sits exactly
+    // at landing height while its top is a full tile (64px) above the
+    // launch floor, beyond the ~62.5px max rise, and the 32px body fills
+    // the tile, so transit always ends in a head-bonk (vy zeroed mid-rise)
+    // or an X-pin against the riser behind it. Simulation evidence
+    // (edgecheck sweep, 440 seeded maps): all 729 claimed-but-impossible
+    // step-up edges share this signature; the isolated fixture fails under
+    // every one of 66 input policies and never once passes. Minimal repro
+    // Level(7,32,7039) edge (11,6)->(13,5).
+    const width = 6;
+    const height = 6;
+
+    const makeGrid = (overhang) => {
+        const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+        // Launch shelf: columns 0-1 stand on row 5, standing row is 4.
+        tiles[5][0] = 1;
+        tiles[5][1] = 1;
+        // Landing block: column 3 stands on row 4, standing row is 3.
+        tiles[4][3] = 1;
+        if (overhang) {
+            // Intermediate column 2: solid at the target row 3, AIR at the
+            // launch row 4 (and no support beneath, so column 2 itself is
+            // unreachable transit — the dist-2 hop is the ONLY modelled
+            // route to the landing cell).
+            tiles[3][2] = 1;
+        }
+        return tiles;
+    };
+
+    const spawnTile = { x: 1, y: 4 };
+    const landingKey = 3 * width + 3; // { x: 3, y: 3 }
+
+    // Overhang present: the fixed rule must NOT add the landing cell.
+    // Asserted in both BFS modes — the mid-column rule is independent of
+    // the vertical headroom flag, and fairness demands it in both.
+    expect(canReach(makeGrid(true), width, height, spawnTile, { x: 3, y: 3 })).toBe(false);
+    expect(computeReachable(makeGrid(true), width, height, spawnTile)
+        .has(landingKey)).toBe(false);
+    expect(computeReachable(makeGrid(true), width, height, spawnTile, true)
+        .has(landingKey)).toBe(false);
+
+    // Twin: mid column fully free at both rows — the plain one-tile climb
+    // stays modelled exactly as before.
+    expect(canReach(makeGrid(false), width, height, spawnTile, { x: 3, y: 3 })).toBe(true);
+    expect(computeReachable(makeGrid(false), width, height, spawnTile)
+        .has(landingKey)).toBe(true);
+    expect(computeReachable(makeGrid(false), width, height, spawnTile, true)
+        .has(landingKey)).toBe(true);
+});
+
 test("BFS never marks spike tiles or their tips as reachable", () => {
     const width = 14;
     const height = 8;
