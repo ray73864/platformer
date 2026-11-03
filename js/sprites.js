@@ -161,6 +161,16 @@ const TERRAIN_MATS = [
     }
 ];
 
+// Per-band metals for the moving-platform decks (index-aligned with THEMES).
+// Deliberately manufactured — flat plates, strap bands, bolts — so a deck
+// never reads as terrain at a glance; hues harmonise with each band's material
+// (steel in day daylight, brass in dusk sandstone, verdigris in jungle moss).
+const PLATFORM_METALS = [
+    { plate: '#8a97ab', plateDark: '#5d6a80', band: '#3f4a5e', bolt: '#252d3c', rim: '#c3cfdf' },
+    { plate: '#b08a5a', plateDark: '#7d5c36', band: '#57402a', bolt: '#33261a', rim: '#e8c795' },
+    { plate: '#6f9a80', plateDark: '#48705a', band: '#2f4c3e', bolt: '#182a22', rim: '#b9dcc4' }
+];
+
 // Small-pixel decor scattered on exposed grass tops. Dark greens stay below
 // the cap's luminance so tufts read as growth, not as hazards; petal colours
 // are chosen light and tiny (5px) — nothing here can obscure a tooth or a
@@ -1275,6 +1285,57 @@ export class Sprites {
                     ctx.rotate(Math.sin(clock * k + d.ph) * amp);
                     ctx.drawImage(img, -img.width / 2, -img.height + 2);
                     ctx.restore();
+                }
+            }
+        }
+    }
+
+    // Moving traversal decks: deliberately ARTIFICIAL against organic terrain
+    // — a riveted metal plank with strap bands (per-band harmonised metals),
+    // a soft two-step drop shadow beneath, and direction chevrons whose alpha
+    // tracks |vx| so motion reads at a glance. Pure vector art derived from
+    // platform state only (no clock, no RNG): replays render identical
+    // frames, and the method works headlessly (stub contexts) as well as in
+    // the browser. Drawn after tiles/props, before entities (main.js order).
+    drawMovingPlatforms(ctx, platforms, levelNumber) {
+        const m = PLATFORM_METALS[(Math.max(1, levelNumber) - 1) % THEMES.length];
+        const H = 14; // visual deck thickness; collision rect stays 1 tile tall
+        for (const p of platforms) {
+            // Soft drop shadow: two stacked translucent slabs under the deck.
+            ctx.fillStyle = 'rgba(8,12,24,0.10)';
+            ctx.fillRect(p.x + 2, p.y + H + 3, p.width - 4, 6);
+            ctx.fillStyle = 'rgba(8,12,24,0.18)';
+            ctx.fillRect(p.x + 5, p.y + H + 7, p.width - 10, 4);
+            // Underside frame + plate body + standable rim light.
+            ctx.fillStyle = m.plateDark;
+            ctx.fillRect(p.x, p.y + 4, p.width, H - 4);
+            ctx.fillStyle = m.plate;
+            ctx.fillRect(p.x, p.y, p.width, H - 3);
+            ctx.fillStyle = m.rim;
+            ctx.fillRect(p.x, p.y, p.width, 2);
+            // Strap bands with bolts: the manufactured signature.
+            ctx.fillStyle = m.band;
+            ctx.fillRect(p.x + 8, p.y + 2, 4, H - 4);
+            ctx.fillRect(p.x + p.width - 12, p.y + 2, 4, H - 4);
+            ctx.fillStyle = m.bolt;
+            ctx.fillRect(p.x + 9, p.y + 4, 2, 2);
+            ctx.fillRect(p.x + 9, p.y + H - 6, 2, 2);
+            ctx.fillRect(p.x + p.width - 11, p.y + 4, 2, 2);
+            ctx.fillRect(p.x + p.width - 11, p.y + H - 6, 2, 2);
+            // Motion cue: two chevrons pointing along travel, brightening
+            // with speed (state-derived, never random).
+            const sp = Math.min(1, Math.abs(p.vx) / 30);
+            if (sp > 0.05) {
+                const dir = p.vx > 0 ? 1 : -1;
+                const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+                ctx.fillStyle = `rgba(255,255,255,${(0.16 + 0.3 * sp).toFixed(3)})`;
+                for (let i = 0; i < 2; i++) {
+                    const bx = bx0 + i * 6 * dir;
+                    ctx.beginPath();
+                    ctx.moveTo(bx, p.y + 4);
+                    ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
+                    ctx.lineTo(bx, p.y + H - 4);
+                    ctx.fill();
                 }
             }
         }

@@ -771,6 +771,15 @@
   var CHARGER_CHANCE_MAX = 0.2;
   var SPINY_CAP_DIVISOR = 3;
   var HOSTILE_MIN_RUN = 4;
+  var MOVING_PLATFORM_FIRST_LEVEL = 8;
+  var MAX_MOVING_PLATFORMS = 2;
+  var MP_ACCEPT_CHANCE = 0.9;
+  var MP_GAP_MIN_WIDTH = 3;
+  var MP_GAP_MAX_WIDTH = 6;
+  var MP_DECK_TILES = 2;
+  var MP_CLEARANCE_ROWS = 3;
+  var MP_SPEED_MIN = 26;
+  var MP_SPEED_RANGE = 18;
   function solidRunWidth(tiles, width, x, supportY) {
     const row = tiles[supportY];
     if (!row || row[x] !== 1)
@@ -940,6 +949,7 @@
       this.extractHazards();
       this.enemyManager = new EnemyManager;
       this.spawnEnemies();
+      this.movingPlatforms = this.deriveMovingPlatforms();
     }
     getSpawnTile() {
       const y = this.height - 4;
@@ -1423,11 +1433,102 @@
         this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind);
       }
     }
+    columnTopRow(x) {
+      for (let y = 0;y < this.height; y++) {
+        if (this.tiles[y][x] === 1)
+          return y;
+      }
+      return null;
+    }
+    deriveMovingPlatforms() {
+      const out = [];
+      if (this.levelNumber < MOVING_PLATFORM_FIRST_LEVEL)
+        return out;
+      if (this.direction === "vertical")
+        return out;
+      const T = this.tileSize;
+      const candidates = [];
+      let x = 1;
+      while (x < this.width - 1) {
+        if (this.columnTopRow(x) !== null) {
+          x++;
+          continue;
+        }
+        const a = x;
+        while (x < this.width - 1 && this.columnTopRow(x) === null)
+          x++;
+        const b = x - 1;
+        const w = b - a + 1;
+        if (w < MP_GAP_MIN_WIDTH || w > MP_GAP_MAX_WIDTH)
+          continue;
+        const leftTop = this.columnTopRow(a - 1);
+        const rightTop = this.columnTopRow(b + 1);
+        if (leftTop === null || rightTop === null)
+          continue;
+        if (Math.abs(leftTop - rightTop) > 1)
+          continue;
+        const S = Math.max(leftTop, rightTop);
+        if (this.movingDeckLegal(a, b, S))
+          candidates.push({ a, b, S });
+      }
+      shuffle(candidates, this.rng);
+      for (const c of candidates) {
+        const roll = this.rng();
+        if (out.length >= MAX_MOVING_PLATFORMS)
+          continue;
+        if (roll >= MP_ACCEPT_CHANCE)
+          continue;
+        const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
+        const phase = this.rng();
+        out.push({
+          x: c.a * T,
+          y: c.S * T,
+          width: MP_DECK_TILES * T,
+          height: T,
+          axis: "h",
+          min: c.a * T,
+          max: (c.b + 1) * T - MP_DECK_TILES * T,
+          speed,
+          phase,
+          vx: 0,
+          vy: 0
+        });
+      }
+      return out;
+    }
+    movingDeckLegal(a, b, S) {
+      const inGrid = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height;
+      for (let cx = a;cx <= b; cx++) {
+        for (let cy = S;cy <= S + 1; cy++) {
+          if (!inGrid(cx, cy) || this.tiles[cy][cx] !== 0)
+            return false;
+        }
+        for (let cy = S - MP_CLEARANCE_ROWS;cy < S; cy++) {
+          if (!inGrid(cx, cy) || this.tiles[cy][cx] !== 0)
+            return false;
+        }
+      }
+      const overlapsX = (l, r, l2, r2) => l < r2 && l2 < r;
+      for (const s of this.deriveEnemySpawns()) {
+        if ((s.y === S || s.y === S + 1) && overlapsX(s.left, s.right + 1, a, b + 1)) {
+          return false;
+        }
+      }
+      for (const cell of [this.spawnTile, this.portalTile]) {
+        if (cell && cell.x >= a && cell.x <= b && (cell.y === S || cell.y === S + 1)) {
+          return false;
+        }
+      }
+      return true;
+    }
     getSpawnPoint() {
       return this.spawnPoint;
     }
     getPlatforms() {
       return this.platforms;
+    }
+    getMovingPlatforms() {
+      return this.movingPlatforms;
     }
     getCoins() {
       return this.collectibles.getCoins();
@@ -1879,6 +1980,11 @@
       grain: "vertical",
       interiorVeil: "rgba(4,30,16,0.30)"
     }
+  ];
+  var PLATFORM_METALS = [
+    { plate: "#8a97ab", plateDark: "#5d6a80", band: "#3f4a5e", bolt: "#252d3c", rim: "#c3cfdf" },
+    { plate: "#b08a5a", plateDark: "#7d5c36", band: "#57402a", bolt: "#33261a", rim: "#e8c795" },
+    { plate: "#6f9a80", plateDark: "#48705a", band: "#2f4c3e", bolt: "#182a22", rim: "#b9dcc4" }
   ];
   var FLOWER_COLORS = ["#ffd7e8", "#fff3b0", "#ffffff"];
   function makeRng2(seed) {
@@ -2767,6 +2873,44 @@
         }
       }
     }
+    drawMovingPlatforms(ctx, platforms, levelNumber) {
+      const m = PLATFORM_METALS[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      const H = 14;
+      for (const p of platforms) {
+        ctx.fillStyle = "rgba(8,12,24,0.10)";
+        ctx.fillRect(p.x + 2, p.y + H + 3, p.width - 4, 6);
+        ctx.fillStyle = "rgba(8,12,24,0.18)";
+        ctx.fillRect(p.x + 5, p.y + H + 7, p.width - 10, 4);
+        ctx.fillStyle = m.plateDark;
+        ctx.fillRect(p.x, p.y + 4, p.width, H - 4);
+        ctx.fillStyle = m.plate;
+        ctx.fillRect(p.x, p.y, p.width, H - 3);
+        ctx.fillStyle = m.rim;
+        ctx.fillRect(p.x, p.y, p.width, 2);
+        ctx.fillStyle = m.band;
+        ctx.fillRect(p.x + 8, p.y + 2, 4, H - 4);
+        ctx.fillRect(p.x + p.width - 12, p.y + 2, 4, H - 4);
+        ctx.fillStyle = m.bolt;
+        ctx.fillRect(p.x + 9, p.y + 4, 2, 2);
+        ctx.fillRect(p.x + 9, p.y + H - 6, 2, 2);
+        ctx.fillRect(p.x + p.width - 11, p.y + 4, 2, 2);
+        ctx.fillRect(p.x + p.width - 11, p.y + H - 6, 2, 2);
+        const sp = Math.min(1, Math.abs(p.vx) / 30);
+        if (sp > 0.05) {
+          const dir = p.vx > 0 ? 1 : -1;
+          const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+          ctx.fillStyle = `rgba(255,255,255,${(0.16 + 0.3 * sp).toFixed(3)})`;
+          for (let i = 0;i < 2; i++) {
+            const bx = bx0 + i * 6 * dir;
+            ctx.beginPath();
+            ctx.moveTo(bx, p.y + 4);
+            ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
+            ctx.lineTo(bx, p.y + H - 4);
+            ctx.fill();
+          }
+        }
+      }
+    }
     _groundBelow(cx, feetY) {
       const level = this._level;
       if (!level)
@@ -3004,6 +3148,105 @@
         ctx.stroke();
       }
       ctx.restore();
+    }
+  }
+
+  // js/movingplatforms.js
+  var LAND_TOLERANCE = 0.5;
+  var VY_EPSILON = 0.000001;
+  var JUMP_BOOST_CAP = 40;
+  function clamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+  }
+  function applyJumpBoost(player, platform) {
+    if (!platform)
+      return;
+    player.vy += clamp(platform.vy, -JUMP_BOOST_CAP, JUMP_BOOST_CAP);
+    player.vx += clamp(platform.vx, -JUMP_BOOST_CAP, JUMP_BOOST_CAP);
+  }
+
+  class MovingPlatform {
+    constructor(desc) {
+      this.y = desc.y;
+      this.width = desc.width;
+      this.height = desc.height;
+      this.axis = desc.axis;
+      this.min = desc.min;
+      this.max = desc.max;
+      this.speed = desc.speed;
+      this.phase = desc.phase;
+      this.vx = 0;
+      this.vy = 0;
+      this.dx = 0;
+      this.dy = 0;
+      this.elapsed = 0;
+      const p0 = this.positionAt(0);
+      this.x = this.axis === "v" ? desc.x : p0;
+      if (this.axis === "v")
+        this.y = p0;
+    }
+    positionAt(t) {
+      const span = this.max - this.min;
+      if (!(span > 0))
+        return this.min;
+      const u = (t * this.speed / span + this.phase * 2) % 2;
+      const f = u <= 1 ? u : 2 - u;
+      return this.min + f * span;
+    }
+    update(dt) {
+      this.elapsed += dt;
+      const pos = this.positionAt(this.elapsed);
+      if (this.axis === "v") {
+        this.dy = pos - this.y;
+        this.dx = 0;
+        this.y = pos;
+      } else {
+        this.dx = pos - this.x;
+        this.dy = 0;
+        this.x = pos;
+      }
+      this.vx = dt > 0 ? this.dx / dt : 0;
+      this.vy = dt > 0 ? this.dy / dt : 0;
+    }
+    isUnder(player) {
+      return Math.abs(player.y + player.height - this.y) < 1.5 && player.x < this.x + this.width && player.x + player.width > this.x;
+    }
+    carry(player) {
+      player.x += this.dx;
+      player.y += this.dy;
+    }
+  }
+
+  class MovingPlatformManager {
+    constructor(descriptors = []) {
+      this.platforms = descriptors.map((d) => new MovingPlatform(d));
+    }
+    updateAll(dt) {
+      for (const p of this.platforms)
+        p.update(dt);
+    }
+    oneWayRects(player) {
+      const out = [];
+      for (const p of this.platforms) {
+        if (!aabbOverlap(player, p))
+          continue;
+        if (player.vy < p.vy - VY_EPSILON)
+          continue;
+        if (player.prevY !== undefined && player.prevY + player.height > p.y + LAND_TOLERANCE) {
+          continue;
+        }
+        out.push(p);
+      }
+      return out;
+    }
+    supportUnder(player) {
+      if (!player.grounded)
+        return null;
+      for (const p of this.platforms) {
+        if (p.isUnder(player))
+          return p;
+      }
+      return null;
     }
   }
 
@@ -3758,6 +4001,8 @@
       this.enemyManager = null;
       this.collectibles = null;
       this.hazards = null;
+      this.movingPlatforms = null;
+      this._riding = null;
       this.score = 0;
       this.levelStartScore = 0;
       this.currentLevel = 1;
@@ -3834,8 +4079,10 @@
           return;
         const vyBefore = this.player.vy;
         this.player.pressJump();
-        if (this.player.vy < vyBefore)
+        if (this.player.vy < vyBefore) {
           playSfx("jump");
+          applyJumpBoost(this.player, this._riding);
+        }
       });
       this.input.onReleaseJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
@@ -3948,6 +4195,8 @@
       this.enemyManager = level.getEnemyManager();
       this.collectibles = level.getCollectibles();
       this.hazards = level.getHazards();
+      this.movingPlatforms = new MovingPlatformManager(level.getMovingPlatforms());
+      this._riding = null;
       this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
       this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
@@ -4046,17 +4295,30 @@
             return;
           }
         }
+        if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+          this.movingPlatforms.updateAll(dt);
+          const ridden = this._riding;
+          if (ridden && ridden.isUnder(this.player))
+            ridden.carry(this.player);
+        }
         this.player.prevX = this.player.x;
         this.player.prevY = this.player.y;
         const bufferWasPending = this.player.jumpBufferTimer > 0;
         this.player.update(dt, this.input.isLeft(), this.input.isRight(), { walk: this.input.isWalk() });
         if (bufferWasPending && this.player.jumpBufferTimer === 0 && this.player.vy < 0) {
           playSfx("jump");
+          applyJumpBoost(this.player, this._riding);
         }
         this.physics.applyGravity(this.player, dt);
         const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
         const vyBeforeResolve = this.player.vy;
         this.physics.resolveCollisions(this.player, collisions);
+        if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+          const decks = this.movingPlatforms.oneWayRects(this.player);
+          if (decks.length)
+            this.physics.resolveYCollision(this.player, decks);
+          this._riding = this.movingPlatforms.supportUnder(this.player);
+        }
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
           if (vyBeforeResolve >= LANDING_SFX_MIN_FALL)
@@ -4189,6 +4451,9 @@
         this.ctx.translate(-(this.camera.x + effW / 2), this.camera.y - effH / 2);
         if (sprites)
           sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
+        if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+          this.sprites.drawMovingPlatforms(this.ctx, this.movingPlatforms.platforms, this.currentLevel);
+        }
         if (sprites)
           sprites.drawMoodTint(this.ctx, this.currentLevel, this.camera.x, this.camera.y, effW, effH);
         this.level.draw(this.ctx, sprites);

@@ -84,6 +84,26 @@ const SPINY_CAP_DIVISOR = 3;
 // measurement, not by eye.
 const HOSTILE_MIN_RUN = 4;
 
+// --- Moving platforms (optional traversal aids, player ask 2026-11-03) -----
+// Decks are placed AFTER generation validity completes and consume rng only
+// after every geometry/marker/portal/coin/kind stream (see the constructor's
+// tail), so terrain stays byte-identical and BFS-validated routes never need
+// — and can never be blocked by — a platform. Gates:
+//  * Level 8+: the basic tier (L1..7) stays pristine while the player is
+//    learning the core verbs.
+//  * Horizontal maps only this wave: the gap scan below is heightmap-shaped
+//    (all-air columns with flush flanks). Vertical shaft elevators are a
+//    deferred second type — the manager already supports axis 'v'.
+const MOVING_PLATFORM_FIRST_LEVEL = 8;
+const MAX_MOVING_PLATFORMS = 2;      // per map
+const MP_ACCEPT_CHANCE = 0.9;        // per candidate gap (measured ~50% horiz coverage)
+const MP_GAP_MIN_WIDTH = 3;          // tiles of air between the flanks
+const MP_GAP_MAX_WIDTH = 6;
+const MP_DECK_TILES = 2;             // deck width in tiles
+const MP_CLEARANCE_ROWS = 3;         // air rows required above the sweep
+const MP_SPEED_MIN = 26;             // px/s — slower than the 200 px/s walk
+const MP_SPEED_RANGE = 18;           // ..so riders always out-move the ride
+
 // Contiguous type-1 tiles on a support row through a column: the solid-run
 // width of the shelf a spawn cell stands on (same measurement as the
 // fairness probe — support row y+1 only; rock/spikes on the walk row do not
@@ -468,6 +488,14 @@ export class Level {
         // are skipped by the spawn validation.
         this.enemyManager = new EnemyManager();
         this.spawnEnemies();
+        // Moving platforms derive LAST: their candidate rolls consume this.rng
+        // only after every geometry, spike, marker, portal, coin and enemy-kind
+        // draw has finished (same discipline as spawnEnemies' kind rolls), so
+        // terrain/coins/enemies stay byte-identical against the pre-platform
+        // generator for a given seed, and decks never perturb a validated
+        // route. Fresh Level per publish/retry => fresh deck set with an
+        // identical phase schedule (replays are exact).
+        this.movingPlatforms = this.deriveMovingPlatforms();
     }
 
     // Standing tile per direction on the forced flat ground band: canonical
@@ -1315,12 +1343,134 @@ export class Level {
         }
     }
 
+    // First solid row of a column, or null when the column is entirely air
+    // (a pit on the heightmap). Moving-platform flank measurement.
+    columnTopRow(x) {
+        for (let y = 0; y < this.height; y++) {
+            if (this.tiles[y][x] === 1) return y;
+        }
+        return null;
+    }
+
+    /**
+     * Placement pass for optional traversal decks (see the MOVING_PLATFORM_*
+     * constants header). Candidate scan: maximal runs of all-air columns on
+     * the ground plane, 3..6 tiles wide, whose flanking columns are solid
+     * within ONE row of each other — the deck top sits flush with the lower
+     * lip (so riders step on/off like adjacent tiles) and one row below the
+     * higher one (a rider walked to that end face-braces the flank wall like
+     * any ordinary wall, bounded by one frame's carry delta — no jitter, no
+     * tunnelling, pinned by tests). HARD VALIDATION over the entire swept
+     * range before a deck ships:
+     *  - every cell under the sweep (deck rows S..S+1 across the gap) is air;
+     *  - MP_CLEARANCE_ROWS air rows above the sweep across the whole span;
+     *  - no enemy patrol rect intersects the swept volume;
+     *  - the spawn cell and portal cell are outside the swept volume.
+     * On today's heightmaps most of these hold by construction (gap columns
+     * carry no solid, spike support, or patrol span), but they are re-checked
+     * here so a future generator change cannot silently arm a deck with a
+     * route-blocking cell. Illegal candidates are rejected silently.
+     * Rolls follow the one-unconditional-draw-per-item discipline: one accept
+     * roll per candidate regardless of outcome, speed/phase drawn only when
+     * a deck actually ships. Collision height is a full tile while the drawn
+     * plank is ~half that: at max fall speed 600 px/s against the 0.05 s dt
+     * cap a body sinks ~30 px/frame, and a half-tile collider would risk
+     * tunnelling straight through a falling player.
+     */
+    deriveMovingPlatforms() {
+        const out = [];
+        if (this.levelNumber < MOVING_PLATFORM_FIRST_LEVEL) return out;
+        if (this.direction === 'vertical') return out; // elevators deferred
+
+        const T = this.tileSize;
+        const candidates = [];
+        let x = 1; // interior runs only: both flanks must exist
+        while (x < this.width - 1) {
+            if (this.columnTopRow(x) !== null) { x++; continue; }
+            const a = x;
+            while (x < this.width - 1 && this.columnTopRow(x) === null) x++;
+            const b = x - 1;
+            const w = b - a + 1;
+            if (w < MP_GAP_MIN_WIDTH || w > MP_GAP_MAX_WIDTH) continue;
+            const leftTop = this.columnTopRow(a - 1);
+            const rightTop = this.columnTopRow(b + 1);
+            if (leftTop === null || rightTop === null) continue;
+            if (Math.abs(leftTop - rightTop) > 1) continue;
+            const S = Math.max(leftTop, rightTop); // flush with the lower lip
+            if (this.movingDeckLegal(a, b, S)) candidates.push({ a, b, S });
+        }
+
+        shuffle(candidates, this.rng);
+        for (const c of candidates) {
+            const roll = this.rng(); // consumed whether or not it lands
+            if (out.length >= MAX_MOVING_PLATFORMS) continue;
+            if (roll >= MP_ACCEPT_CHANCE) continue;
+            const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
+            const phase = this.rng();
+            out.push({
+                x: c.a * T,
+                y: c.S * T,
+                width: MP_DECK_TILES * T,
+                height: T,
+                axis: 'h',
+                min: c.a * T,
+                max: (c.b + 1) * T - MP_DECK_TILES * T,
+                speed,
+                phase,
+                vx: 0,
+                vy: 0
+            });
+        }
+        return out;
+    }
+
+    // Swept-volume legality for one gap candidate [a..b] with flush flank
+    // top row S (deck occupies rows S..S+1 across the gap for its whole
+    // shuttle). Returns false on any contact with terrain, teeth, patrols,
+    // spawn or portal — such candidates never ship.
+    movingDeckLegal(a, b, S) {
+        const inGrid = (cx, cy) => cx >= 0 && cx < this.width &&
+            cy >= 0 && cy < this.height;
+        // Deck band + clearance above it must be pure air across the sweep.
+        for (let cx = a; cx <= b; cx++) {
+            for (let cy = S; cy <= S + 1; cy++) {
+                if (!inGrid(cx, cy) || this.tiles[cy][cx] !== 0) return false;
+            }
+            for (let cy = S - MP_CLEARANCE_ROWS; cy < S; cy++) {
+                if (!inGrid(cx, cy) || this.tiles[cy][cx] !== 0) return false;
+            }
+        }
+        // No patrol may sweep the deck's rows within the gap columns.
+        const overlapsX = (l, r, l2, r2) => l < r2 && l2 < r;
+        for (const s of this.deriveEnemySpawns()) {
+            if ((s.y === S || s.y === S + 1) &&
+                overlapsX(s.left, s.right + 1, a, b + 1)) {
+                return false;
+            }
+        }
+        // Spawn and portal cells stay clear of the swept volume.
+        for (const cell of [this.spawnTile, this.portalTile]) {
+            if (cell && cell.x >= a && cell.x <= b &&
+                (cell.y === S || cell.y === S + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     getSpawnPoint() {
         return this.spawnPoint;
     }
 
     getPlatforms() {
         return this.platforms;
+    }
+
+    // Descriptor list for optional traversal decks ([] when none). Live
+    // positions/velocities live in main.js's MovingPlatformManager, built
+    // fresh per published level from these descriptors.
+    getMovingPlatforms() {
+        return this.movingPlatforms;
     }
 
     getCoins() {

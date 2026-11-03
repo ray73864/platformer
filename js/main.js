@@ -8,6 +8,7 @@ import { COIN_POINTS } from './collectibles.js';
 import { Difficulty } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
+import { MovingPlatformManager, applyJumpBoost } from './movingplatforms.js';
 import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes, MAX_PARTICLES } from './particles.js';
 import * as audio from './audio.js';
 
@@ -182,6 +183,13 @@ export class Game {
         this.enemyManager = null;
         this.collectibles = null;
         this.hazards = null;
+        // Optional traversal decks for the published level (fresh manager
+        // per publishLevel from level.getMovingPlatforms(); pause freezes
+        // them because they only advance inside the PLAYING branch).
+        this.movingPlatforms = null;
+        // Deck the player rode at the end of the last resolved frame (carry
+        // + jump-off inheritance source); null whenever not landed on one.
+        this._riding = null;
         this.score = 0;
         // Score at the moment the current level started; retryLevel() rolls
         // back to it so repeated retries of a regenerated level cannot farm
@@ -322,7 +330,14 @@ export class Game {
             // alone — no phantom jump sound for inputs that did not jump.
             const vyBefore = this.player.vy;
             this.player.pressJump();
-            if (this.player.vy < vyBefore) audio.playSfx('jump');
+            if (this.player.vy < vyBefore) {
+                audio.playSfx('jump');
+                // Jump-off inheritance (feel choice): launching from a ridden
+                // deck adds the deck velocity, capped (see applyJumpBoost).
+                // Fairness: routes never require decks, so inherited transport
+                // can only widen options, never gate a level.
+                applyJumpBoost(this.player, this._riding);
+            }
         });
         // Variable jump height: releasing Space mid-rise shortens the hop
         // (once per jump). Gated on PLAYING like pressJump: PAUSED freezes
@@ -525,6 +540,13 @@ export class Game {
         this.enemyManager = level.getEnemyManager();
         this.collectibles = level.getCollectibles();
         this.hazards = level.getHazards();
+        // Decks follow the same per-level lifecycle as the systems above:
+        // every publish (new level, retry, loop recovery) mints a fresh
+        // manager from the adopted level's descriptors, so elapsed time — and
+        // therefore the whole shuttle schedule — restarts identically for a
+        // replayed seed.
+        this.movingPlatforms = new MovingPlatformManager(level.getMovingPlatforms());
+        this._riding = null;
         // Coin chip reflects this level's progress: fresh on first play,
         // carried over on a retry (collected flags transfer with the seed).
         this.ui.updateCoins(
@@ -724,6 +746,18 @@ export class Game {
                 }
             }
 
+            // Moving decks advance on the run clock only (PAUSED freezes
+            // them). A rider is carried with the deck BEFORE history capture
+            // and tile resolution: the landing-credibility convention then
+            // sees a gliding rider as stationary relative to the deck, and
+            // terrain beside the gap keeps first say on their position each
+            // frame (journey ends deposit instead of dragging).
+            if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+                this.movingPlatforms.updateAll(dt);
+                const ridden = this._riding;
+                if (ridden && ridden.isUnder(this.player)) ridden.carry(this.player);
+            }
+
             // Record pre-movement position (before x integration and gravity):
             // the collision resolver needs it to tell a genuine landing from
             // side-wall or level-corner contact at a gap.
@@ -744,6 +778,9 @@ export class Game {
             if (bufferWasPending && this.player.jumpBufferTimer === 0 &&
                 this.player.vy < 0) {
                 audio.playSfx('jump');
+                // Buffered launch off a ridden deck inherits too (same policy
+                // as the input-callback path above).
+                applyJumpBoost(this.player, this._riding);
             }
 
             // Apply physics
@@ -755,6 +792,19 @@ export class Game {
             // thud below.
             const vyBeforeResolve = this.player.vy;
             this.physics.resolveCollisions(this.player, collisions);
+
+            // Moving decks resolve AFTER terrain and NEVER join the solid
+            // list above: Y-axis only, through the same landing-credibility
+            // convention as Physics.resolveYCollision. Sides and heads pass
+            // straight through a deck — that one-way rule is what keeps them
+            // pure-help: they can never block, wall-slide or knock the player
+            // off a BFS-validated route. supportUnder re-derives the ride
+            // attachment every frame (null once not landed on a deck).
+            if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+                const decks = this.movingPlatforms.oneWayRects(this.player);
+                if (decks.length) this.physics.resolveYCollision(this.player, decks);
+                this._riding = this.movingPlatforms.supportUnder(this.player);
+            }
 
             // Grounded-state edges (visual-tuning hooks, physics-safe):
             // air-to-ground fires the landing squash. The walked-off-a-ledge
@@ -1013,6 +1063,13 @@ export class Game {
             // Terrain comes from the sprite layer's culled grid pass (in
             // world units of the zoomed viewport); level.draw owns entities.
             if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
+            // Moving decks sit between props and entities: world-washed like
+            // terrain furniture, always under coins/enemies/player. Vector art
+            // works with or without the sheets, so this call is unconditional.
+            if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
+                this.sprites.drawMovingPlatforms(this.ctx,
+                    this.movingPlatforms.platforms, this.currentLevel);
+            }
             // Mood wash over background+terrain+props only — entities below
             // paint at full contrast (hazard-readability ruling).
             if (sprites) sprites.drawMoodTint(this.ctx, this.currentLevel,

@@ -195,6 +195,40 @@ test("decor never lands on or beside a spike, and signatures keep headroom", () 
     }
 });
 
+test("moving platform decks draw deterministic vector art with a speed cue", () => {
+    const deck = (vx) => ({ x: 100, y: 200, width: 64, height: 32, vx });
+    // Same state -> identical op log across independent Sprites instances.
+    const a = recordingCtx();
+    new Sprites().drawMovingPlatforms(a, [deck(20)], 9);
+    const b = recordingCtx();
+    new Sprites().drawMovingPlatforms(b, [deck(20)], 9);
+    expect(b.ops).toEqual(a.ops);
+    expect(a.ops.filter(o => o.startsWith('fillRect')).length)
+        .toBeGreaterThanOrEqual(8); // shadow + plate + straps + bolts
+
+    // Motion cue is state-derived: parked decks show no chevrons, moving
+    // ones do, and direction flips the chevron geometry.
+    const parked = recordingCtx();
+    new Sprites().drawMovingPlatforms(parked, [deck(0)], 9);
+    expect(parked.ops.filter(o => o.startsWith('moveTo')).length).toBe(0);
+    const left = recordingCtx();
+    new Sprites().drawMovingPlatforms(left, [deck(-20)], 9);
+    const tipOf = (ops) => {
+        const base = Number.parseFloat(ops.find(o => o.startsWith('moveTo')).split(' ')[1]);
+        const tip = Number.parseFloat(ops.find(o => o.startsWith('lineTo')).split(' ')[1]);
+        return tip - base; // signed horizontal offset of the chevron point
+    };
+    expect(tipOf(a.ops)).toBeGreaterThan(0);  // pointing right
+    expect(tipOf(left.ops)).toBeLessThan(0);  // pointing left
+
+    // Per-band metals: dusk (L8 -> idx 1) and jungle (L9 -> idx 2) differ.
+    const dusk = recordingCtx();
+    new Sprites().drawMovingPlatforms(dusk, [deck(0)], 8);
+    const jungle = recordingCtx();
+    new Sprites().drawMovingPlatforms(jungle, [deck(0)], 9);
+    expect(dusk.ops).not.toEqual(jungle.ops);
+});
+
 test("only jungle levels grow ceiling vines", () => {
     const sprites = new Sprites();
     // A dense ceiling row gives the vine pass plenty of candidate undersides.
