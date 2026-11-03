@@ -58,11 +58,11 @@ const CAP_H = CAP_OVER + 9;
 // stays dependency-free). Used to stand the portal flag on the ground line.
 const PORTAL_CELL = 32;
 
-// Frames into characters.png. Player: tan astronaut idle/run. Enemies:
-// spiked-shelled slime and bat, both 3-frame walk/flap cycles.
+// Frames into characters.png. Enemies: spiked-shelled slime and bat, both
+// 3-frame walk/flap cycles. The player left this sheet in the 2026-11-04
+// hero redesign (baked indexed pixel art below); cells 9-10 of the sheet
+// remain unused rather than renumbering the enemy frames.
 export const CHARS = {
-    PLAYER_IDLE: 9,
-    PLAYER_RUN: 10,
     SLIME: [15, 16, 17],
     BAT: [24, 25, 26]
 };
@@ -176,6 +176,269 @@ const PLATFORM_METALS = [
 // are chosen light and tiny (5px) — nothing here can obscure a tooth or a
 // patrolling body (fairness ruling).
 const FLOWER_COLORS = ['#ffd7e8', '#fff3b0', '#ffffff'];
+
+// ---------------------------------------------------------------------------
+// HERO — hand-authored pixel art (2026-11-04 character redesign).
+//
+// The stock Kenney "dropin" astronaut read as an unfinished blob next to the
+// bespoke biome art: one fused head/torso mass, no limbs at game zoom, and a
+// tan/white palette that melted into the dusk sandstone. The replacement is a
+// crimson-nightcap adventurer authored as indexed color-string frames (20x20
+// content grid) and baked ONCE per Sprites instance into 22x22 offscreen
+// canvases — the same bake-once/drawImage-blit convention as the terrain and
+// prop art. A 1px warm-charcoal outline ring is generated at bake time from
+// the transparent border of each frame, so every pose carries identical
+// edge weight against all three bands (day blue, dusk amber, jungle green).
+//
+// Palette harmony: pants steel = PLATFORM_METALS[0].band family; scarf teal
+// echoes the jungle skyTop/day hillNear; cap crimson is the single saturated
+// warm note (complement of the jungle band, darkest-but-one value in the day
+// sky); buckle gold matches the coin. Outline is #2a2118 — warm charcoal,
+// never pure black.
+// Palette roles documented above; exported alongside the frames so tests can
+// assert every authored character is a known colour.
+export const HERO_PALETTE = {
+    '.': null,        // transparent
+    o: '#2a2118',     // warm charcoal ink (outline ring + pupils)
+    c: '#d4374a',     // nightcap crimson
+    d: '#a02a3c',     // cap underside shade
+    l: '#ef6672',     // cap highlight (sun side)
+    s: '#f2d8b0',     // face cream
+    k: '#d9b98c',     // face shade under the brim
+    w: '#2fb3a6',     // scarf teal
+    n: '#1e857c',     // scarf shade
+    v: '#8a5230',     // vest brown
+    b: '#64391f',     // vest seam shadow
+    h: '#efe0bd',     // shirt sleeves
+    p: '#3f4a5e',     // trousers steel blue
+    t: '#6e4a2e',     // boots tan
+    u: '#9c6b3f',     // satchel leather
+    y: '#ffd76e'      // belt buckle gold (coin harmony)
+};
+const HERO_W = 20;
+const HERO_H = 20;
+
+// Frame inventory: idle x2 (breathing), run x4 (contact / pass / contact-
+// mirror / pass-mirror with counter-swinging arms), jump-rise (tucked legs,
+// arms up, cloth streaming down), fall (legs kicking, arms out, scarf
+// streaming up). Facing right; drawPlayer mirrors via ctx.scale(face, 1).
+export const HERO_FRAMES = {
+    idle0: [
+        '....................',
+        '.......ccccc........',
+        '......cllllccc......',
+        '.....cclllccccc.....',
+        '....cccccccccccc....',
+        '..cc.dddddddddd.....',
+        '..ccd.ssssssks......',
+        '...cc.ssssssks......',
+        '....c.ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '......nnwwwwww......',
+        '....nnvvvvvvu.......',
+        '...nwhvvbbvvvh......',
+        '.....hvvbbvvvh......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '.......tt.tt........',
+        '......ttt.ttt.......',
+    ],
+    idle1: [
+        '....................',
+        '....................',
+        '.......ccccc........',
+        '......cllllccc......',
+        '.....cclllccccc.....',
+        '....cccccccccccc....',
+        '..cc.dddddddddd.....',
+        '..ccd.ssssssks......',
+        '...cc.ssssssks......',
+        '....c.ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '......nnwwwwww......',
+        '....nnvvvvvvu.......',
+        '...nwhvvbbvvvh......',
+        '.....hvvbbvvvh......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '.......tt.tt........',
+        '......ttt.ttt.......',
+    ],
+    run0: [
+        '.......ccccc........',
+        '.cccc.cllllccc......',
+        '.cccdcclllccccc.....',
+        '..c.cccccccccccc....',
+        '.....dddddddddd.....',
+        '......ssssssks......',
+        '......ssssssks......',
+        '......ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '.wwwn.nnwwwwww......',
+        'wwn...vvvvvvuhh.....',
+        '......vvbbvvv.......',
+        '....hhvvbbvvv.......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '.......pp..pp.......',
+        '......pp....tt......',
+        '.....ttt...ttt......',
+    ],
+    run1: [
+        '.......ccccc........',
+        '..cc..cllllccc......',
+        '.ccd.cclllccccc.....',
+        '..c.cccccccccccc....',
+        '.....dddddddddd.....',
+        '......ssssssks......',
+        '......ssssssks......',
+        '......ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '..wwn.nnwwwwww......',
+        '.wn...vvvvvvu.......',
+        '.....hvvbbvvvh......',
+        '......vvbbvvv.......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '.......pp...........',
+        '.......pptt.........',
+        '......ttt...........',
+    ],
+    run2: [
+        '.......ccccc........',
+        '.cccc.cllllccc......',
+        '.cccdcclllccccc.....',
+        '..c.cccccccccccc....',
+        '.....dddddddddd.....',
+        '......ssssssks......',
+        '......ssssssks......',
+        '......ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '.wwwn.nnwwwwww......',
+        'wwn.hhvvvvvvu.......',
+        '......vvbbvvv.......',
+        '......vvbbvvvhh.....',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '......pp..pp........',
+        '....tt....pp........',
+        '...ttt...ttt........',
+    ],
+    run3: [
+        '.......ccccc........',
+        '..cc..cllllccc......',
+        '.ccd.cclllccccc.....',
+        '..c.cccccccccccc....',
+        '.....dddddddddd.....',
+        '......ssssssks......',
+        '......ssssssks......',
+        '......ssoososs......',
+        '......ssoososs......',
+        '......ssssssks......',
+        '..wwn.nnwwwwww......',
+        '.wn...vvvvvvu.......',
+        '.....hvvbbvvvh......',
+        '......vvbbvvv.......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '.........pp.........',
+        '.......ttpp.........',
+        '.........ttt........',
+    ],
+    jump: [
+        '.......ccccc........',
+        '......cllllccc......',
+        '.....cclllccccc.....',
+        '....cccccccccccc....',
+        '.....dddddddddd.....',
+        '..cc..ssssssks......',
+        '..cc..ssssssks......',
+        '..cd..ssoososs......',
+        '...c..ssoososs......',
+        '.....sssssssks......',
+        '.....hnnwwwwwh......',
+        '....nhvvvvvvuh......',
+        '...nw.vvbbvvv.......',
+        '...nw.vvbbvvv.......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '.......pppp.........',
+        '......tttttt........',
+        '....................',
+    ],
+    fall: [
+        '..c....ccccc........',
+        '.ccd..cllllccc......',
+        '..cc.cclllccccc.....',
+        '....cccccccccccc....',
+        '.....dddddddddd.....',
+        '......ssssssks......',
+        '......ssssssks......',
+        '......ssoososs......',
+        '...nn.ssoososs......',
+        '..wnn.ssssssks......',
+        '...nn.nnwwwwww......',
+        '....hhvvvvvvuhh.....',
+        '......vvbbvvv.......',
+        '......vvbbvvv.......',
+        '....uuvvvvvvv.......',
+        '....uypppyppp.......',
+        '......ppppppp.......',
+        '......pp...pp.......',
+        '....tt.....tt.......',
+        '............ttt.....',
+    ],
+};
+
+// Bake every indexed frame into an outlined offscreen canvas once. Returns a
+// map name -> canvas, or null where 2D rasterisation is unavailable (bun
+// test/happy-dom: contexts exist but expose no fillRect), letting drawPlayer
+// fall back to shadow-only without throwing.
+function buildHeroCanvases() {
+    if (typeof document === 'undefined') return null;
+    const out = {};
+    for (const [name, rows] of Object.entries(HERO_FRAMES)) {
+        const c = makeCanvas(HERO_W + 2, HERO_H + 2);
+        const g = c.getContext('2d');
+        if (!g || typeof g.fillRect !== 'function') return null;
+        const opaque = rows.map(r => [...r].map(ch => ch !== '.'));
+        rows.forEach((row, y) => {
+            [...row].forEach((ch, x) => {
+                if (ch === '.') return;
+                const hex = HERO_PALETTE[ch];
+                if (!hex) throw new Error(`hero frame "${name}": unknown palette char "${ch}"`);
+                g.fillStyle = hex;
+                g.fillRect(x + 1, y + 1, 1, 1);
+            });
+        });
+        // Generated 1px outline ring: any transparent cell orthogonally
+        // adjacent to colour becomes ink. Guarantees uniform edge weight
+        // across poses without hand-placing hundreds of outline pixels.
+        const at = (x, y) => (x >= 0 && y >= 0 && x < HERO_W && y < HERO_H && opaque[y][x]);
+        g.fillStyle = HERO_PALETTE.o;
+        for (let y = -1; y <= HERO_H; y++) {
+            for (let x = -1; x <= HERO_W; x++) {
+                if (at(x, y)) continue;
+                if (at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) {
+                    g.fillRect(x + 1, y + 1, 1, 1);
+                }
+            }
+        }
+        out[name] = c;
+    }
+    return out;
+}
 
 // Local copy of the mulberry32 PRNG (same algorithm as level.js): atmosphere
 // shapes derive from the level NUMBER only, so this stream never touches —
@@ -639,6 +902,10 @@ export class Sprites {
         this._level = null;
         // Glow sprites keyed by colour string.
         this._glows = {};
+        // Baked hero canvases (see buildHeroCanvases); undefined = not yet
+        // attempted, null = raster unavailable in this environment. Baked on
+        // first draw so steady-state frames only blit + transform.
+        this._hero = undefined;
 
         // Non-DOM environments (bun test, happy-dom without real image IO)
         // simply never become ready: the game renders with fallback shapes.
@@ -1442,30 +1709,38 @@ export class Sprites {
         return this._facing.get(entity) ?? 1;
     }
 
+    _ensureHero() {
+        if (this._hero === undefined) this._hero = buildHeroCanvases();
+        return this._hero;
+    }
+
+    // Pose pick from player state + clock only (pause-safe, no RNG):
+    // airborne rising -> jump, falling -> fall; grounded moving -> the 4-frame
+    // run cycle at 20 frame-steps/s (10 footfalls: contact frames 0 and 2);
+    // grounded still -> idle pair alternating every 0.5 s (breathing).
+    _heroPose(player) {
+        if (!player.grounded) return player.vy < 0 ? 'jump' : 'fall';
+        if (Math.abs(player.vx) > 5) return 'run' + (Math.floor(this.clock * 20) % 4);
+        return 'idle' + (Math.floor(this.clock * 2) % 2);
+    }
+
     drawPlayer(ctx, player, squash = 1) {
         const moving = Math.abs(player.vx) > 5;
-        // Two-frame sheet (idle + stride): alternating them at ~8 steps/s
-        // reads as a run cycle; airborne holds the stride frame.
-        let frame = CHARS.PLAYER_IDLE;
-        if (!player.grounded) {
-            frame = CHARS.PLAYER_RUN;
-        } else if (moving) {
-            frame = Math.floor(this.clock * 8) % 2 === 0
-                ? CHARS.PLAYER_RUN
-                : CHARS.PLAYER_IDLE;
-        }
         const face = this._faceOf(player);
-        const w = 44;                       // slight overhang past the 32px hitbox
-        const h = 44 * squash;
+        const w = 44;                       // baked 22px grid at exactly 2x
+        const h = 44 * squash;              // slight overhang past the 32px hitbox
         const cx = player.x + player.width / 2;
         this._entityShadow(ctx, cx, player.y + player.height, 16);
-        // Small vertical bob while running lifts each footfall off the floor.
-        const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 8 * Math.PI)) * 2 : 0;
+        // Bob synced to the run cadence: zero at each footfall (t = k/10),
+        // peak lift between contacts — feet plant on the deck when they land.
+        const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 10 * Math.PI)) * 2 : 0;
         const feet = player.y + player.height - bob;
+        const hero = this._ensureHero();
+        if (!hero) return;                  // headless: shadow-only, never throws
         ctx.save();
         ctx.translate(cx, feet);
         ctx.scale(face, 1);
-        this._drawSheet(ctx, 'characters', frame, -w / 2, -h, w, h);
+        ctx.drawImage(hero[this._heroPose(player)], -w / 2, -h, w, h);
         ctx.restore();
     }
 

@@ -1927,8 +1927,6 @@
   var CAP_H = CAP_OVER + 9;
   var PORTAL_CELL = 32;
   var CHARS = {
-    PLAYER_IDLE: 9,
-    PLAYER_RUN: 10,
     SLIME: [15, 16, 17],
     BAT: [24, 25, 26]
   };
@@ -2020,6 +2018,240 @@
     { plate: "#6f9a80", plateDark: "#48705a", band: "#2f4c3e", bolt: "#182a22", rim: "#b9dcc4" }
   ];
   var FLOWER_COLORS = ["#ffd7e8", "#fff3b0", "#ffffff"];
+  var HERO_PALETTE = {
+    ".": null,
+    o: "#2a2118",
+    c: "#d4374a",
+    d: "#a02a3c",
+    l: "#ef6672",
+    s: "#f2d8b0",
+    k: "#d9b98c",
+    w: "#2fb3a6",
+    n: "#1e857c",
+    v: "#8a5230",
+    b: "#64391f",
+    h: "#efe0bd",
+    p: "#3f4a5e",
+    t: "#6e4a2e",
+    u: "#9c6b3f",
+    y: "#ffd76e"
+  };
+  var HERO_W = 20;
+  var HERO_H = 20;
+  var HERO_FRAMES = {
+    idle0: [
+      "....................",
+      ".......ccccc........",
+      "......cllllccc......",
+      ".....cclllccccc.....",
+      "....cccccccccccc....",
+      "..cc.dddddddddd.....",
+      "..ccd.ssssssks......",
+      "...cc.ssssssks......",
+      "....c.ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      "......nnwwwwww......",
+      "....nnvvvvvvu.......",
+      "...nwhvvbbvvvh......",
+      ".....hvvbbvvvh......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      ".......tt.tt........",
+      "......ttt.ttt......."
+    ],
+    idle1: [
+      "....................",
+      "....................",
+      ".......ccccc........",
+      "......cllllccc......",
+      ".....cclllccccc.....",
+      "....cccccccccccc....",
+      "..cc.dddddddddd.....",
+      "..ccd.ssssssks......",
+      "...cc.ssssssks......",
+      "....c.ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      "......nnwwwwww......",
+      "....nnvvvvvvu.......",
+      "...nwhvvbbvvvh......",
+      ".....hvvbbvvvh......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      ".......tt.tt........",
+      "......ttt.ttt......."
+    ],
+    run0: [
+      ".......ccccc........",
+      ".cccc.cllllccc......",
+      ".cccdcclllccccc.....",
+      "..c.cccccccccccc....",
+      ".....dddddddddd.....",
+      "......ssssssks......",
+      "......ssssssks......",
+      "......ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      ".wwwn.nnwwwwww......",
+      "wwn...vvvvvvuhh.....",
+      "......vvbbvvv.......",
+      "....hhvvbbvvv.......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      ".......pp..pp.......",
+      "......pp....tt......",
+      ".....ttt...ttt......"
+    ],
+    run1: [
+      ".......ccccc........",
+      "..cc..cllllccc......",
+      ".ccd.cclllccccc.....",
+      "..c.cccccccccccc....",
+      ".....dddddddddd.....",
+      "......ssssssks......",
+      "......ssssssks......",
+      "......ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      "..wwn.nnwwwwww......",
+      ".wn...vvvvvvu.......",
+      ".....hvvbbvvvh......",
+      "......vvbbvvv.......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      ".......pp...........",
+      ".......pptt.........",
+      "......ttt..........."
+    ],
+    run2: [
+      ".......ccccc........",
+      ".cccc.cllllccc......",
+      ".cccdcclllccccc.....",
+      "..c.cccccccccccc....",
+      ".....dddddddddd.....",
+      "......ssssssks......",
+      "......ssssssks......",
+      "......ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      ".wwwn.nnwwwwww......",
+      "wwn.hhvvvvvvu.......",
+      "......vvbbvvv.......",
+      "......vvbbvvvhh.....",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      "......pp..pp........",
+      "....tt....pp........",
+      "...ttt...ttt........"
+    ],
+    run3: [
+      ".......ccccc........",
+      "..cc..cllllccc......",
+      ".ccd.cclllccccc.....",
+      "..c.cccccccccccc....",
+      ".....dddddddddd.....",
+      "......ssssssks......",
+      "......ssssssks......",
+      "......ssoososs......",
+      "......ssoososs......",
+      "......ssssssks......",
+      "..wwn.nnwwwwww......",
+      ".wn...vvvvvvu.......",
+      ".....hvvbbvvvh......",
+      "......vvbbvvv.......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      ".........pp.........",
+      ".......ttpp.........",
+      ".........ttt........"
+    ],
+    jump: [
+      ".......ccccc........",
+      "......cllllccc......",
+      ".....cclllccccc.....",
+      "....cccccccccccc....",
+      ".....dddddddddd.....",
+      "..cc..ssssssks......",
+      "..cc..ssssssks......",
+      "..cd..ssoososs......",
+      "...c..ssoososs......",
+      ".....sssssssks......",
+      ".....hnnwwwwwh......",
+      "....nhvvvvvvuh......",
+      "...nw.vvbbvvv.......",
+      "...nw.vvbbvvv.......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      ".......pppp.........",
+      "......tttttt........",
+      "...................."
+    ],
+    fall: [
+      "..c....ccccc........",
+      ".ccd..cllllccc......",
+      "..cc.cclllccccc.....",
+      "....cccccccccccc....",
+      ".....dddddddddd.....",
+      "......ssssssks......",
+      "......ssssssks......",
+      "......ssoososs......",
+      "...nn.ssoososs......",
+      "..wnn.ssssssks......",
+      "...nn.nnwwwwww......",
+      "....hhvvvvvvuhh.....",
+      "......vvbbvvv.......",
+      "......vvbbvvv.......",
+      "....uuvvvvvvv.......",
+      "....uypppyppp.......",
+      "......ppppppp.......",
+      "......pp...pp.......",
+      "....tt.....tt.......",
+      "............ttt....."
+    ]
+  };
+  function buildHeroCanvases() {
+    if (typeof document === "undefined")
+      return null;
+    const out = {};
+    for (const [name, rows] of Object.entries(HERO_FRAMES)) {
+      const c = makeCanvas(HERO_W + 2, HERO_H + 2);
+      const g = c.getContext("2d");
+      if (!g || typeof g.fillRect !== "function")
+        return null;
+      const opaque = rows.map((r) => [...r].map((ch) => ch !== "."));
+      rows.forEach((row, y) => {
+        [...row].forEach((ch, x) => {
+          if (ch === ".")
+            return;
+          const hex = HERO_PALETTE[ch];
+          if (!hex)
+            throw new Error(`hero frame "${name}": unknown palette char "${ch}"`);
+          g.fillStyle = hex;
+          g.fillRect(x + 1, y + 1, 1, 1);
+        });
+      });
+      const at = (x, y) => x >= 0 && y >= 0 && x < HERO_W && y < HERO_H && opaque[y][x];
+      g.fillStyle = HERO_PALETTE.o;
+      for (let y = -1;y <= HERO_H; y++) {
+        for (let x = -1;x <= HERO_W; x++) {
+          if (at(x, y))
+            continue;
+          if (at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) {
+            g.fillRect(x + 1, y + 1, 1, 1);
+          }
+        }
+      }
+      out[name] = c;
+    }
+    return out;
+  }
   function makeRng2(seed) {
     let s = seed >>> 0;
     return function() {
@@ -2385,6 +2617,7 @@
       this._decorSource = null;
       this._level = null;
       this._glows = {};
+      this._hero = undefined;
       if (typeof Image === "undefined")
         return;
       let pending = Object.keys(SHEETS).length;
@@ -3033,25 +3266,34 @@
       }
       return this._facing.get(entity) ?? 1;
     }
+    _ensureHero() {
+      if (this._hero === undefined)
+        this._hero = buildHeroCanvases();
+      return this._hero;
+    }
+    _heroPose(player) {
+      if (!player.grounded)
+        return player.vy < 0 ? "jump" : "fall";
+      if (Math.abs(player.vx) > 5)
+        return "run" + Math.floor(this.clock * 20) % 4;
+      return "idle" + Math.floor(this.clock * 2) % 2;
+    }
     drawPlayer(ctx, player, squash = 1) {
       const moving = Math.abs(player.vx) > 5;
-      let frame = CHARS.PLAYER_IDLE;
-      if (!player.grounded) {
-        frame = CHARS.PLAYER_RUN;
-      } else if (moving) {
-        frame = Math.floor(this.clock * 8) % 2 === 0 ? CHARS.PLAYER_RUN : CHARS.PLAYER_IDLE;
-      }
       const face = this._faceOf(player);
       const w = 44;
       const h = 44 * squash;
       const cx = player.x + player.width / 2;
       this._entityShadow(ctx, cx, player.y + player.height, 16);
-      const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 8 * Math.PI)) * 2 : 0;
+      const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 10 * Math.PI)) * 2 : 0;
       const feet = player.y + player.height - bob;
+      const hero = this._ensureHero();
+      if (!hero)
+        return;
       ctx.save();
       ctx.translate(cx, feet);
       ctx.scale(face, 1);
-      this._drawSheet(ctx, "characters", frame, -w / 2, -h, w, h);
+      ctx.drawImage(hero[this._heroPose(player)], -w / 2, -h, w, h);
       ctx.restore();
     }
     drawEnemy(ctx, enemy, index) {

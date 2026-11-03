@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect } from "../../js/sprites.js";
+import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE } from "../../js/sprites.js";
 
 // Frame-map integrity: every index referenced by the renderer must exist
 // inside its packed sheet, or the game draws garbage rectangles of pixels.
@@ -243,4 +243,211 @@ test("only jungle levels grow ceiling vines", () => {
     expect(withCeiling(1)).toBe(false);
     expect(withCeiling(8)).toBe(false);
     expect(withCeiling(6)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Hero redesign (2026-11-04): indexed pixel-art frames + deterministic pose
+// selection. The hero left the Kenney characters sheet, so its art contract
+// is now carried entirely by HERO_FRAMES and drawPlayer.
+// ---------------------------------------------------------------------------
+const HERO_NAMES = ['idle0', 'idle1', 'run0', 'run1', 'run2', 'run3', 'jump', 'fall'];
+
+test("hero frame set is complete: idle x2, run x4, jump, fall", () => {
+    expect(Object.keys(HERO_FRAMES).sort()).toEqual([...HERO_NAMES].sort());
+});
+
+test("every hero frame is a 20x20 grid of known palette colours", () => {
+    const chars = Object.keys(HERO_PALETTE);
+    for (const name of HERO_NAMES) {
+        const rows = HERO_FRAMES[name];
+        expect(rows.length, `${name} row count`).toBe(20);
+        for (let y = 0; y < 20; y++) {
+            expect(rows[y].length, `${name} row ${y} width`).toBe(20);
+            for (const ch of rows[y]) {
+                expect(chars, `${name} uses "${ch}"`).toContain(ch);
+            }
+        }
+    }
+});
+
+test("grounded hero frames plant feet on the baseline row", () => {
+    // Feet must meet the deck honestly: every grounded pose has colour in the
+    // bottom content row (row 19), inside the hitbox footprint columns.
+    for (const name of ['idle0', 'idle1', 'run0', 'run1', 'run2', 'run3']) {
+        const bottom = HERO_FRAMES[name][19];
+        const ink = [...bottom].map((c, x) => (c !== '.' ? x : -1)).filter(x => x >= 0);
+        expect(ink.length, `${name} has feet pixels`).toBeGreaterThan(0);
+        expect(Math.max(...ink) - Math.min(...ink), `${name} foot span within body`)
+            .toBeLessThanOrEqual(12);
+    }
+    // Airborne tuck deliberately lifts off the baseline.
+    expect(HERO_FRAMES.jump[19]).toBe('....................');
+});
+
+test("_heroPose maps player state + clock to the right frame deterministically", () => {
+    const s = new Sprites();
+    const at = (clock, vx, vy, grounded) => {
+        s.clock = clock;
+        return s._heroPose({ vx, vy, grounded });
+    };
+    // Grounded still -> idle pair alternating every 0.5 s.
+    expect(at(0.1, 0, 0, true)).toBe('idle0');
+    expect(at(0.6, 0, 0, true)).toBe('idle1');
+    expect(at(1.1, 0, 0, true)).toBe('idle0');
+    // Grounded moving -> the 4-frame cycle stepping at 20/s (10 footfalls).
+    expect([at(0.01, 60, 0, true), at(0.06, 60, 0, true),
+        at(0.11, 60, 0, true), at(0.16, 60, 0, true),
+        at(0.21, 60, 0, true)]).toEqual(['run0', 'run1', 'run2', 'run3', 'run0']);
+    // Airborne rising -> jump; falling (incl. apex vy=0) -> fall.
+    expect(at(0.2, 60, -300, false)).toBe('jump');
+    expect(at(0.2, 60, 300, false)).toBe('fall');
+    expect(at(0.2, 60, 0, false)).toBe('fall');
+    // Pure function of state: identical inputs -> identical output.
+    expect(at(0.06, -60, 0, true)).toBe(at(0.06, -60, 0, true));
+});
+
+// Extended recorder that also captures drawImage geometry (the shared
+// recordingCtx ignores args; squash/anchor assertions need them) plus the
+// identity of the blitted frame (fake canvases carry their pose name).
+function heroCtx() {
+    const ops = [];
+    const ctx = {
+        ops,
+        fillStyle: '#000', globalAlpha: 1,
+        save: () => ops.push('save'),
+        restore: () => ops.push('restore'),
+        translate: (x, y) => ops.push(`translate ${x} ${y}`),
+        scale: (x, y) => ops.push(`scale ${x} ${y}`),
+        beginPath: () => ops.push('beginPath'),
+        ellipse: (...a) => ops.push(`ellipse ${a.join(' ')}`),
+        closePath: () => ops.push('closePath'),
+        fill: () => ops.push(`fill ${ctx.fillStyle}`),
+        drawImage: (img, dx, dy, dw, dh) =>
+            ops.push(`drawImage ${img && img.pose} ${dx} ${dy} ${dw} ${dh}`)
+    };
+    return ctx;
+}
+
+// Headless environments never rasterise (buildHeroCanvases -> null), so
+// geometry/frame-identity tests inject tagged stand-ins past the bake guard.
+function withFakeHero(sprites) {
+    sprites._hero = Object.fromEntries(HERO_NAMES.map(n => [n, { pose: n }]));
+    return sprites;
+}
+
+const heroFixture = (extra = {}) => ({
+    x: 100, y: 200, width: 32, height: 32, vx: 0, vy: 0, grounded: true, ...extra
+});
+
+test("drawPlayer op log is deterministic across every pose path incl. squash", () => {
+    const cases = [
+        [{}, 1], [{}, 0.75],                                  // idle, squash
+        [{ vx: 60 }, 1], [{ vx: -60 }, 1],                    // run L/R facing flip
+        [{ vx: 60 }, 0.5],                                    // run + squash
+        [{ vy: -300, grounded: false }, 1],                   // jump
+        [{ vy: 300, grounded: false }, 1]                     // fall
+    ];
+    const clocks = [0.01, 0.06, 0.11, 0.16, 0.35];
+    for (const extra of cases) {
+        for (const clock of clocks) {
+            const a = heroCtx(), b = heroCtx();
+            const sa = withFakeHero(new Sprites()), sb = withFakeHero(new Sprites());
+            sa.clock = sb.clock = clock;
+            const pa = heroFixture(extra[0]), pb = heroFixture(extra[0]);
+            sa.drawPlayer(a, pa, extra[1]);
+            sb.drawPlayer(b, pb, extra[1]);
+            expect(b.ops, `clock=${clock} ${JSON.stringify(extra)}`).toEqual(a.ops);
+            // And the blitted frame is the pose the selector promised.
+            const di = a.ops.find(o => o.startsWith('drawImage'));
+            expect(di.split(' ')[1]).toBe(sa._heroPose(pa));
+        }
+    }
+});
+
+test("drawPlayer anchors feet and honours squash via drawImage geometry", () => {
+    const s = withFakeHero(new Sprites());
+    s.clock = 0.35;
+    const plain = heroCtx();
+    s.drawPlayer(plain, heroFixture(), 1);
+    const di = plain.ops.find(o => o.startsWith('drawImage'));
+    expect(di).toBeDefined();
+    const [, , dx, dy, dw, dh] = di.split(' ').map((v, i) => (i === 0 ? v : Number(v)));
+    expect(dw).toBe(44);
+    expect(dh).toBe(44);          // 22px baked grid at exactly 2x
+    expect(dy).toBe(-44);         // feet-anchored: sprite sits above the line
+    expect(dx).toBe(-22);         // centred on the hitbox
+
+    const squashed = heroCtx();
+    s.drawPlayer(squashed, heroFixture(), 0.5);
+    const d2 = squashed.ops.find(o => o.startsWith('drawImage')).split(' ');
+    expect(Number(d2[5])).toBe(22);   // height compresses with squash...
+    expect(Number(d2[4])).toBe(44);   // ...width does not
+    expect(Number(d2[3])).toBe(-22);  // still anchored at the feet
+
+    // Facing flip reaches the transform (cached from vx sign).
+    const right = heroCtx();
+    s.drawPlayer(right, heroFixture({ vx: 60 }), 1);
+    expect(right.ops.some(o => o === 'scale 1 1')).toBe(true);
+    const left = heroCtx();
+    s.drawPlayer(left, heroFixture({ vx: -60 }), 1);
+    expect(left.ops.some(o => o === 'scale -1 1')).toBe(true);
+
+    // Translate origin IS the feet line (review follow-up): cx = 100+16,
+    // feet = 200+32, bob zero while idle. Without this pin, swapping the
+    // origin to player.y (hero floats one hitbox above ground) would pass
+    // every drawImage-geometry assertion above.
+    expect(plain.ops.some(o => o === 'translate 116 232')).toBe(true);
+});
+
+test("hero canvases bake once per instance behind a cache guard", () => {
+    const s = new Sprites();
+    expect(s._hero).toBeUndefined();               // not attempted yet
+    const first = s._ensureHero();
+    expect(s._hero).not.toBeUndefined();           // attempt recorded
+    expect(s._ensureHero()).toBe(first);           // identity: never rebuilt
+    // A second draw call must not re-bake either.
+    const before = s._hero;
+    const ctx = heroCtx();
+    s.clock = 0.1;
+    s.drawPlayer(ctx, heroFixture(), 1);
+    expect(s._hero).toBe(before);
+});
+
+test("bake runs exactly one canvas per frame even with raster available", () => {
+    // Headless CI note (review follow-up): without a real 2D context the
+    // guard above degrades to null===null. This variant stubs a minimal
+    // fillRect-capable canvas so the bake SUCCEEDS, then counts actual
+    // createElement calls — a re-bake on repeat calls or draws would trip it.
+    const realCreate = document.createElement.bind(document);
+    let created = 0;
+    document.createElement = (tag) => {
+        if (tag === 'canvas') {
+            created++;
+            return {
+                width: 0, height: 0,
+                getContext: () => ({ fillStyle: '', fillRect: () => {} })
+            };
+        }
+        return realCreate(tag);
+    };
+    try {
+        const s = new Sprites();
+        const baked = s._ensureHero();
+        expect(baked).not.toBeNull();              // fake raster succeeded
+        expect(created).toBe(Object.keys(HERO_FRAMES).length);
+        created = 0;
+        expect(s._ensureHero()).toBe(baked);       // identity, no rebuild
+        const ctx = heroCtx();
+        s.clock = 0.25;
+        s.drawPlayer(ctx, heroFixture({ vx: 60 }), 1);
+        expect(created).toBe(0);                   // steady state allocates none
+    } finally {
+        document.createElement = realCreate;
+    }
+});
+
+test("the hero no longer references the Kenney characters sheet", () => {
+    for (const key of Object.keys(CHARS)) {
+        expect(key.startsWith('PLAYER_'), `${key} retired`).toBe(false);
+    }
 });
