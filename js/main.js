@@ -57,6 +57,24 @@ const LOOP_ERROR_RECOVERY_FRAMES = 30;
 // generations+BFS per frame, silent after the first log line.
 const LEVEL_TRANSITION_MAX_STALL_FRAMES = 120;
 
+// Owner ruling (cause and effect): dying costs a slice of the run score, so
+// staying alive has a very real value. Applied on ANY GAME_OVER — spikes,
+// enemies, pit or timeout — exactly once inside handleGameOver. Coins stay
+// collected (the retry contract is unchanged) and the clock refills; only
+// the score shrinks. Never charged on level/game completion, and never on
+// the pause menu's Restart Level (that shares restartCurrentLevel with the
+// post-death retry, which must not double-charge). Tunable single point.
+export const DEATH_SCORE_PENALTY_RATE = 0.25;
+
+// Pure floor math, exported for unit tests: losing a fraction of the score
+// must land on whole points (scores are integers by construction), rounded
+// DOWN so the penalty is generous at the margin, and a zero (or corrupt)
+// score stays zero.
+export function deathScorePenalty(score) {
+    if (!Number.isFinite(score) || score <= 0) return 0;
+    return Math.floor(score * DEATH_SCORE_PENALTY_RATE);
+}
+
 // Every live Game, so test scaffolding sharing one window can tear down all
 // window listeners at once (see destroy()/destroyAllGames).
 const liveGames = new Set();
@@ -636,9 +654,16 @@ export class Game {
                 '#ff5a5a', 16);
         }
         this.ui.setPauseEnabled(false);
+        // Cause and effect (owner ruling): dying costs DEATH_SCORE_PENALTY_RATE
+        // of the current score, floored to whole points. Charged exactly here
+        // — once per death, never per frame — so further GAME_OVER ticks and
+        // the shared restart path cannot double-charge. The overlay then shows
+        // the POST-penalty total plus the loss line.
+        const penalty = deathScorePenalty(this.score);
+        this.score -= penalty;
         // Single game-over presentation path: UI.showGameOver writes the
         // #final-score node and reveals the overlay.
-        this.ui.showGameOver(this.score, cause);
+        this.ui.showGameOver(this.score, cause, penalty);
     }
 
     handleGameComplete() {

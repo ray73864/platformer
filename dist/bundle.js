@@ -40,11 +40,13 @@
   // js/main.js
   var exports_main = {};
   __export(exports_main, {
+    DEATH_SCORE_PENALTY_RATE: () => DEATH_SCORE_PENALTY_RATE,
     FINAL_LEVEL: () => FINAL_LEVEL,
     Game: () => Game,
     STATE: () => STATE,
     TILE_SIZE: () => TILE_SIZE,
     computeZoom: () => computeZoom,
+    deathScorePenalty: () => deathScorePenalty,
     destroyAllGames: () => destroyAllGames,
     init: () => init2
   });
@@ -1701,7 +1703,7 @@
       spike: "Landed on spikes",
       pit: "Fell into the void"
     };
-    showGameOver(score, cause) {
+    showGameOver(score, cause, penalty = 0) {
       if (this.finalScoreElement) {
         this.finalScoreElement.textContent = `Score: ${score}`;
       }
@@ -1710,6 +1712,11 @@
         const text = UI.DEATH_CAUSE_TEXT[cause] || "";
         causeEl.textContent = text;
         causeEl.hidden = !text;
+      }
+      const penaltyEl = document.getElementById("score-penalty");
+      if (penaltyEl) {
+        penaltyEl.textContent = penalty > 0 ? `-${penalty} points` : "";
+        penaltyEl.hidden = !(penalty > 0);
       }
       this.showOverlay("game-over-screen");
     }
@@ -2523,6 +2530,7 @@
     init: () => init,
     isMuted: () => isMuted,
     loadMutedPreference: () => loadMutedPreference,
+    musicVariantFor: () => musicVariantFor,
     playSfx: () => playSfx,
     presetForLevel: () => presetForLevel,
     setMuted: () => setMuted,
@@ -2546,7 +2554,20 @@
   var TIER_CREEP_BPM = 6;
   var STEPS_PER_BAR = 8;
   var LOOP_STEPS = STEPS_PER_BAR * 4;
-  var CHORD_DEGREES = [0, 2, 4, 2];
+  var PROGRESSION_VARIANTS = [
+    [[0, 2, 4, 2], [0, 3, 2, 4], [0, 4, 5, 4], [0, 2, 3, 2]],
+    [[0, 2, 4, 2], [0, 5, 4, 2], [0, 2, 5, 4], [0, 3, 4, 2]],
+    [[0, 2, 4, 2], [0, 4, 2, 2], [0, 5, 2, 4], [0, 2, 4, 5]]
+  ];
+  var MELODY_SHIFT_CHOICES = [0, 7, 12];
+  var DENSITY_CHOICES = [
+    { name: "sparse", prob: 0.45, maxLen: 3 },
+    { name: "medium", prob: 0.62, maxLen: 2 },
+    { name: "fluid", prob: 0.78, maxLen: 2 }
+  ];
+  var PAD_MODES = ["sustained", "arp"];
+  var BASS_MODES = ["pulse", "downbeat", "drone"];
+  var TEMPO_SWING_BPM = 4;
   function makeRng4(seed) {
     let s = seed >>> 0;
     return function() {
@@ -2579,17 +2600,45 @@
     const bpm = preset.bpm + (levelNumber >= TIER_CREEP_FIRST_LEVEL ? TIER_CREEP_BPM : 0);
     return { index, preset, bpm, seed: musicSeedForLevel(levelNumber) };
   }
+  function musicVariantFor(levelNumber) {
+    const { index, preset, bpm: baseBpm, seed } = presetForLevel(levelNumber);
+    const rng = makeRng4((seed ^ 2052534697) >>> 0);
+    const progressions = PROGRESSION_VARIANTS[index];
+    const progIndex = Math.floor(rng() * progressions.length);
+    const melodyShift = MELODY_SHIFT_CHOICES[Math.floor(rng() * MELODY_SHIFT_CHOICES.length)];
+    const density = DENSITY_CHOICES[Math.floor(rng() * DENSITY_CHOICES.length)];
+    const padMode = PAD_MODES[Math.floor(rng() * PAD_MODES.length)];
+    const bassMode = BASS_MODES[Math.floor(rng() * BASS_MODES.length)];
+    const bpmOffset = Math.floor(rng() * (2 * TEMPO_SWING_BPM + 1)) - TEMPO_SWING_BPM;
+    return {
+      index,
+      preset,
+      seed,
+      bpm: baseBpm + bpmOffset,
+      progression: progressions[progIndex],
+      progIndex,
+      melodyShift,
+      density: density.name,
+      densityProb: density.prob,
+      densityMaxLen: density.maxLen,
+      padMode,
+      bassMode,
+      bpmOffset,
+      signature: `${progIndex}+${melodyShift}+${density.name}+${padMode}+${bassMode}+${bpmOffset}`
+    };
+  }
   function buildMelodyLoop(presetIndex, levelNumber) {
     const preset = MUSIC_PRESETS[(presetIndex % MUSIC_PRESETS.length + MUSIC_PRESETS.length) % MUSIC_PRESETS.length];
+    const variant = musicVariantFor(levelNumber);
     const rng = makeRng4(musicSeedForLevel(levelNumber));
     const loop = new Array(LOOP_STEPS).fill(null);
     let degree = Math.floor(rng() * preset.scale.length);
     let i = 0;
     while (i < LOOP_STEPS) {
-      if (rng() < 0.34) {
+      if (rng() < variant.densityProb) {
         degree = Math.max(-2, Math.min(preset.scale.length + 3, degree + Math.floor(rng() * 5) - 2));
         const oct = rng() < 0.25 ? 1 : 0;
-        const len = Math.min(1 + Math.floor(rng() * 3), LOOP_STEPS - i);
+        const len = Math.min(1 + Math.floor(rng() * variant.densityMaxLen), LOOP_STEPS - i);
         loop[i] = { deg: degree, oct, len };
         i += len;
       } else {
@@ -2784,8 +2833,9 @@
   }
   function playMusicStep(pb, step, when) {
     const preset = pb.preset;
-    if (step % LOOP_STEPS === 0) {
-      const chordRoot = CHORD_DEGREES[0];
+    const v = pb.variant;
+    if (step % LOOP_STEPS === 0 && v.padMode === "sustained") {
+      const chordRoot = v.progression[0];
       const dur = pb.stepDur * LOOP_STEPS + 2;
       for (const offset of [0, 2, 4]) {
         const freq = scaleNoteHz(preset, chordRoot + offset, 0);
@@ -2810,13 +2860,51 @@
         }
       }
     }
-    if (step % STEPS_PER_BAR === 0) {
-      const bar = step / STEPS_PER_BAR % CHORD_DEGREES.length;
+    if (step % LOOP_STEPS === 0 && v.bassMode === "drone") {
       tone({
         wave: "sine",
-        freq: scaleNoteHz(preset, CHORD_DEGREES[bar], -1),
-        dur: pb.stepDur * 3.2,
-        peak: 0.16,
+        freq: scaleNoteHz(preset, v.progression[0], -2),
+        dur: pb.stepDur * LOOP_STEPS + 1,
+        peak: 0.13,
+        attack: 0.5,
+        dest: pb.gain,
+        when
+      });
+    }
+    if (step % STEPS_PER_BAR === 0) {
+      const bar = step / STEPS_PER_BAR % v.progression.length;
+      const chordRoot = v.progression[bar];
+      if (v.padMode === "arp") {
+        tone({
+          wave: "triangle",
+          freq: scaleNoteHz(preset, chordRoot + [0, 2, 4][bar % 3], 0),
+          dur: pb.stepDur * STEPS_PER_BAR + 0.6,
+          peak: 0.07,
+          attack: 0.3,
+          filterHz: preset.padCutoff,
+          dest: pb.gain,
+          when
+        });
+      }
+      if (v.bassMode !== "drone") {
+        tone({
+          wave: "sine",
+          freq: scaleNoteHz(preset, chordRoot, -1),
+          dur: pb.stepDur * 3.2,
+          peak: 0.16,
+          attack: 0.02,
+          dest: pb.gain,
+          when
+        });
+      }
+    }
+    if (v.bassMode === "pulse" && step % STEPS_PER_BAR === 4) {
+      const bar = (step - 4) / STEPS_PER_BAR % v.progression.length;
+      tone({
+        wave: "sine",
+        freq: scaleNoteHz(preset, v.progression[bar], -1),
+        dur: pb.stepDur * 2,
+        peak: 0.1,
         attack: 0.02,
         dest: pb.gain,
         when
@@ -2825,9 +2913,10 @@
     const note = pb.melody[step];
     if (note) {
       const dur = Math.min(note.len * pb.stepDur * 0.9, 1.6);
+      const freq = scaleNoteHz(preset, note.deg, note.oct + 1) * Math.pow(2, v.melodyShift / 12);
       tone({
         wave: preset.melodyWave,
-        freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+        freq,
         dur,
         peak: 0.12,
         attack: 0.03,
@@ -2837,7 +2926,7 @@
       if (pb.delaySend) {
         tone({
           wave: preset.melodyWave,
-          freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+          freq,
           dur,
           peak: 0.12,
           attack: 0.03,
@@ -2857,9 +2946,9 @@
   function retirePlayback(pb) {
     later(CROSSFADE_SEC * 1000 + 150, () => disconnectPlayback(pb));
   }
-  function createPlayback(index, bpm, seed) {
+  function createPlayback(index, variant, levelNumber) {
     const preset = MUSIC_PRESETS[index];
-    const stepDur = 60 / bpm / 2;
+    const stepDur = 60 / variant.bpm / 2;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, ctx.currentTime);
     gain.gain.linearRampToValueAtTime(1, ctx.currentTime + CROSSFADE_SEC);
@@ -2880,11 +2969,12 @@
       delayNode.connect(gain);
     }
     return {
-      key: `${index}:${bpm}:${seed}`,
+      key: `${index}:${variant.bpm}:${variant.seed}:${variant.signature}`,
       gain,
       preset,
+      variant,
       stepDur,
-      melody: buildMelodyLoop(index, seed),
+      melody: buildMelodyLoop(index, levelNumber),
       delaySend,
       delayNode,
       feedback,
@@ -2941,13 +3031,13 @@
   function startMusic(themeIndex, levelNumber) {
     if (!ensureContext())
       return;
-    const { index: derivedIndex, bpm, seed } = presetForLevel(levelNumber);
-    const index = Number.isInteger(themeIndex) && themeIndex >= 0 && themeIndex < MUSIC_PRESETS.length ? themeIndex : derivedIndex;
-    const key = `${index}:${bpm}:${seed}`;
+    const variant = musicVariantFor(levelNumber);
+    const index = Number.isInteger(themeIndex) && themeIndex >= 0 && themeIndex < MUSIC_PRESETS.length ? themeIndex : variant.index;
+    const key = `${index}:${variant.bpm}:${variant.seed}:${variant.signature}`;
     if (playback && playback.key === key)
       return;
     const old = playback;
-    playback = createPlayback(index, bpm, seed);
+    playback = createPlayback(index, variant, levelNumber);
     if (old) {
       const t = ctx.currentTime;
       old.gain.gain.cancelScheduledValues(t);
@@ -3024,6 +3114,12 @@
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
   var LOOP_ERROR_RECOVERY_FRAMES = 30;
   var LEVEL_TRANSITION_MAX_STALL_FRAMES = 120;
+  var DEATH_SCORE_PENALTY_RATE = 0.25;
+  function deathScorePenalty(score) {
+    if (!Number.isFinite(score) || score <= 0)
+      return 0;
+    return Math.floor(score * DEATH_SCORE_PENALTY_RATE);
+  }
   var liveGames = new Set;
   function destroyAllGames() {
     for (const game of liveGames)
@@ -3326,7 +3422,9 @@
         spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ff5a5a", 16);
       }
       this.ui.setPauseEnabled(false);
-      this.ui.showGameOver(this.score, cause);
+      const penalty = deathScorePenalty(this.score);
+      this.score -= penalty;
+      this.ui.showGameOver(this.score, cause, penalty);
     }
     handleGameComplete() {
       this.setState(STATE.GAME_COMPLETE);

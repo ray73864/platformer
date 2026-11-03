@@ -210,7 +210,10 @@ export class UI {
         pit: 'Fell into the void'
     };
 
-    showGameOver(score, cause) {
+    // score is the POST-penalty total; penalty (default 0 keeps old call
+    // sites working) renders the cause-and-effect loss line next to the
+    // cause. Hidden when nothing was lost.
+    showGameOver(score, cause, penalty = 0) {
         // The game-over overlay reads its score from #final-score, not the
         // HUD counter (the HUD is hidden behind the overlay).
         if (this.finalScoreElement) {
@@ -221,6 +224,11 @@ export class UI {
             const text = UI.DEATH_CAUSE_TEXT[cause] || '';
             causeEl.textContent = text;
             causeEl.hidden = !text;
+        }
+        const penaltyEl = document.getElementById('score-penalty');
+        if (penaltyEl) {
+            penaltyEl.textContent = penalty > 0 ? `-${penalty} points` : '';
+            penaltyEl.hidden = !(penalty > 0);
         }
         this.showOverlay('game-over-screen');
     }

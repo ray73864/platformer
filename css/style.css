@@ -160,6 +160,15 @@ button:active {
     color: var(--dirt-deep);
 }
 
+/* Cost of dying on the game-over panel (see UI.showGameOver): a smaller,
+   red counterpart to the cause line — same pixel-face voice as the rest of
+   the overlay text, no inline styling. Hidden via [hidden] when the penalty
+   is zero. */
+#score-penalty {
+    font-size: 0.75rem;
+    color: #b3261e;
+}
+
 /* Loop-error notice (see UI.showErrorMessage). Above every overlay. */
 #error-message {
     position: absolute;

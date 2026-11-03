@@ -65,6 +65,104 @@ describe("audio melody generation", () => {
     });
 });
 
+describe("audio per-level music variants (musicVariantFor)", () => {
+    test("deterministic: the same level re-derives an identical variant (retry-stable)", () => {
+        expect(JSON.stringify(audio.musicVariantFor(7)))
+            .toBe(JSON.stringify(audio.musicVariantFor(7)));
+        // ...and so does every level in the acceptance window.
+        for (let level = 1; level <= 24; level++) {
+            expect(JSON.stringify(audio.musicVariantFor(level)))
+                .toBe(JSON.stringify(audio.musicVariantFor(level)));
+        }
+    });
+
+    test("every knob is present and inside its declared domain", () => {
+        const shifts = new Set([0, 7, 12]);
+        const densities = new Set(["sparse", "medium", "fluid"]);
+        const pads = new Set(["sustained", "arp"]);
+        const basses = new Set(["pulse", "downbeat", "drone"]);
+        for (let level = 1; level <= 60; level++) {
+            const v = audio.musicVariantFor(level);
+            expect(v.progression.length).toBe(4);
+            v.progression.forEach(d => expect(Number.isInteger(d)).toBe(true));
+            expect(shifts.has(v.melodyShift)).toBe(true);
+            expect(densities.has(v.density)).toBe(true);
+            expect(pads.has(v.padMode)).toBe(true);
+            expect(basses.has(v.bassMode)).toBe(true);
+            expect(Math.abs(v.bpmOffset)).toBeLessThanOrEqual(4);
+        }
+    });
+
+    test("tempo swings at most ±4 BPM around the band base (tier creep included)", () => {
+        const bases = [72, 66, 78];
+        for (let level = 1; level <= 60; level++) {
+            const v = audio.musicVariantFor(level);
+            const creep = level >= 25 ? 6 : 0;
+            expect(Math.abs(v.bpm - (bases[v.index] + creep))).toBeLessThanOrEqual(4);
+            // Chill-range guard: dusk floor minus swing .. jungle ceiling plus
+            // creep plus swing.
+            expect(v.bpm).toBeGreaterThanOrEqual(62);
+            expect(v.bpm).toBeLessThanOrEqual(88);
+        }
+    });
+
+    test("band mapping follows the THEMES cycle like presetForLevel", () => {
+        for (let level = 1; level <= 12; level++) {
+            expect(audio.musicVariantFor(level).index).toBe((level - 1) % 3);
+        }
+    });
+
+    test("invalid level numbers warn and fall back to the level-1 variant", () => {
+        const originalWarn = console.warn;
+        console.warn = () => {};
+        try {
+            for (const bad of [0, -3, 2.5, NaN, null, undefined, "5"]) {
+                expect(audio.musicVariantFor(bad).index).toBe(0);
+            }
+        } finally {
+            console.warn = originalWarn;
+        }
+    });
+
+    test("variety acceptance bar: >= 18 distinct variant signatures across L1..24", () => {
+        const signatures = new Set();
+        for (let level = 1; level <= 24; level++) {
+            signatures.add(audio.musicVariantFor(level).signature);
+        }
+        expect(signatures.size).toBeGreaterThanOrEqual(18);
+    });
+
+    test("adjacent levels ALWAYS differ under the running key (fresh crossfade per level)", () => {
+        // Mirrors the playback key built in startMusic/createPlayback:
+        // `${index}:${bpm}:${seed}:${signature}`.
+        const keyFor = (level) => {
+            const v = audio.musicVariantFor(level);
+            return `${v.index}:${v.bpm}:${v.seed}:${v.signature}`;
+        };
+        for (let level = 1; level < 48; level++) {
+            expect(keyFor(level)).not.toBe(keyFor(level + 1));
+        }
+    });
+
+    test("melody density knob feeds buildMelodyLoop: fluid levels are denser than sparse", () => {
+        // Find one fluid and one sparse level sharing a band, then compare
+        // note counts. Deterministic seeds make the pair stable; the fluid
+        // placement probability must win on aggregate over the band's first
+        // six levels so the assertion cannot hinge on a single draw.
+        const noteCount = (level) =>
+            audio.buildMelodyLoop((level - 1) % 3, level).filter(Boolean).length;
+        let fluidTotal = 0, fluidN = 0, sparseTotal = 0, sparseN = 0;
+        for (let level = 1; level <= 30; level++) {
+            const d = audio.musicVariantFor(level).density;
+            if (d === "fluid") { fluidTotal += noteCount(level); fluidN++; }
+            if (d === "sparse") { sparseTotal += noteCount(level); sparseN++; }
+        }
+        expect(fluidN).toBeGreaterThan(0);
+        expect(sparseN).toBeGreaterThan(0);
+        expect(fluidTotal / fluidN).toBeGreaterThan(sparseTotal / sparseN);
+    });
+});
+
 describe("audio scheduler step math (fake clock)", () => {
     test("emits every step inside the lookahead window and advances the cursor", () => {
         const state = { step: 0, nextStepTime: 0 };

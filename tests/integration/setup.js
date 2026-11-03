@@ -82,6 +82,8 @@ export function mountFixture() {
             <button id="quit-menu-btn" aria-label="Quit to Menu">Quit to Menu</button>
         </div>
         <div id="error-message" class="hidden" role="alert"></div>
+        <p id="score-penalty" aria-live="polite" hidden></p>
+        <p id="death-cause" hidden></p>
         <div id="final-score"></div>
     `;
 }

@@ -15,8 +15,8 @@
 //    never burst-catches-up.
 //
 // Pure-logic seams exported for unit tests (no audio hardware needed):
-// presetForLevel, buildMelodyLoop, advanceScheduler, loadMutedPreference,
-// getState.
+// presetForLevel, musicVariantFor, buildMelodyLoop, advanceScheduler,
+// loadMutedPreference, getState.
 
 const MUSIC_LEVEL = 0.35;
 const SFX_LEVEL = 0.6;
@@ -50,10 +50,43 @@ const TIER_CREEP_BPM = 6;
 // Eighth-note grid; one melodic loop spans four bars.
 const STEPS_PER_BAR = 8;
 const LOOP_STEPS = STEPS_PER_BAR * 4;
-// Pad chord rotation per bar within the phrase, expressed as SCALE DEGREES
+// Chord rotation per bar within the phrase, expressed as SCALE DEGREES
 // (not semitones): every chord tone is drawn from the preset scale, so any
-// rotation stays consonant with the melody regardless of mode.
-const CHORD_DEGREES = [0, 2, 4, 2];
+// rotation stays consonant with the melody regardless of mode. Player
+// ruling: music must vary EVERY level — each band carries several four-bar
+// progressions and one is picked per level (see musicVariantFor).
+const PROGRESSION_VARIANTS = [
+    // day: bright pentatonic turns
+    [[0, 2, 4, 2], [0, 3, 2, 4], [0, 4, 5, 4], [0, 2, 3, 2]],
+    // dusk: longer drifts off the tonic
+    [[0, 2, 4, 2], [0, 5, 4, 2], [0, 2, 5, 4], [0, 3, 4, 2]],
+    // jungle: darker suspensions under the delay-dampened lead
+    [[0, 2, 4, 2], [0, 4, 2, 2], [0, 5, 2, 4], [0, 2, 4, 5]]
+];
+
+// Melody register shifts in semitones above the default lead octave:
+// base / a fifth up / a full octave up, picked per level.
+const MELODY_SHIFT_CHOICES = [0, 7, 12];
+
+// Melody note density: eighth-step placement probability plus max note
+// length, giving roughly one note per 3 / 2 / 1.5 steps. Probabilities are
+// tuned so the expected gap (skips + average held length) lands there.
+const DENSITY_CHOICES = [
+    { name: 'sparse', prob: 0.45, maxLen: 3 },
+    { name: 'medium', prob: 0.62, maxLen: 2 },
+    { name: 'fluid', prob: 0.78, maxLen: 2 }
+];
+
+// Pad character: the triad blooms as one sustained chord, or unfolds one
+// tone per bar as a slow arpeggio.
+const PAD_MODES = ['sustained', 'arp'];
+
+// Bass: pulse on every bar plus a mid-bar echo, pulse on bar downbeats
+// only, or no pulses at all — just a sub-bass drone under the phrase.
+const BASS_MODES = ['pulse', 'downbeat', 'drone'];
+
+// Per-level tempo swing around the band base, kept inside the chill range.
+const TEMPO_SWING_BPM = 4;
 
 // Local copy of the mulberry32 PRNG (same algorithm as level.js/sprites.js):
 // the melody stream derives from the level NUMBER only, so it is
@@ -107,23 +140,63 @@ export function presetForLevel(levelNumber) {
     return { index, preset, bpm, seed: musicSeedForLevel(levelNumber) };
 }
 
+// Full per-level arrangement: everything that makes one level's track its
+// own, derived deterministically from the level number through the same
+// mulberry32 convention as the melody (a seed-mixed stream, so variant and
+// melody are independent draws of one level). Retrying a level re-derives
+// the identical variant; every new level crossfades to a fresh one because
+// the running-key guard below compares the variant signature too. Pure —
+// unit tests pin determinism and variety without any AudioContext.
+export function musicVariantFor(levelNumber) {
+    const { index, preset, bpm: baseBpm, seed } = presetForLevel(levelNumber);
+    const rng = makeRng((seed ^ 0x7a5731a9) >>> 0);
+    const progressions = PROGRESSION_VARIANTS[index];
+    const progIndex = Math.floor(rng() * progressions.length);
+    const melodyShift = MELODY_SHIFT_CHOICES[Math.floor(rng() * MELODY_SHIFT_CHOICES.length)];
+    const density = DENSITY_CHOICES[Math.floor(rng() * DENSITY_CHOICES.length)];
+    const padMode = PAD_MODES[Math.floor(rng() * PAD_MODES.length)];
+    const bassMode = BASS_MODES[Math.floor(rng() * BASS_MODES.length)];
+    const bpmOffset = Math.floor(rng() * (2 * TEMPO_SWING_BPM + 1)) - TEMPO_SWING_BPM;
+    return {
+        index,
+        preset,
+        seed,
+        bpm: baseBpm + bpmOffset,
+        progression: progressions[progIndex],
+        progIndex,
+        melodyShift,
+        density: density.name,
+        densityProb: density.prob,
+        densityMaxLen: density.maxLen,
+        padMode,
+        bassMode,
+        bpmOffset,
+        // Compact identity for the running-key guard: two levels sharing it
+        // would sound identical (their seeds still differ inside the full
+        // playback key, so the melody never repeats either).
+        signature: `${progIndex}+${melodyShift}+${density.name}+${padMode}+${bassMode}+${bpmOffset}`
+    };
+}
+
 // Build one LOOP_STEPS-step melody for a level: probabilistic placement
-// from the preset scale, seeded so the same (presetIndex, levelNumber)
-// always yields the identical sequence (the loop repeats verbatim).
-// Entries are null (rest) or { deg, oct, len } in scale degrees.
+// from the preset scale at the level's variant density, seeded so the same
+// (presetIndex, levelNumber) always yields the identical sequence (the loop
+// repeats verbatim).
 export function buildMelodyLoop(presetIndex, levelNumber) {
     const preset = MUSIC_PRESETS[((presetIndex % MUSIC_PRESETS.length) + MUSIC_PRESETS.length) % MUSIC_PRESETS.length];
+    const variant = musicVariantFor(levelNumber);
     const rng = makeRng(musicSeedForLevel(levelNumber));
     const loop = new Array(LOOP_STEPS).fill(null);
     let degree = Math.floor(rng() * preset.scale.length);
     let i = 0;
     while (i < LOOP_STEPS) {
-        // Sparse by design: roughly one note in three steps, held 1-3 steps.
-        if (rng() < 0.34) {
+        // Density comes from the level variant: sparse (~1 note per 3
+        // steps) through fluid (~1 per 1.5), held 1-maxLen steps.
+        if (rng() < variant.densityProb) {
             degree = Math.max(-2, Math.min(preset.scale.length + 3,
                 degree + Math.floor(rng() * 5) - 2));
             const oct = rng() < 0.25 ? 1 : 0;
-            const len = Math.min(1 + Math.floor(rng() * 3), LOOP_STEPS - i);
+            const len = Math.min(1 + Math.floor(rng() * variant.densityMaxLen), LOOP_STEPS - i);
             loop[i] = { deg: degree, oct, len };
             i += len;
         } else {
@@ -157,7 +230,7 @@ let ctx = null;
 let master = null;   // master volume (mute rides this) -> destination
 let sfxBus = null;   // all one-shots
 let musicBus = null; // music layer (duck rides this) <- playback gains
-let playback = null; // { key, gain, preset, stepDur, melody, delaySend, state:{step,nextStepTime} }
+let playback = null; // { key, gain, preset, variant, stepDur, melody, delaySend, state:{step,nextStepTime} }
 let schedulerId = null;
 let cleanupTimers = new Set();
 let noiseBuffer = null;
@@ -355,14 +428,16 @@ function startScheduler() {
     }, SCHEDULER_INTERVAL_MS);
 }
 
-// Render one grid step of the generative loop: soft bass pulse on bar
-// starts, a four-bar pad chord rotation, and the seeded sparse melody line.
+// Render one grid step of the generative loop against the level's variant:
+// bass per bassMode, pad chord rotation per padMode, and the seeded melody
+// line at its variant register.
 function playMusicStep(pb, step, when) {
     const preset = pb.preset;
-    if (step % LOOP_STEPS === 0) {
+    const v = pb.variant;
+    if (step % LOOP_STEPS === 0 && v.padMode === 'sustained') {
         // Pad: three scale-degree voices, each a detuned triangle pair
         // through a lowpass, lasting the full phrase plus release tail.
-        const chordRoot = CHORD_DEGREES[0];
+        const chordRoot = v.progression[0];
         const dur = pb.stepDur * LOOP_STEPS + 2;
         for (const offset of [0, 2, 4]) {
             const freq = scaleNoteHz(preset, chordRoot + offset, 0);
@@ -387,13 +462,56 @@ function playMusicStep(pb, step, when) {
             }
         }
     }
-    if (step % STEPS_PER_BAR === 0) {
-        const bar = (step / STEPS_PER_BAR) % CHORD_DEGREES.length;
+    if (step % LOOP_STEPS === 0 && v.bassMode === 'drone') {
+        // No pulses at all: one sub-bass fundamental under the whole phrase.
         tone({
             wave: 'sine',
-            freq: scaleNoteHz(preset, CHORD_DEGREES[bar], -1),
-            dur: pb.stepDur * 3.2,
-            peak: 0.16,
+            freq: scaleNoteHz(preset, v.progression[0], -2),
+            dur: pb.stepDur * LOOP_STEPS + 1,
+            peak: 0.13,
+            attack: 0.5,
+            dest: pb.gain,
+            when
+        });
+    }
+    if (step % STEPS_PER_BAR === 0) {
+        const bar = (step / STEPS_PER_BAR) % v.progression.length;
+        const chordRoot = v.progression[bar];
+        if (v.padMode === 'arp') {
+            // Slow arpeggio alternation: one chord tone per bar cycling
+            // 0→2→4 across the phrase, so the triad unfolds instead of
+            // blooming all at once. Filtered like the sustained pad.
+            tone({
+                wave: 'triangle',
+                freq: scaleNoteHz(preset, chordRoot + [0, 2, 4][bar % 3], 0),
+                dur: pb.stepDur * STEPS_PER_BAR + 0.6,
+                peak: 0.07,
+                attack: 0.3,
+                filterHz: preset.padCutoff,
+                dest: pb.gain,
+                when
+            });
+        }
+        if (v.bassMode !== 'drone') {
+            tone({
+                wave: 'sine',
+                freq: scaleNoteHz(preset, chordRoot, -1),
+                dur: pb.stepDur * 3.2,
+                peak: 0.16,
+                attack: 0.02,
+                dest: pb.gain,
+                when
+            });
+        }
+    }
+    if (v.bassMode === 'pulse' && step % STEPS_PER_BAR === 4) {
+        // Mid-bar echo distinguishes 'pulse' from downbeats-only 'downbeat'.
+        const bar = ((step - 4) / STEPS_PER_BAR) % v.progression.length;
+        tone({
+            wave: 'sine',
+            freq: scaleNoteHz(preset, v.progression[bar], -1),
+            dur: pb.stepDur * 2,
+            peak: 0.1,
             attack: 0.02,
             dest: pb.gain,
             when
@@ -402,9 +520,12 @@ function playMusicStep(pb, step, when) {
     const note = pb.melody[step];
     if (note) {
         const dur = Math.min(note.len * pb.stepDur * 0.9, 1.6);
+        // Variant register shift (semitones above the default lead octave).
+        const freq = scaleNoteHz(preset, note.deg, note.oct + 1) *
+            Math.pow(2, v.melodyShift / 12);
         tone({
             wave: preset.melodyWave,
-            freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+            freq,
             dur,
             peak: 0.12,
             attack: 0.03,
@@ -414,7 +535,7 @@ function playMusicStep(pb, step, when) {
         if (pb.delaySend) {
             tone({
                 wave: preset.melodyWave,
-                freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+                freq,
                 dur,
                 peak: 0.12,
                 attack: 0.03,
@@ -438,9 +559,9 @@ function retirePlayback(pb) {
     later(CROSSFADE_SEC * 1000 + 150, () => disconnectPlayback(pb));
 }
 
-function createPlayback(index, bpm, seed) {
+function createPlayback(index, variant, levelNumber) {
     const preset = MUSIC_PRESETS[index];
-    const stepDur = 60 / bpm / 2; // eighth notes
+    const stepDur = 60 / variant.bpm / 2; // eighth notes
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, ctx.currentTime);
     gain.gain.linearRampToValueAtTime(1, ctx.currentTime + CROSSFADE_SEC);
@@ -464,11 +585,15 @@ function createPlayback(index, bpm, seed) {
         delayNode.connect(gain);
     }
     return {
-        key: `${index}:${bpm}:${seed}`,
+        // Running key: band + tempo + per-level seed + variant signature, so
+        // a new level always crossfades to its own track while a retry of the
+        // same level (identical everything) restarts nothing.
+        key: `${index}:${variant.bpm}:${variant.seed}:${variant.signature}`,
         gain,
         preset,
+        variant,
         stepDur,
-        melody: buildMelodyLoop(index, seed),
+        melody: buildMelodyLoop(index, levelNumber),
         delaySend,
         delayNode,
         feedback,
@@ -534,20 +659,21 @@ export function playSfx(name) {
 }
 
 // Start (or keep) the generative loop for a level. Identical preset+bpm+seed
-// = no restart, so replays and retries flow seamlessly; a change crossfades
-// over ~0.8 s. Called from publishLevel, i.e. inside the gesture-initiated
-// run, never from page load (the menu stays silent by design).
+// +variant = no restart, so retries flow seamlessly; any change — including
+// the per-level variation from musicVariantFor — crossfades over ~0.8 s.
+// Called from publishLevel, i.e. inside the gesture-initiated run, never
+// from page load (the menu stays silent by design).
 export function startMusic(themeIndex, levelNumber) {
     if (!ensureContext()) return;
-    const { index: derivedIndex, bpm, seed } = presetForLevel(levelNumber);
+    const variant = musicVariantFor(levelNumber);
     // The caller's band wins when it is a real THEMES index; an invalid one
     // falls back to the level-derived band rather than corrupting playback.
     const index = Number.isInteger(themeIndex) &&
-        themeIndex >= 0 && themeIndex < MUSIC_PRESETS.length ? themeIndex : derivedIndex;
-    const key = `${index}:${bpm}:${seed}`;
+        themeIndex >= 0 && themeIndex < MUSIC_PRESETS.length ? themeIndex : variant.index;
+    const key = `${index}:${variant.bpm}:${variant.seed}:${variant.signature}`;
     if (playback && playback.key === key) return;
     const old = playback;
-    playback = createPlayback(index, bpm, seed);
+    playback = createPlayback(index, variant, levelNumber);
     if (old) {
         const t = ctx.currentTime;
         old.gain.gain.cancelScheduledValues(t);

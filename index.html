@@ -26,6 +26,11 @@
         <div id="game-over-screen" class="overlay hidden">
             <div class="panel">
                 <h2>Game Over</h2>
+                <!-- Cost of dying (owner ruling: cause and effect). aria-live
+                     polite announces "-N points" alongside the cause line for
+                     screen readers; UI.showGameOver reveals it only when a
+                     penalty was actually charged. -->
+                <p id="score-penalty" aria-live="polite" hidden></p>
                 <p id="death-cause" hidden></p>
                 <p id="final-score">Score: 0</p>
                 <button id="retry-btn" aria-label="Retry Level">Retry Level</button>

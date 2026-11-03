@@ -364,7 +364,10 @@ test("pause menu actions: Resume, Restart Level (progress kept), Quit to Menu", 
     document.getElementById('restart-level-btn').click();
     expect(game.state).toBe(STATE.PLAYING);
     // Deterministic replay keeps progress: score carries, the clock refills.
+    // A pause-menu restart is NOT a death — no DEATH_SCORE_PENALTY_RATE
+    // charge here (that lives solely in handleGameOver).
     expect(game.score).toBe(123);
+    expect(document.getElementById('score-penalty').hidden).toBe(true);
     expect(game.timer.getTimeRemaining()).toBe(game.timer.baseTime);
     expect(document.getElementById('pause-screen').classList.contains('hidden')).toBe(true);
 

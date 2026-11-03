@@ -58,6 +58,29 @@ test("UI shows game over screen", () => {
     expect(() => ui.showGameOver(100)).not.toThrow();
 });
 
+test("showGameOver renders the death penalty line when charged, hides it otherwise", () => {
+    // The penalty node is structural in index.html; guarantee it for the
+    // shared unit-test window regardless of file execution order.
+    let penaltyEl = document.getElementById('score-penalty');
+    if (!penaltyEl) {
+        penaltyEl = document.createElement('p');
+        penaltyEl.id = 'score-penalty';
+        penaltyEl.hidden = true;
+        document.body.appendChild(penaltyEl);
+    }
+    const ui = new UI();
+
+    ui.showGameOver(93, 'pit', 30);
+    expect(ui.finalScoreElement.textContent).toBe('Score: 93');
+    expect(penaltyEl.hidden).toBe(false);
+    expect(penaltyEl.textContent).toBe('-30 points');
+
+    // Old call shape (no penalty argument): nothing lost, nothing shown.
+    ui.showGameOver(0, 'pit');
+    expect(penaltyEl.hidden).toBe(true);
+    expect(ui.finalScoreElement.textContent).toBe('Score: 0');
+});
+
 test("UI shows level complete screen", () => {
     const ui = new UI();
 

@@ -15,7 +15,7 @@ import { installGameTestScaffolding, mountFixture } from "./setup.js";
 
 installGameTestScaffolding();
 
-import { Game, STATE, FINAL_LEVEL } from "../../js/main.js";
+import { Game, STATE, FINAL_LEVEL, DEATH_SCORE_PENALTY_RATE } from "../../js/main.js";
 import { Collectibles } from "../../js/collectibles.js";
 import { Level } from "../../js/level.js";
 
@@ -237,7 +237,7 @@ test("collected coins add 10 points each to the running total across levels", ()
     expect(game.score).toBe(2 * COIN_POINTS + 3 * COIN_POINTS);
 });
 
-test("retrying preserves banked coins and their score (deterministic replay)", () => {
+test("retrying keeps banked coins but costs DEATH_SCORE_PENALTY_RATE of score", () => {
     const game = startPlaying();
     clearGeneratedThreats(game);
 
@@ -257,23 +257,28 @@ test("retrying preserves banked coins and their score (deterministic replay)", (
     game.player.y = game.level.height * game.level.tileSize + 200;
     game.update(DT);
     expect(game.state).toBe(STATE.GAME_OVER);
+    // Owner ruling (cause and effect): the death itself already charged the
+    // penalty — before any retry click.
+    const penalty = Math.floor(3 * COIN_POINTS * DEATH_SCORE_PENALTY_RATE);
+    expect(penalty).toBe(7); // floor(7.5): whole points, rounded down
+    expect(game.score).toBe(3 * COIN_POINTS - penalty);
 
     document.getElementById('retry-btn').click();
 
     // The replay is seeded-identical, so banked coins transfer with it: the
-    // score KEEPS mid-level pickups (each coin scores exactly once ever —
-    // collected flags persist, nothing can double-pay). Retry progress
-    // converges instead of resetting. Element systems are rewired to the
-    // rebuilt level instance.
+    // collected flags persist (each coin scores exactly once ever — nothing
+    // can double-pay) and the REDUCED score carries forward. The retry does
+    // not re-charge the penalty. Element systems are rewired to the rebuilt
+    // level instance.
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(3 * COIN_POINTS);
-    expect(game.levelStartScore).toBe(3 * COIN_POINTS);
+    expect(game.score).toBe(3 * COIN_POINTS - penalty);
+    expect(game.levelStartScore).toBe(3 * COIN_POINTS - penalty);
     expect(game.collectibles).toBe(game.level.getCollectibles());
     expect(game.enemyManager).toBe(game.level.getEnemyManager());
     expect(game.hazards).toBe(game.level.getHazards());
 });
 
-test("retrying a failed first level keeps whatever was banked", () => {
+test("retrying a failed first level keeps banked coins minus the death penalty", () => {
     const game = startPlaying();
     clearGeneratedThreats(game);
 
@@ -287,7 +292,9 @@ test("retrying a failed first level keeps whatever was banked", () => {
 
     document.getElementById('retry-btn').click();
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(COIN_POINTS);
+    // Coins stay collected; the score arrives reduced by the death penalty
+    // (floor(10 * 0.25) = 2).
+    expect(game.score).toBe(COIN_POINTS - Math.floor(COIN_POINTS * DEATH_SCORE_PENALTY_RATE));
 });
 
 test("pit death fires at the exact world-pixel threshold via the delegated check", () => {
@@ -549,4 +556,94 @@ test("portal contact completes the level only once the 70% coin gate is met", ()
     for (let i = 0; i < 3 && game.state === STATE.LEVEL_COMPLETE; i++) {
         game.update(0.8);
     }
+});
+
+// --- Death score penalty (owner ruling: cause and effect) -------------------
+
+test("dying deducts DEATH_SCORE_PENALTY_RATE of the score, floored, once per death", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    game.score = 123; // mid-level total above any snapshot
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_OVER);
+    expect(game.score).toBe(123 - Math.floor(123 * DEATH_SCORE_PENALTY_RATE)); // 93
+
+    // Once per death, never per frame: GAME_OVER ticks must not shave more.
+    game.update(DT);
+    game.update(DT);
+    expect(game.score).toBe(93);
+
+    // Overlay shows the POST-penalty total plus the loss line.
+    expect(document.getElementById('final-score').textContent).toBe('Score: 93');
+    const penaltyEl = document.getElementById('score-penalty');
+    expect(penaltyEl.hidden).toBe(false);
+    expect(penaltyEl.textContent).toBe('-30 points');
+});
+
+test("a timeout death is penalized like any other cause", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    game.score = 41;
+    game.timerActive = true; // force the clock regardless of tier gating
+    game.timer.timeRemaining = 0.001;
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_OVER);
+    // floor(41 * 0.25) = 10: the timeout costs exactly as much as a spike.
+    expect(game.score).toBe(31);
+    expect(document.getElementById('death-cause').textContent).toBe('Time ran out');
+    expect(document.getElementById('score-penalty').textContent).toBe('-10 points');
+});
+
+test("a zero score stays zero and hides the penalty line", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    expect(game.score).toBe(0);
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_OVER);
+    expect(game.score).toBe(0);
+    expect(document.getElementById('score-penalty').hidden).toBe(true);
+    expect(document.getElementById('final-score').textContent).toBe('Score: 0');
+});
+
+test("two deaths compound on the reduced score; completion never charges", () => {
+    const game = startPlaying();
+    clearGeneratedThreats(game);
+    hideOverlays(game);
+
+    game.score = 100;
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(DT);
+    expect(game.score).toBe(75); // -floor(100*0.25)
+
+    document.getElementById('retry-btn').click();
+    expect(game.state).toBe(STATE.PLAYING);
+    game.score += 5; // bank a little between attempts
+    game.player.y = game.level.height * game.level.tileSize + 200;
+    game.update(DT);
+    expect(game.state).toBe(STATE.GAME_OVER);
+    expect(game.score).toBe(80 - Math.floor(80 * DEATH_SCORE_PENALTY_RATE)); // 60
+
+    // Completion paths are free: finish the level through the real gate and
+    // confirm handleWin leaves the score untouched.
+    document.getElementById('retry-btn').click();
+    expect(game.state).toBe(STATE.PLAYING);
+    const before = game.score;
+    const coins = game.collectibles.getCoins();
+    for (let i = 0; i < coins.length && !game.collectibles.meetsPortalRequirement(); i++) {
+        game.collectibles.collectCoin(i);
+    }
+    const portal = game.level.portal;
+    game.player.x = portal.x;
+    game.player.y = portal.y;
+    game.update(DT);
+    expect(game.state).toBe(STATE.LEVEL_COMPLETE);
+    expect(game.score).toBe(before);
 });
