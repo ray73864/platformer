@@ -194,6 +194,7 @@ export class UI {
     static DEATH_CAUSE_TEXT = {
         time: 'Time ran out',
         enemy: 'Touched a patrol',
+        spiny: 'A spiny\u2019s back is spiked — no stomping',
         spike: 'Landed on spikes',
         pit: 'Fell into the void'
     };

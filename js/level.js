@@ -43,6 +43,34 @@ const GAP_CHANCE_CAP = 0.64;   // = 0.22 + 0.02*(25-4)
 const SPIKE_TARGET_CAP = 20;   // realized counts sit far lower (THREAT_SPACING)
 const COIN_TARGET_CAP = 30;    // = 5 + 25
 
+// --- Risky enemy kinds (player ruling 2026-11-03: "I didn't like how I
+// could just jump on top of every enemy, it added no risk") ------------------
+// Stomping stays a SKILL: walkers stay stompable, spinies punish landing on
+// anything (spiked back), chargers punish blind approaches with a
+// telegraphed dash but stay stomppable mid-dash (risk/reward). Gate levels
+// so each threat arrives after the player has proven the old ones: spiny at
+// the advanced tier boundary (L10), charger deep in it (L20). Chances ramp
+// linearly to their plateaus so a gate level introduces the kind rarely
+// (~1%) instead of ambushing with 25% odds on first sight.
+const SPINY_FIRST_LEVEL = 10;
+const SPINY_RAMP_LEVELS = 21;    // L10..L30 inclusive reach the plateau
+const SPINY_CHANCE_MAX = 0.25;   // ~1 in 4 deployed enemies at L30+
+const CHARGER_FIRST_LEVEL = 20;
+const CHARGER_RAMP_LEVELS = 21;  // L20..L40 inclusive reach the plateau
+const CHARGER_CHANCE_MAX = 0.20; // 1 in 5 deployed enemies at L40+
+// A map of pure spinies is a wall, not a challenge (no stompable route
+// through a gauntlet you can only outrun): cap spinies at ceil(n/3) of the
+// deployed enemies per map.
+const SPINY_CAP_DIVISOR = 3;
+
+// Linear 0->max ramp over [firstLevel, firstLevel + rampLevels - 1], flat
+// outside (0 below the gate, max above the ramp).
+function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
+    if (!Number.isInteger(levelNumber) || levelNumber < firstLevel) return 0;
+    const t = Math.min(1, (levelNumber - firstLevel + 1) / rampLevels);
+    return maxChance * t;
+}
+
 // Travel direction is deterministic from the level number so tests and E2E
 // flows can rely on it: the shipped Phase 1 ramp (levels 1-4) stays
 // right-facing, then right/left/vertical cycle from level 5 onward
@@ -1195,7 +1223,37 @@ export class Level {
         // bounds come from walkable patrol spans clamped to the direction's
         // band, so no patrol ever sweeps the spawn tile or the portal band,
         // and none walks through rock or spikes.
-        for (const s of this.deriveEnemySpawns()) {
+        const spawns = this.deriveEnemySpawns();
+
+        // Kind assignment rides the SAME marker sites/spans as walkers —
+        // placement fairness rules are untouched, only what stands on a site
+        // varies. Rolls consume this.rng here, AFTER every geometry, spike,
+        // marker, portal and coin consumption in the constructor has
+        // finished (spawnEnemies is the last rng consumer and affects no
+        // grid cell), so generation streams stay byte-identical and same
+        // seed still replays the exact map AND the exact kind sequence.
+        const spinyChance = kindChance(
+            this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS,
+            SPINY_CHANCE_MAX);
+        const chargerChance = kindChance(
+            this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS,
+            CHARGER_CHANCE_MAX);
+        const spinyCap = Math.ceil(spawns.length / SPINY_CAP_DIVISOR);
+        let spinies = 0;
+
+        for (const s of spawns) {
+            let kind = 'walker';
+            const roll = this.rng();
+            if (roll < spinyChance && spinies < spinyCap) {
+                kind = 'spiny';
+                spinies++;
+            } else if (roll >= spinyChance &&
+                roll < spinyChance + chargerChance) {
+                kind = 'charger';
+            }
+            // Cap overflow falls through to walker: the roll that wanted a
+            // fourth spiny on a three-site map buys nothing, never a
+            // re-roll (one consumed draw per enemy keeps sequences stable).
             // Same placement convention as the player spawn point: the
             // body rests inside the standable air tile, its bottom edge
             // on the solid tile below.
@@ -1203,7 +1261,8 @@ export class Level {
                 s.x * this.tileSize,
                 s.y * this.tileSize,
                 s.left * this.tileSize,
-                (s.right + 1) * this.tileSize
+                (s.right + 1) * this.tileSize,
+                kind
             );
         }
     }

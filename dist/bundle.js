@@ -493,9 +493,14 @@
   var ENEMY_HITBOX_INSET_X = 4;
   var ENEMY_HITBOX_INSET_TOP = 4;
   var ENEMY_STOMP_TOLERANCE = 18;
-
+  var CHARGER_WINDUP_TIME = 0.45;
+  var CHARGER_DASH_TIME = 1.2;
+  var CHARGER_COOLDOWN_TIME = 1;
+  var CHARGER_DASH_SPEED_MULT = 2.2;
+  var CHARGER_TRIGGER_COLS = 6;
+  var CHARGER_TRIGGER_ROW_TOLERANCE = 32;
   class Enemy {
-    constructor(x, y, minX, maxX) {
+    constructor(x, y, minX, maxX, kind = "walker") {
       this.x = x;
       this.y = y;
       this.width = ENEMY_WIDTH;
@@ -505,10 +510,20 @@
       this.maxX = maxX;
       this.vx = this.speed;
       this.dead = false;
+      this.kind = kind;
+      this.state = "patrol";
+      this.stateTime = 0;
     }
-    update(dt) {
+    update(dt, player = null) {
       if (this.dead)
         return;
+      if (this.kind === "charger") {
+        this._updateCharger(dt, player);
+        return;
+      }
+      this._patrolStep(dt);
+    }
+    _patrolStep(dt) {
       this.x += this.vx * dt;
       if (this.x <= this.minX) {
         this.x = this.minX;
@@ -517,6 +532,71 @@
         this.x = this.maxX - this.width;
         this.vx = -Math.abs(this.vx);
       }
+    }
+    _triggeredBy(player, facing = this.vx) {
+      if (!player)
+        return false;
+      const dx = player.x + player.width / 2 - (this.x + this.width / 2);
+      if (dx === 0 || facing === 0)
+        return false;
+      if (Math.sign(dx) !== Math.sign(facing))
+        return false;
+      if (Math.abs(dx) > CHARGER_TRIGGER_COLS * 32)
+        return false;
+      const dyFeet = Math.abs(player.y + player.height - (this.y + this.height));
+      return dyFeet <= CHARGER_TRIGGER_ROW_TOLERANCE;
+    }
+    _updateCharger(dt, player) {
+      this.stateTime += dt;
+      switch (this.state) {
+        case "patrol":
+          this._patrolStep(dt);
+          if (this._triggeredBy(player)) {
+            this.state = "windup";
+            this.stateTime = 0;
+            this._preWindupVx = this.vx;
+            this.vx = 0;
+          }
+          break;
+        case "windup":
+          if (!this._triggeredBy(player, this._preWindupVx)) {
+            this.state = "patrol";
+            this.stateTime = 0;
+            this.vx = this._preWindupVx || Math.abs(this.speed);
+            break;
+          }
+          if (this.stateTime >= CHARGER_WINDUP_TIME) {
+            this.state = "dash";
+            this.stateTime = 0;
+            const dir = player.x + player.width / 2 >= this.x + this.width / 2 ? 1 : -1;
+            this.vx = dir * this.speed * CHARGER_DASH_SPEED_MULT;
+          }
+          break;
+        case "dash":
+          this.x += this.vx * dt;
+          if (this.x <= this.minX) {
+            this.x = this.minX;
+            this._endDash(1);
+          } else if (this.x + this.width >= this.maxX) {
+            this.x = this.maxX - this.width;
+            this._endDash(-1);
+          } else if (this.stateTime >= CHARGER_DASH_TIME) {
+            this._endDash(Math.sign(this.vx) || 1);
+          }
+          break;
+        case "cooldown":
+          this._patrolStep(dt);
+          if (this.stateTime >= CHARGER_COOLDOWN_TIME) {
+            this.state = "patrol";
+            this.stateTime = 0;
+          }
+          break;
+      }
+    }
+    _endDash(inwardDir) {
+      this.state = "cooldown";
+      this.stateTime = 0;
+      this.vx = inwardDir * this.speed;
     }
     checkCollision(player) {
       return aabbOverlap(player, {
@@ -539,10 +619,31 @@
         sprites.drawEnemy(ctx, this, index);
         return;
       }
-      ctx.fillStyle = "#ff0000";
+      let body = "#ff0000";
+      if (this.kind === "spiny")
+        body = "#7b4fa0";
+      else if (this.kind === "charger")
+        body = "#c8503c";
+      ctx.fillStyle = body;
       ctx.fillRect(this.x, this.y, this.width, this.height);
+      if (this.kind === "spiny") {
+        ctx.fillStyle = "#1c1c24";
+        for (let i = 0;i < 4; i++) {
+          ctx.fillRect(this.x + 3 + i * 7, this.y - 0, 5, 5);
+        }
+      } else if (this.kind === "charger") {
+        const face = this.state === "windup" ? Math.sign(this._preWindupVx || 1) : this.vx >= 0 ? 1 : -1;
+        const hornX = face > 0 ? this.x + this.width - 7 : this.x + 1;
+        ctx.fillStyle = "#e8d8b0";
+        ctx.fillRect(hornX, this.y + 5, 6, 5);
+        if (this.state === "windup") {
+          ctx.fillStyle = "rgba(255,232,170,0.55)";
+          ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
+      }
       ctx.fillStyle = "#fff";
-      const eyeOffset = this.vx >= 0 ? 18 : 6;
+      const eyeFace = this.state === "windup" ? Math.sign(this._preWindupVx || 1) : this.vx >= 0 ? 1 : -1;
+      const eyeOffset = eyeFace >= 0 ? 18 : 6;
       ctx.fillRect(this.x + eyeOffset, this.y + 8, 4, 4);
     }
   }
@@ -551,12 +652,12 @@
     constructor() {
       this.enemies = [];
     }
-    addEnemy(x, y, minX, maxX) {
-      this.enemies.push(new Enemy(x, y, minX, maxX));
+    addEnemy(x, y, minX, maxX, kind = "walker") {
+      this.enemies.push(new Enemy(x, y, minX, maxX, kind));
     }
-    updateAll(dt) {
+    updateAll(dt, player = null) {
       for (const enemy of this.enemies) {
-        enemy.update(dt);
+        enemy.update(dt, player);
       }
     }
     checkPlayerCollisions(player) {
@@ -570,20 +671,24 @@
     resolvePlayerContact(player) {
       let stomped = 0;
       let deadly = false;
+      let deadlyBySpiny = false;
       const prevBottom = (player.prevY !== undefined ? player.prevY : player.y) + player.height;
       for (const enemy of this.enemies) {
         if (enemy.isDead())
           continue;
         if (!enemy.checkCollision(player))
           continue;
-        if (player.vy > 0 && prevBottom <= enemy.y + ENEMY_STOMP_TOLERANCE) {
+        if (enemy.kind === "spiny") {
+          deadly = true;
+          deadlyBySpiny = true;
+        } else if (player.vy > 0 && prevBottom <= enemy.y + ENEMY_STOMP_TOLERANCE) {
           enemy.die();
           stomped++;
         } else {
           deadly = true;
         }
       }
-      return { stomped, deadly };
+      return { stomped, deadly, deadlyBySpiny };
     }
     getActiveEnemies() {
       return this.enemies.filter((enemy) => !enemy.isDead());
@@ -656,6 +761,19 @@
   var GAP_CHANCE_CAP = 0.64;
   var SPIKE_TARGET_CAP = 20;
   var COIN_TARGET_CAP = 30;
+  var SPINY_FIRST_LEVEL = 10;
+  var SPINY_RAMP_LEVELS = 21;
+  var SPINY_CHANCE_MAX = 0.25;
+  var CHARGER_FIRST_LEVEL = 20;
+  var CHARGER_RAMP_LEVELS = 21;
+  var CHARGER_CHANCE_MAX = 0.2;
+  var SPINY_CAP_DIVISOR = 3;
+  function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
+    if (!Number.isInteger(levelNumber) || levelNumber < firstLevel)
+      return 0;
+    const t = Math.min(1, (levelNumber - firstLevel + 1) / rampLevels);
+    return maxChance * t;
+  }
   function directionForLevel(levelNumber) {
     if (levelNumber < PHASE2_FIRST_LEVEL)
       return "right";
@@ -1269,8 +1387,21 @@
     }
     spawnEnemies() {
       this.enemyManager.clear();
-      for (const s of this.deriveEnemySpawns()) {
-        this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize);
+      const spawns = this.deriveEnemySpawns();
+      const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
+      const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
+      const spinyCap = Math.ceil(spawns.length / SPINY_CAP_DIVISOR);
+      let spinies = 0;
+      for (const s of spawns) {
+        let kind = "walker";
+        const roll = this.rng();
+        if (roll < spinyChance && spinies < spinyCap) {
+          kind = "spiny";
+          spinies++;
+        } else if (roll >= spinyChance && roll < spinyChance + chargerChance) {
+          kind = "charger";
+        }
+        this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind);
       }
     }
     getSpawnPoint() {
@@ -1542,6 +1673,7 @@
     static DEATH_CAUSE_TEXT = {
       time: "Time ran out",
       enemy: "Touched a patrol",
+      spiny: "A spiny’s back is spiked — no stomping",
       spike: "Landed on spikes",
       pit: "Fell into the void"
     };
@@ -2133,6 +2265,15 @@
     drawEnemy(ctx, enemy, index) {
       if (enemy.dead)
         return;
+      const kind = enemy.kind || "walker";
+      if (kind === "spiny") {
+        this._drawSpiny(ctx, enemy);
+        return;
+      }
+      if (kind === "charger") {
+        this._drawCharger(ctx, enemy);
+        return;
+      }
       const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
       const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
       const face = this._faceOf(enemy);
@@ -2145,6 +2286,108 @@
       ctx.translate(cx, feet);
       ctx.scale(face, 1);
       this._drawSheet(ctx, "characters", frame, -w / 2, -h, w, h);
+      ctx.restore();
+    }
+    _drawSpiny(ctx, enemy) {
+      const cx = enemy.x + enemy.width / 2;
+      const feet = enemy.y + enemy.height;
+      this._entityShadow(ctx, cx, feet, 15);
+      const face = this._faceOf(enemy);
+      ctx.save();
+      ctx.translate(cx, feet);
+      ctx.scale(face, 1);
+      ctx.fillStyle = "#7d4fa8";
+      ctx.beginPath();
+      ctx.moveTo(-13, 0);
+      ctx.quadraticCurveTo(-16, -13, -8, -19);
+      ctx.quadraticCurveTo(0, -24, 8, -19);
+      ctx.quadraticCurveTo(16, -13, 13, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "rgba(18,8,38,0.28)";
+      ctx.fillRect(-13, -4, 26, 4);
+      ctx.fillStyle = "#16161d";
+      const tooth = (bx, by, w, h) => {
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + w / 2, by - h);
+        ctx.lineTo(bx + w, by);
+        ctx.closePath();
+        ctx.fill();
+      };
+      tooth(-11, -13, 6, 7);
+      tooth(-4.5, -18, 6, 9);
+      tooth(2, -18, 6, 9);
+      tooth(8, -12, 6, 7);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(5, -14, 4, 4);
+      ctx.fillStyle = "#16161d";
+      ctx.fillRect(7, -13, 2, 2);
+      ctx.restore();
+    }
+    _drawCharger(ctx, enemy) {
+      const CHARGER_WINDUP_TIME = 0.45;
+      const cx = enemy.x + enemy.width / 2;
+      const feet = enemy.y + enemy.height;
+      this._entityShadow(ctx, cx, feet, 17);
+      const face = this._faceOf(enemy);
+      let sx = 1;
+      let sy = 1;
+      let flash = false;
+      const t = enemy.stateTime || 0;
+      if (enemy.state === "windup") {
+        const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+        sx = 1 + 0.18 * k;
+        sy = 1 - 0.25 * k;
+        flash = Math.floor(t * 12) % 2 === 0;
+      } else if (enemy.state === "dash") {
+        sx = 1.12;
+        sy = 0.9;
+      }
+      ctx.save();
+      ctx.translate(cx, feet);
+      ctx.scale(face * sx, sy);
+      ctx.fillStyle = "#b5493a";
+      ctx.beginPath();
+      ctx.moveTo(-15, 0);
+      ctx.quadraticCurveTo(-17, -14, -9, -21);
+      ctx.quadraticCurveTo(0, -26, 9, -21);
+      ctx.quadraticCurveTo(17, -14, 15, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "rgba(20,8,4,0.28)";
+      ctx.fillRect(-15, -4, 30, 4);
+      ctx.fillStyle = "#e8d8b0";
+      ctx.beginPath();
+      ctx.moveTo(9, -20);
+      ctx.lineTo(21, -15);
+      ctx.lineTo(9, -13);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(5, -15, 4, 4);
+      ctx.fillStyle = "#16161d";
+      ctx.fillRect(7, -14, 2, 2);
+      if (flash) {
+        ctx.fillStyle = "rgba(255,232,170,0.45)";
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.quadraticCurveTo(-17, -14, -9, -21);
+        ctx.quadraticCurveTo(0, -26, 9, -21);
+        ctx.quadraticCurveTo(17, -14, 15, 0);
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (enemy.state === "dash") {
+        ctx.strokeStyle = "rgba(255,214,170,0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-18, -16);
+        ctx.lineTo(-26, -16);
+        ctx.moveTo(-18, -9);
+        ctx.lineTo(-24, -9);
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
@@ -2583,7 +2826,7 @@
           }
         }
         this._prevGrounded = this.player.grounded;
-        this.enemyManager.updateAll(dt);
+        this.enemyManager.updateAll(dt, this.player);
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
           this.player.vy = -STOMP_BOUNCE;
@@ -2592,7 +2835,7 @@
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
         }
         if (contact.deadly) {
-          this.handleGameOver("enemy");
+          this.handleGameOver(contact.deadlyBySpiny ? "spiny" : "enemy");
           return;
         }
         if (this.hazards.checkPlayerSpikes(this.player)) {

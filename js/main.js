@@ -653,7 +653,9 @@ export class Game {
             // Phase 2 elements. Death checks run in a fixed order (enemies,
             // spikes, pit) and stop the tick at the first hit, so several
             // simultaneous contacts produce exactly one game over.
-            this.enemyManager.updateAll(dt);
+            // Chargers need the player reference for their trigger zone
+            // (walkers/spinies ignore it); see enemies.js header.
+            this.enemyManager.updateAll(dt, this.player);
             // Stomp-aware enemy contact: falling feet-first from above
             // squashes the enemy (with a bounce and a poof); any other
             // contact is fatal.
@@ -674,7 +676,8 @@ export class Game {
                     '#c96bf5', 10);
             }
             if (contact.deadly) {
-                this.handleGameOver('enemy');
+                // Teach the spiked-back rule at the exact moment it bites.
+                this.handleGameOver(contact.deadlyBySpiny ? 'spiny' : 'enemy');
                 return;
             }
 

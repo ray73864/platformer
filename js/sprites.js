@@ -709,6 +709,15 @@ export class Sprites {
 
     drawEnemy(ctx, enemy, index) {
         if (enemy.dead) return;
+        const kind = enemy.kind || 'walker';
+        if (kind === 'spiny') {
+            this._drawSpiny(ctx, enemy);
+            return;
+        }
+        if (kind === 'charger') {
+            this._drawCharger(ctx, enemy);
+            return;
+        }
         const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
         const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
         const face = this._faceOf(enemy);
@@ -721,6 +730,132 @@ export class Sprites {
         ctx.translate(cx, feet);
         ctx.scale(face, 1);
         this._drawSheet(ctx, 'characters', frame, -w / 2, -h, w, h);
+        ctx.restore();
+    }
+
+    // Spiny: the slime silhouette wearing a black spike row — recognition
+    // must be instant at game zoom because stomping it is fatal. Vector art
+    // (no sheet cell exists for this kind); motion is the walker's exactly,
+    // so the tint + teeth carry the whole warning. Same feet-anchored,
+    // facing-flipped, contact-shadowed convention as the sheet enemies.
+    _drawSpiny(ctx, enemy) {
+        const cx = enemy.x + enemy.width / 2;
+        const feet = enemy.y + enemy.height;
+        this._entityShadow(ctx, cx, feet, 15);
+        const face = this._faceOf(enemy);
+        ctx.save();
+        ctx.translate(cx, feet);
+        ctx.scale(face, 1);
+        // Purple-tinted slime dome (same footprint as the sheet slime).
+        ctx.fillStyle = '#7d4fa8';
+        ctx.beginPath();
+        ctx.moveTo(-13, 0);
+        ctx.quadraticCurveTo(-16, -13, -8, -19);
+        ctx.quadraticCurveTo(0, -24, 8, -19);
+        ctx.quadraticCurveTo(16, -13, 13, 0);
+        ctx.closePath();
+        ctx.fill();
+        // Belly shading for volume (inset style from the visual pass).
+        ctx.fillStyle = 'rgba(18,8,38,0.28)';
+        ctx.fillRect(-13, -4, 26, 4);
+        // THE signal: dark triangular spike row along the back. Four teeth
+        // riding the dome arc, unmistakable even mid-jump above it.
+        ctx.fillStyle = '#16161d';
+        const tooth = (bx, by, w, h) => {
+            ctx.beginPath();
+            ctx.moveTo(bx, by);
+            ctx.lineTo(bx + w / 2, by - h);
+            ctx.lineTo(bx + w, by);
+            ctx.closePath();
+            ctx.fill();
+        };
+        tooth(-11, -13, 6, 7);
+        tooth(-4.5, -18, 6, 9);
+        tooth(2, -18, 6, 9);
+        tooth(8, -12, 6, 7);
+        // Eye toward the facing direction (shared read with the walker).
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(5, -14, 4, 4);
+        ctx.fillStyle = '#16161d';
+        ctx.fillRect(7, -13, 2, 2);
+        ctx.restore();
+    }
+
+    // Charger: heavier rust-red body with a forward horn; its WINDUP tele-
+    // graph (squash + flash) and dash stretch render deterministically from
+    // enemy.state/stateTime — no per-frame randomness, so replays and the
+    // bot see exactly what the player sees. CHARGER_WINDUP_TIME mirrors the
+    // constant in enemies.js (sprite layer stays import-free by convention).
+    _drawCharger(ctx, enemy) {
+        const CHARGER_WINDUP_TIME = 0.45; // mirror of enemies.js
+        const cx = enemy.x + enemy.width / 2;
+        const feet = enemy.y + enemy.height;
+        this._entityShadow(ctx, cx, feet, 17);
+        const face = this._faceOf(enemy);
+        let sx = 1;
+        let sy = 1;
+        let flash = false;
+        const t = enemy.stateTime || 0;
+        if (enemy.state === 'windup') {
+            // Crouch-load toward the dash: sink and widen across the windup.
+            const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+            sx = 1 + 0.18 * k;
+            sy = 1 - 0.25 * k;
+            // Fixed-rate strobe off stateTime (deterministic, readable).
+            flash = Math.floor(t * 12) % 2 === 0;
+        } else if (enemy.state === 'dash') {
+            sx = 1.12;
+            sy = 0.9;
+        }
+        ctx.save();
+        ctx.translate(cx, feet);
+        ctx.scale(face * sx, sy);
+        // Body: slightly larger than the slime, squared shoulders.
+        ctx.fillStyle = '#b5493a';
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.quadraticCurveTo(-17, -14, -9, -21);
+        ctx.quadraticCurveTo(0, -26, 9, -21);
+        ctx.quadraticCurveTo(17, -14, 15, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(20,8,4,0.28)';
+        ctx.fillRect(-15, -4, 30, 4);
+        // Forward horn/beak: the charge read lives here.
+        ctx.fillStyle = '#e8d8b0';
+        ctx.beginPath();
+        ctx.moveTo(9, -20);
+        ctx.lineTo(21, -15);
+        ctx.lineTo(9, -13);
+        ctx.closePath();
+        ctx.fill();
+        // Eye.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(5, -15, 4, 4);
+        ctx.fillStyle = '#16161d';
+        ctx.fillRect(7, -14, 2, 2);
+        if (flash) {
+            // Windup flash tint over the visible flesh only.
+            ctx.fillStyle = 'rgba(255,232,170,0.45)';
+            ctx.beginPath();
+            ctx.moveTo(-15, 0);
+            ctx.quadraticCurveTo(-17, -14, -9, -21);
+            ctx.quadraticCurveTo(0, -26, 9, -21);
+            ctx.quadraticCurveTo(17, -14, 15, 0);
+            ctx.closePath();
+            ctx.fill();
+        }
+        if (enemy.state === 'dash') {
+            // Speed streaks trailing behind the body.
+            ctx.strokeStyle = 'rgba(255,214,170,0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-18, -16);
+            ctx.lineTo(-26, -16);
+            ctx.moveTo(-18, -9);
+            ctx.lineTo(-24, -9);
+            ctx.stroke();
+        }
         ctx.restore();
     }
 }
