@@ -62,6 +62,41 @@ const CHARGER_CHANCE_MAX = 0.20; // 1 in 5 deployed enemies at L40+
 // through a gauntlet you can only outrun): cap spinies at ceil(n/3) of the
 // deployed enemies per map.
 const SPINY_CAP_DIVISOR = 3;
+// Hostile kinds (spiny, charger) may only stand on shelves whose SOLID RUN
+// beneath the spawn is at least this many tiles wide (screenshot ruling
+// 2026-11-03: a staircase of narrow pillars whose ONE mandatory landing
+// pillar carried a spiny patrolling its tiny top — the player had to land
+// exactly onto/next to a stomp-immune moving body or die on the takeoff lip
+// below it; structural probe: 73/255 = 29% of hostile deployments sat on
+// runs <= 3 tiles, effectively unwinnable).
+// WHY 4 is sufficient (and no ledge-touching-span ban is needed — every
+// patrol span ends at a wall or ledge BY CONSTRUCTION, banning those would
+// ban nearly every legal site): on a 4-tile shelf the player CAN traverse a
+// stomp-immune patrol by timing. Patrol speed is 40 px/s against a 200 px/s
+// player (5x), and a grounded jump clears ~143px ≈ 4 tiles (see
+// MAX_H_JUMP), so the body (32px) plus margins passes well inside one arc.
+// The shelf itself gives room to stand, wait for the patrol to reach its
+// far bound, then jump past — no stomp required. Chargers dash at 2.2x
+// (88 px/s) but telegraph 0.45 s of windup (~90 px of player movement to
+// step out of lane) and their dash clamps to the same solid-supported
+// bounds. If measured clear rates still collapse against baseline, escalate
+// to 5 for chargers specifically (dash halves the reaction room) — tune by
+// measurement, not by eye.
+const HOSTILE_MIN_RUN = 4;
+
+// Contiguous type-1 tiles on a support row through a column: the solid-run
+// width of the shelf a spawn cell stands on (same measurement as the
+// fairness probe — support row y+1 only; rock/spikes on the walk row do not
+// shrink the shelf itself, patrolSpan owns the walkability view).
+function solidRunWidth(tiles, width, x, supportY) {
+    const row = tiles[supportY];
+    if (!row || row[x] !== 1) return 0;
+    let left = x;
+    while (left > 0 && row[left - 1] === 1) left--;
+    let right = x;
+    while (right < width - 1 && row[right + 1] === 1) right++;
+    return right - left + 1;
+}
 
 // Linear 0->max ramp over [firstLevel, firstLevel + rampLevels - 1], flat
 // outside (0 below the gate, max above the ramp).
@@ -1246,11 +1281,24 @@ export class Level {
             const roll = this.rng();
             if (roll < spinyChance && spinies < spinyCap) {
                 kind = 'spiny';
-                spinies++;
             } else if (roll >= spinyChance &&
                 roll < spinyChance + chargerChance) {
                 kind = 'charger';
             }
+            // Shelf fairness gate (see HOSTILE_MIN_RUN): a hostile roll on a
+            // narrow pillar demotes to walker — stomp-immune patrols on runs
+            // <= 3 tiles make mandatory landings unwinnable (screenshot
+            // ruling 2026-11-03). Demotion follows the SAME no-re-roll
+            // discipline as cap overflow below: one consumed draw per
+            // enemy, so rng stream ORDER stays identical; legal-site
+            // kinds may still shift because the spiny cap counts
+            // DEPLOYED spinies (the header's "of the deployed enemies")
+            // — a demoted roll frees its budget slot for a later site.
+            if (kind !== 'walker' && solidRunWidth(
+                this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+                kind = 'walker';
+            }
+            if (kind === 'spiny') spinies++;
             // Cap overflow falls through to walker: the roll that wanted a
             // fourth spiny on a three-site map buys nothing, never a
             // re-roll (one consumed draw per enemy keeps sequences stable).

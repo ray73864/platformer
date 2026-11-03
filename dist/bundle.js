@@ -768,6 +768,19 @@
   var CHARGER_RAMP_LEVELS = 21;
   var CHARGER_CHANCE_MAX = 0.2;
   var SPINY_CAP_DIVISOR = 3;
+  var HOSTILE_MIN_RUN = 4;
+  function solidRunWidth(tiles, width, x, supportY) {
+    const row = tiles[supportY];
+    if (!row || row[x] !== 1)
+      return 0;
+    let left = x;
+    while (left > 0 && row[left - 1] === 1)
+      left--;
+    let right = x;
+    while (right < width - 1 && row[right + 1] === 1)
+      right++;
+    return right - left + 1;
+  }
   function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
     if (!Number.isInteger(levelNumber) || levelNumber < firstLevel)
       return 0;
@@ -1397,10 +1410,14 @@
         const roll = this.rng();
         if (roll < spinyChance && spinies < spinyCap) {
           kind = "spiny";
-          spinies++;
         } else if (roll >= spinyChance && roll < spinyChance + chargerChance) {
           kind = "charger";
         }
+        if (kind !== "walker" && solidRunWidth(this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+          kind = "walker";
+        }
+        if (kind === "spiny")
+          spinies++;
         this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind);
       }
     }
