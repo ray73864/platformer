@@ -252,9 +252,12 @@ export class Game {
         this.enemyManager = null;
         this.collectibles = null;
         this.hazards = null;
-        // Optional traversal decks for the published level (fresh manager
-        // per publishLevel from level.getMovingPlatforms(); pause freezes
-        // them because they only advance inside the PLAYING branch).
+        // Deck bridges for the published level (fresh manager per
+        // publishLevel from level.getMovingPlatforms(); pause freezes them
+        // because they only advance inside the PLAYING branch). On bridge
+        // maps the deck CARRIES the route across an unjumpable gap — the
+        // one-way physics below still means a deck can never block, push or
+        // bonk anyone who is not landing on it.
         this.movingPlatforms = null;
         // Deck the player rode at the end of the last resolved frame (carry
         // + jump-off inheritance source); null whenever not landed on one.
@@ -419,8 +422,9 @@ export class Game {
                 audio.playSfx('jump');
                 // Jump-off inheritance (feel choice): launching from a ridden
                 // deck adds the deck velocity, capped (see applyJumpBoost).
-                // Fairness: routes never require decks, so inherited transport
-                // can only widen options, never gate a level.
+                // Bridge decks move 26-44 px/s, far under the cap and too
+                // slow to gate a jump puzzle — the boost only ever smooths
+                // the step off a dwelling plank.
                 applyJumpBoost(this.player, this._riding);
             }
         });

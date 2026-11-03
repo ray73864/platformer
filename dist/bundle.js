@@ -222,11 +222,12 @@
             } else {
               if (player.prevY !== undefined) {
                 const prevBottom = player.prevY + player.height;
-                if (prevBottom > platform.y + LANDING_TOLERANCE) {
+                const topRef = platform.dy !== undefined && platform.dy < 0 ? platform.prevY : platform.y;
+                if (prevBottom > topRef + LANDING_TOLERANCE) {
                   continue;
                 }
                 const prevXOverlap = player.prevX === undefined || player.prevX < platform.x + platform.width && player.prevX + player.width > platform.x;
-                if (!prevXOverlap && prevBottom >= platform.y - LANDING_TOLERANCE) {
+                if (!prevXOverlap && prevBottom >= topRef - LANDING_TOLERANCE) {
                   continue;
                 }
               }
@@ -785,15 +786,18 @@
   var CHARGER_CHANCE_MAX = 0.2;
   var SPINY_CAP_DIVISOR = 3;
   var HOSTILE_MIN_RUN = 4;
-  var MOVING_PLATFORM_FIRST_LEVEL = 8;
-  var MAX_MOVING_PLATFORMS = 2;
-  var MP_ACCEPT_CHANCE = 0.9;
-  var MP_GAP_MIN_WIDTH = 3;
-  var MP_GAP_MAX_WIDTH = 6;
+  var DECK_BRIDGE_FIRST_LEVEL = 8;
+  var MAX_DECK_BRIDGES = 1;
+  var BRIDGE_CHANCE = 0.6;
+  var MIN_DECK_GAP = 6;
+  var MAX_DECK_GAP = 7;
+  var BRIDGE_MIN_START_COL = 7;
+  var DECK_DWELL_S = 0.8;
   var MP_DECK_TILES = 2;
   var MP_CLEARANCE_ROWS = 3;
   var MP_SPEED_MIN = 26;
   var MP_SPEED_RANGE = 18;
+  var BRIDGE_LIP_BAN_COLS = 3;
   function solidRunWidth(tiles, width, x, supportY) {
     const row = tiles[supportY];
     if (!row || row[x] !== 1)
@@ -834,7 +838,7 @@
     }
     return items;
   }
-  function computeReachable(tiles, width, height, startTile, requireOpenHead = false) {
+  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null) {
     const solid = (x, y) => {
       if (x < 0 || x >= width)
         return true;
@@ -849,6 +853,7 @@
     };
     const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
     const standable = (x, y) => freeCell(x, y) && solid(x, y + 1) && (!requireOpenHead || !solid(x, y - 1));
+    const isCorr = (x, y) => corridor !== null && y === corridor.S - 1 && x >= corridor.a && x <= corridor.b;
     const key = (x, y) => y * width + x;
     const reachable = new Set;
     if (!standable(startTile.x, startTile.y)) {
@@ -858,6 +863,25 @@
     reachable.add(key(startTile.x, startTile.y));
     while (queue.length > 0) {
       const [x, y] = queue.shift();
+      if (isCorr(x, y)) {
+        for (const dir of [-1, 1]) {
+          const nx = x + dir;
+          if (isCorr(nx, y)) {
+            if (!reachable.has(key(nx, y))) {
+              reachable.add(key(nx, y));
+              queue.push([nx, y]);
+            }
+            continue;
+          }
+          for (const ny of [y, y - 1]) {
+            if (standable(nx, ny) && !reachable.has(key(nx, ny))) {
+              reachable.add(key(nx, ny));
+              queue.push([nx, ny]);
+            }
+          }
+        }
+        continue;
+      }
       for (const dir of [-1, 1]) {
         for (let dist = 1;dist <= MAX_H_JUMP; dist++) {
           let blocked = false;
@@ -910,6 +934,15 @@
           }
         }
       }
+      if (corridor !== null) {
+        for (const nx of [x - 1, x + 1]) {
+          const ny = isCorr(nx, y) ? y : isCorr(nx, y + 1) ? y + 1 : -1;
+          if (ny >= 0 && !reachable.has(key(nx, ny))) {
+            reachable.add(key(nx, ny));
+            queue.push([nx, ny]);
+          }
+        }
+      }
     }
     return reachable;
   }
@@ -933,9 +966,9 @@
       while (attempt < MAX_GENERATION_ATTEMPTS && !valid) {
         this.tiles = this.generateLevel();
         this.spawnTile = this.getSpawnTile();
-        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical");
+        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap);
         this.portalTile = this.pickPortalTile();
-        valid = this.portalTile !== null;
+        valid = this.portalTile !== null && this.bridgeIntact();
         if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
           valid = this.deriveEnemySpawns().length > 0 && (this.direction === "vertical" || this.countTilesOfType(2) > 0);
         }
@@ -982,17 +1015,22 @@
     generateLevel() {
       const tiles = Array(this.height).fill(null).map(() => Array(this.width).fill(0));
       this.pathCells = null;
+      this.bridgeGap = null;
       if (this.direction === "vertical") {
         this.generateVertical(tiles);
       } else {
         this.generatePlatforms(tiles);
       }
       this.placeSpikes(tiles);
-      this.generationReachable = computeReachable(tiles, this.width, this.height, this.canonicalSpawnTile(), this.direction === "vertical");
+      this.generationReachable = computeReachable(tiles, this.width, this.height, this.canonicalSpawnTile(), this.direction === "vertical", this.bridgeGap);
       this.placeEnemyMarkers(tiles);
       if (this.direction === "left") {
         for (const row of tiles)
           row.reverse();
+        if (this.bridgeGap) {
+          const { a, b, S } = this.bridgeGap;
+          this.bridgeGap = { a: this.width - 1 - b, b: this.width - 1 - a, S };
+        }
       }
       return tiles;
     }
@@ -1035,10 +1073,42 @@
       let segRemaining = 0;
       let currentY = this.height - 3;
       let gapStreak = 0;
+      let bridgeA = -1;
+      let bridgeW = 0;
+      let bridgeS = -1;
+      if (this.levelNumber >= DECK_BRIDGE_FIRST_LEVEL && this.rng() < BRIDGE_CHANCE) {
+        const bandLo = HAZARD_SPAWN_EXCLUDE_COLS;
+        const bandHi = this.width - 6;
+        const slots = [];
+        for (let wGap = MIN_DECK_GAP;wGap <= MAX_DECK_GAP; wGap++) {
+          for (let s = BRIDGE_MIN_START_COL;s + wGap - 1 <= this.width - 6; s++) {
+            const leftSeg = Math.max(0, Math.min(s - 4, bandHi) - bandLo + 1);
+            const rightSeg = Math.max(0, bandHi - Math.max(s + wGap - 1 + 4, bandLo) + 1);
+            if (leftSeg >= 2 && rightSeg >= 2)
+              slots.push({ s, wGap });
+          }
+        }
+        if (slots.length > 0) {
+          const pick = slots[Math.floor(this.rng() * slots.length)];
+          bridgeA = pick.s;
+          bridgeW = pick.wGap;
+        }
+      }
       for (let x = 0;x < this.width; x++) {
+        if (bridgeA >= 0 && x === bridgeA)
+          bridgeS = currentY;
+        if (bridgeA >= 0 && x >= bridgeA && x < bridgeA + bridgeW) {
+          continue;
+        }
+        if (bridgeA >= 0 && x === bridgeA + bridgeW) {
+          for (let y = currentY;y < this.height; y++)
+            tiles[y][x] = 1;
+          segRemaining = 1 + Math.floor(this.rng() * 4);
+          continue;
+        }
         const isSpawnZone = x < 6;
         const isEndZone = x >= this.width - 5;
-        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && segRemaining === 0 && this.rng() < gapChance) {
+        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && segRemaining === 0 && !(bridgeA >= 0 && x === bridgeA - 1) && this.rng() < gapChance) {
           gapStreak++;
           continue;
         }
@@ -1067,6 +1137,9 @@
         for (let y = currentY;y < this.height; y++) {
           tiles[y][x] = 1;
         }
+      }
+      if (bridgeA >= 0) {
+        this.bridgeGap = { a: bridgeA, b: bridgeA + bridgeW - 1, S: bridgeS };
       }
       return tiles;
     }
@@ -1113,12 +1186,17 @@
           const span = this.patrolSpan(this.tiles, x, y);
           if (!span)
             continue;
-          spawns.push({
-            x,
-            y,
-            left: Math.max(span.left, bandMin),
-            right: Math.min(span.right, bandMax)
-          });
+          let left = Math.max(span.left, bandMin);
+          let right = Math.min(span.right, bandMax);
+          if (this.bridgeGap) {
+            const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
+            const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+            if (x < wLo)
+              right = Math.min(right, wLo - 1);
+            else if (x > wHi)
+              left = Math.max(left, wHi + 1);
+          }
+          spawns.push({ x, y, left, right });
         }
       }
       return spawns;
@@ -1180,7 +1258,7 @@
       const headroom = this.direction === "vertical";
       const spawn = this.canonicalSpawnTile();
       const placementSafe = () => {
-        const reachable = computeReachable(tiles, this.width, this.height, spawn, headroom);
+        const reachable = computeReachable(tiles, this.width, this.height, spawn, headroom, this.bridgeGap);
         let portalBand = false;
         for (const key of reachable) {
           const x = key % this.width;
@@ -1225,6 +1303,9 @@
     }
     isMarkerSite(tiles, x, y, reachable, opts = {}) {
       if (!this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
+        return false;
+      }
+      if (this.bridgeGap && x >= this.bridgeGap.a - BRIDGE_LIP_BAN_COLS && x <= this.bridgeGap.b + BRIDGE_LIP_BAN_COLS) {
         return false;
       }
       if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1)
@@ -1454,61 +1535,56 @@
       }
       return null;
     }
+    bridgeIntact() {
+      const g = this.bridgeGap;
+      if (!g)
+        return true;
+      const { a, b, S } = g;
+      const w = b - a + 1;
+      if (w < MIN_DECK_GAP || w > MAX_DECK_GAP)
+        return false;
+      if (S < 1 || S >= this.height)
+        return false;
+      if (this.columnTopRow(a - 1) !== S || this.columnTopRow(b + 1) !== S) {
+        return false;
+      }
+      for (let x = a;x <= b; x++) {
+        for (let y = 0;y < this.height; y++) {
+          if (this.tiles[y][x] !== 0)
+            return false;
+        }
+      }
+      if (this.spawnTile.x >= a && this.spawnTile.x <= b || this.portalTile && this.portalTile.x >= a && this.portalTile.x <= b) {
+        return false;
+      }
+      return this.movingDeckLegal(a, b, S);
+    }
     deriveMovingPlatforms() {
       const out = [];
-      if (this.levelNumber < MOVING_PLATFORM_FIRST_LEVEL)
-        return out;
-      if (this.direction === "vertical")
+      const g = this.bridgeGap;
+      if (!g || this.direction === "vertical")
         return out;
       const T = this.tileSize;
-      const candidates = [];
-      let x = 1;
-      while (x < this.width - 1) {
-        if (this.columnTopRow(x) !== null) {
-          x++;
-          continue;
-        }
-        const a = x;
-        while (x < this.width - 1 && this.columnTopRow(x) === null)
-          x++;
-        const b = x - 1;
-        const w = b - a + 1;
-        if (w < MP_GAP_MIN_WIDTH || w > MP_GAP_MAX_WIDTH)
-          continue;
-        const leftTop = this.columnTopRow(a - 1);
-        const rightTop = this.columnTopRow(b + 1);
-        if (leftTop === null || rightTop === null)
-          continue;
-        if (Math.abs(leftTop - rightTop) > 1)
-          continue;
-        const S = Math.max(leftTop, rightTop);
-        if (this.movingDeckLegal(a, b, S))
-          candidates.push({ a, b, S });
-      }
-      shuffle(candidates, this.rng);
-      for (const c of candidates) {
-        const roll = this.rng();
-        if (out.length >= MAX_MOVING_PLATFORMS)
-          continue;
-        if (roll >= MP_ACCEPT_CHANCE)
-          continue;
-        const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
-        const phase = this.rng();
-        out.push({
-          x: c.a * T,
-          y: c.S * T,
-          width: MP_DECK_TILES * T,
-          height: T,
-          axis: "h",
-          min: c.a * T,
-          max: (c.b + 1) * T - MP_DECK_TILES * T,
-          speed,
-          phase,
-          vx: 0,
-          vy: 0
-        });
-      }
-      return out;
+      const S = Math.max(this.columnTopRow(g.a - 1), this.columnTopRow(g.b + 1));
+      if (!this.movingDeckLegal(g.a, g.b, S))
+        return out;
+      const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
+      const phase = this.rng();
+      out.push({
+        x: g.a * T,
+        y: S * T,
+        width: MP_DECK_TILES * T,
+        height: T,
+        axis: "h",
+        min: g.a * T,
+        max: (g.b + 1) * T - MP_DECK_TILES * T,
+        speed,
+        phase,
+        dwell: DECK_DWELL_S,
+        vx: 0,
+        vy: 0
+      });
+      return out.slice(0, MAX_DECK_BRIDGES);
     }
     movingDeckLegal(a, b, S) {
       const inGrid = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height;
@@ -3174,6 +3250,11 @@
             ctx.lineTo(bx, p.y + H - 4);
             ctx.fill();
           }
+        } else if (p.dwelling) {
+          ctx.fillStyle = "rgba(255,255,255,0.55)";
+          ctx.fillRect(p.x, p.y, p.width, 2);
+          ctx.fillRect(p.x, p.y + 2, 3, H - 6);
+          ctx.fillRect(p.x + p.width - 3, p.y + 2, 3, H - 6);
         }
       }
     }
@@ -3450,27 +3531,62 @@
       this.max = desc.max;
       this.speed = desc.speed;
       this.phase = desc.phase;
+      this.dwell = desc.dwell ?? 0;
       this.vx = 0;
       this.vy = 0;
       this.dx = 0;
       this.dy = 0;
+      this.dwelling = false;
       this.elapsed = 0;
       const p0 = this.positionAt(0);
       this.x = this.axis === "v" ? desc.x : p0;
       if (this.axis === "v")
         this.y = p0;
+      this.prevY = this.y;
+      this.prevX = this.x;
+    }
+    traverseSeconds() {
+      const span = this.max - this.min;
+      return span > 0 ? span / this.speed : 0;
+    }
+    periodSeconds() {
+      return 2 * (this.traverseSeconds() + this.dwell);
     }
     positionAt(t) {
       const span = this.max - this.min;
       if (!(span > 0))
         return this.min;
-      const u = (t * this.speed / span + this.phase * 2) % 2;
-      const f = u <= 1 ? u : 2 - u;
-      return this.min + f * span;
+      const leg = this.traverseSeconds();
+      const period = this.periodSeconds();
+      let u = (t + this.phase * period) % period;
+      if (u < 0)
+        u += period;
+      if (u < this.dwell)
+        return this.min;
+      u -= this.dwell;
+      if (u < leg)
+        return this.min + u / leg * span;
+      u -= leg;
+      if (u < this.dwell)
+        return this.max;
+      u -= this.dwell;
+      return this.max - u / leg * span;
+    }
+    isDwellingAt(t) {
+      if (this.dwell <= 0)
+        return false;
+      const period = this.periodSeconds();
+      let u = (t + this.phase * period) % period;
+      if (u < 0)
+        u += period;
+      const leg = this.traverseSeconds();
+      return u < this.dwell || u >= this.dwell + leg && u < 2 * this.dwell + leg;
     }
     update(dt) {
       this.elapsed += dt;
       const pos = this.positionAt(this.elapsed);
+      this.prevX = this.x;
+      this.prevY = this.y;
       if (this.axis === "v") {
         this.dy = pos - this.y;
         this.dx = 0;
@@ -3482,6 +3598,7 @@
       }
       this.vx = dt > 0 ? this.dx / dt : 0;
       this.vy = dt > 0 ? this.dy / dt : 0;
+      this.dwelling = this.isDwellingAt(this.elapsed);
     }
     isUnder(player) {
       return Math.abs(player.y + player.height - this.y) < 1.5 && player.x < this.x + this.width && player.x + player.width > this.x;
@@ -3507,7 +3624,8 @@
           continue;
         if (player.vy < p.vy - VY_EPSILON)
           continue;
-        if (player.prevY !== undefined && player.prevY + player.height > p.y + LAND_TOLERANCE) {
+        const topRef = p.dy < 0 ? p.prevY : p.y;
+        if (player.prevY !== undefined && player.prevY + player.height > topRef + LAND_TOLERANCE) {
           continue;
         }
         out.push(p);

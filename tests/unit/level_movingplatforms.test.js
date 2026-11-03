@@ -1,101 +1,127 @@
 import { test, expect } from "bun:test";
-import { Level } from "../../js/level.js";
+import { Level, computeReachable } from "../../js/level.js";
 
-// Placement invariants for optional traversal decks. The law under test:
-// decks are decoration-on-top — their swept volume may never touch terrain,
-// teeth, patrols, spawn or portal, they are capped per map, gated to level
-// 8+, and identical seeds must replay identical deck sets (retry contract).
+// Structural invariants for REQUIRED deck bridges (player ruling 2026-11-04:
+// "moving platforms should only appear when the gap is too large to jump
+// over"). The law under test: a bridge gap is wider than anything the plain
+// reachability model accepts (the unjumpability contract — plain BFS MUST
+// refuse the portal), the route validates only through the deck corridor,
+// the pit is pure void with EXACTLY flush flanks (Step-0 physics showed a
+// 1-row-down far flank makes even a 6-wide pit coyote-jumpable), hostiles
+// keep clear of the forced boarding points, and generation stays
+// deterministic — with L1..7 and every vertical map untouched.
 
 const T = 32;
 const SEEDS = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111];
+const MIN_DECK_GAP = 6; // mirrors level.js; pinned against Step-0 measurement
+const MAX_DECK_GAP = 7;
 
-// Swept volume in tile coordinates across the ENTIRE shuttle range of one
-// horizontal deck descriptor.
-function sweptRange(p) {
-    return {
-        c0: Math.floor(p.min / T),
-        c1: Math.floor((p.max + p.width - 1e-9) / T),
-        r0: Math.floor(p.y / T),
-        r1: Math.floor((p.y + p.height - 1e-9) / T)
-    };
-}
-
-function checkDeck(level, p, where) {
-    const { c0, c1, r0, r1 } = sweptRange(p);
-    // Deck geometry conventions: 2 tiles wide, 1 tile collision height,
-    // axis-aligned travel with at least one tile of span, sane speeds.
-    expect(p.width, where).toBe(2 * T);
-    expect(p.height, where).toBe(T);
-    expect(p.axis, where).toBe("h"); // vertical elevators deferred this wave
-    expect(p.max - p.min, where).toBeGreaterThanOrEqual(T);
-    expect(p.speed, where).toBeGreaterThan(0);
-    expect(p.speed, where).toBeLessThan(200); // slower than the walk
-    expect(p.phase, where).toBeGreaterThanOrEqual(0);
-    expect(p.phase, where).toBeLessThan(1);
-    // Terrain: every cell under the sweep (and 3 clearance rows above it)
-    // is air — no solids, no spikes, ever.
-    for (let cy = r0; cy <= r1; cy++) {
-        for (let cx = c0; cx <= c1; cx++) {
-            expect(level.tiles[cy]?.[cx], `${where}: solid/spike ${cx},${cy}`).toBe(0);
+function checkBridge(level, p, where) {
+    const g = level.bridgeGap;
+    expect(g, `${where}: deck without declared bridge`).toBeTruthy();
+    // One shuttle per map this wave.
+    expect(level.getMovingPlatforms().length, `${where}: cap`).toBe(1);
+    // Gap geometry: width beyond the physical envelope, flanks EXACTLY
+    // flush at the declared deck-top row S.
+    const w = g.b - g.a + 1;
+    expect(w, `${where}: gap width`).toBeGreaterThanOrEqual(MIN_DECK_GAP);
+    expect(w, `${where}: gap width`).toBeLessThanOrEqual(MAX_DECK_GAP);
+    expect(level.columnTopRow(g.a - 1), `${where}: left flank flush`)
+        .toBe(g.S);
+    expect(level.columnTopRow(g.b + 1), `${where}: right flank flush`)
+        .toBe(g.S);
+    // Pure void pit: every cell of every corridor column is air, top to
+    // bottom — falling in means void death only, never a spiked floor.
+    for (let x = g.a; x <= g.b; x++) {
+        for (let y = 0; y < level.height; y++) {
+            expect(level.tiles[y][x], `${where}: pit cell ${x},${y}`).toBe(0);
         }
     }
-    for (let cy = r0 - 3; cy < r0; cy++) {
-        for (let cx = c0; cx <= c1; cx++) {
-            expect(level.tiles[cy]?.[cx], `${where}: clearance ${cx},${cy}`).toBe(0);
-        }
+    // Descriptor matches the corridor exactly and shuttles inside it.
+    expect(p.axis, `${where}: axis`).toBe("h"); // elevators: next wave
+    expect(p.min / T, `${where}: min` ).toBe(g.a);
+    expect((p.max + p.width) / T, `${where}: max`).toBe(g.b + 1);
+    expect(p.y / T, `${where}: deck top row`).toBe(g.S);
+    expect(p.width, `${where}: deck width`).toBe(2 * T);
+    expect(p.height, `${where}: collision height`).toBe(T);
+    expect(p.dwell, `${where}: dwell hold`).toBeGreaterThan(0);
+    expect(p.speed, `${where}: speed slower than walk`).toBeLessThan(200);
+    expect(p.speed, `${where}: speed floor`).toBeGreaterThanOrEqual(26);
+    expect(p.phase, `${where}: phase`).toBeGreaterThanOrEqual(0);
+    expect(p.phase, `${where}: phase`).toBeLessThan(1);
+
+    // THE UNJUMPABILITY CONTRACT: the plain BFS (no corridor) must NOT
+    // reach the portal — the deck corridor is the only validated crossing.
+    const plain = computeReachable(
+        level.tiles, level.width, level.height, level.spawnTile, false, null);
+    const portalKey = level.portalTile.y * level.width + level.portalTile.x;
+    expect(plain.has(portalKey),
+        `${where}: plain BFS crosses the bridge gap (${w} cols)`).toBe(false);
+    // And the corridor IS the route: every corridor cell joins the
+    // validated reachable set.
+    for (let x = g.a; x <= g.b; x++) {
+        expect(level.reachableTiles.has((g.S - 1) * level.width + x),
+            `${where}: corridor cell ${x} not a route cell`).toBe(true);
     }
-    // No patrol rect overlaps the swept volume on its rows.
+    // Hostile exclusion around the forced boarding points: no deployed
+    // patrol may come within two columns of either lip.
     for (const e of level.enemyManager.enemies) {
-        const row = Math.floor(e.y / T);
-        if (row !== r0 && row !== r1) continue;
-        expect(Math.floor((e.maxX - 1e-9) / T) < c0 || c1 < Math.floor(e.minX / T),
-            `${where}: patrol overlaps sweep at row ${row}`).toBe(true);
+        const lo = e.minX, hi = e.maxX - 1;
+        const clearLeft = hi < (g.a - 3) * T;
+        const clearRight = lo > (g.b + 3) * T;
+        expect(clearLeft || clearRight,
+            `${where}: patrol ${lo}..${hi} near lips ${g.a - 1}/${g.b + 1}`)
+            .toBe(true);
     }
-    // Spawn and portal cells stay outside the swept volume.
+    // Spawn and portal never sit inside the corridor columns.
     for (const cell of [level.spawnTile, level.portalTile]) {
-        const inside = cell.x >= c0 && cell.x <= c1 && cell.y >= r0 && cell.y <= r1;
-        expect(inside, `${where}: covers cell ${cell.x},${cell.y}`).toBe(false);
+        expect(cell.x >= g.a && cell.x <= g.b,
+            `${where}: cell ${cell.x},${cell.y} inside corridor`).toBe(false);
     }
 }
 
-test("L8..60 x 10 seeds: zero illegal decks, cap 2/map, all descriptors sane", () => {
-    let mapsWithDecks = 0, horizMaps = 0, totalDecks = 0;
-    for (let lvl = 8; lvl <= 60; lvl++) {
+test("L8..100 x 10 seeds: every bridge legal, plain BFS refuses the gap", () => {
+    let withBridge = 0, horizMaps = 0;
+    for (let lvl = 8; lvl <= 100; lvl++) {
         for (const s of SEEDS) {
             const seed = lvl * 1000 + s;
             const level = new Level(lvl, T, seed);
-            const decks = level.getMovingPlatforms();
             const where = `L${lvl} seed ${seed}`;
-            expect(decks.length, `${where}: cap`).toBeLessThanOrEqual(2);
-            if (level.direction !== "vertical") {
-                horizMaps++;
-                if (decks.length) mapsWithDecks++;
-            } else {
-                // Elevators deferred: vertical maps ship none this wave.
+            const decks = level.getMovingPlatforms();
+            if (level.direction === "vertical") {
+                // Elevators deferred: vertical maps ship neither decks nor
+                // corridors this wave.
                 expect(decks.length, `${where}: vertical gate`).toBe(0);
+                expect(level.bridgeGap, `${where}: vertical corridor`).toBe(null);
+                continue;
             }
-            totalDecks += decks.length;
-            for (const p of decks) checkDeck(level, p, where);
+            horizMaps++;
+            expect(decks.length, `${where}: cap 1`).toBeLessThanOrEqual(1);
+            if (!decks.length) continue;
+            withBridge++;
+            checkBridge(level, decks[0], where);
         }
     }
-    // Coverage sanity (tuning report lives in the wave notes): placement is
-    // opportunistic, so demand visible-but-not-dominant presence.
-    expect(mapsWithDecks / horizMaps).toBeGreaterThan(0.3);
-    expect(mapsWithDecks / horizMaps).toBeLessThan(0.75);
-    expect(totalDecks).toBeLessThanOrEqual(2 * mapsWithDecks);
+    // Realized coverage band (tuned BRIDGE_CHANCE=0.6 measured 36.7%; the
+    // narrow L8..24 tiers are structurally excluded by the feasibility
+    // arithmetic — documented in level.js).
+    const frac = withBridge / horizMaps;
+    expect(frac).toBeGreaterThan(0.28);
+    expect(frac).toBeLessThan(0.48);
 });
 
-test("levels below 8 ship no decks", () => {
+test("levels below 8 ship no decks and no corridors", () => {
     for (let lvl = 1; lvl <= 7; lvl++) {
         for (const s of SEEDS) {
             const level = new Level(lvl, T, lvl * 1000 + s);
             expect(level.getMovingPlatforms(), `L${lvl} seed ${s}`).toEqual([]);
+            expect(level.bridgeGap, `L${lvl} seed ${s}`).toBe(null);
         }
     }
 });
 
-test("same seed replays the identical deck set including phase", () => {
-    for (const [lvl, s] of [[8, 11], [12, 44], [20, 77], [30, 99], [45, 66]]) {
+test("same seed replays the identical deck set including dwell and phase", () => {
+    for (const [lvl, s] of [[8, 11], [27, 44], [40, 77], [60, 99], [95, 66]]) {
         const a = new Level(lvl, T, lvl * 1000 + s).getMovingPlatforms();
         const b = new Level(lvl, T, lvl * 1000 + s).getMovingPlatforms();
         expect(b, `L${lvl} seed ${s}`).toEqual(a);
@@ -103,12 +129,96 @@ test("same seed replays the identical deck set including phase", () => {
 });
 
 test("deck derivation never mutates the grid", () => {
-    const level = new Level(20, T, 20077);
+    // A seed known to ship a bridge (scan deterministically).
+    let level = null;
+    for (let lvl = 25; lvl <= 60 && !level; lvl++) {
+        for (let s = 1; s <= 60; s++) {
+            const l = new Level(lvl, T, lvl * 1000 + s);
+            if (l.getMovingPlatforms().length) { level = l; break; }
+        }
+    }
+    expect(level, "found a bridge map").toBeTruthy();
     const before = JSON.stringify(level.tiles);
     const again = level.deriveMovingPlatforms();
     expect(JSON.stringify(level.tiles), "tiles untouched").toBe(before);
-    // A re-run draws from the advanced rng stream, so it may differ in WHICH
-    // gaps host decks — but the shape guarantees (cap, geometry) still hold.
     expect(Array.isArray(again)).toBe(true);
-    expect(again.length).toBeLessThanOrEqual(2);
+    expect(again.length).toBeLessThanOrEqual(1);
+});
+
+// --- Corridor semantics on hand-built fixtures ---------------------------------
+// computeReachable's virtual walkway rules, isolated from the generator:
+// bidirectional lip connections, zero launch authority elsewhere.
+
+function fixtureRows(rows) {
+    return rows.map(r => [...r].map(ch => (ch === "#" ? 1 : 0)));
+}
+
+test("corridor connects flush lips bidirectionally and counts as route", () => {
+    const tiles = fixtureRows([
+        "............",
+        "............",
+        "............",
+        "............",
+        "###....#####", // solids from row 4; void columns 3..6
+        "###....#####"
+    ]);
+    const width = 12, height = 6;
+    const corridor = { a: 3, b: 6, S: 4 }; // rider body row 3
+    const leftStart = { x: 2, y: 3 };
+    const rightStart = { x: 7, y: 3 };
+
+    // Without the corridor BOTH sides are islands.
+    const plain = computeReachable(tiles, width, height, leftStart, false, null);
+    expect(plain.has(3 * width + 7), "plain BFS crosses").toBe(false);
+    const plainR = computeReachable(tiles, width, height, rightStart, false, null);
+    expect(plainR.has(3 * width + 2), "plain BFS crosses back").toBe(false);
+
+    // With it: crossings work in both directions and every corridor cell
+    // is a route cell.
+    const fwd = computeReachable(tiles, width, height, leftStart, false, corridor);
+    expect(fwd.has(3 * width + 7), "cross right").toBe(true);
+    const back = computeReachable(tiles, width, height, rightStart, false, corridor);
+    expect(back.has(3 * width + 2), "cross left").toBe(true);
+    for (let x = 3; x <= 6; x++) {
+        expect(fwd.has(3 * width + x), `corridor cell ${x}`).toBe(true);
+    }
+});
+
+test("corridor cells launch nothing: no climbs or falls off the walkway", () => {
+    // A one-tile riser sits INSIDE the span footprint one row above the
+    // walkway line would allow a dist-2 overhang climb IF corridor cells
+    // had launch authority. They must not gain any.
+    const tiles = fixtureRows([
+        "............",
+        "............",
+        ".........#..", // (9,2): standable ONLY from a mid-corridor launch
+        "###....#####",
+        "###....#####",
+        "###....#####"
+    ]);
+    const width = 12, height = 6;
+    const corridor = { a: 3, b: 6, S: 3 }; // body row 2
+    const reach = computeReachable(
+        tiles, width, height, { x: 2, y: 2 }, false, corridor);
+    // Crossing itself works...
+    expect(reach.has(2 * width + 7), "cross right").toBe(true);
+    // The riser's standable cell is (9,1) — (9,2) is its solid top. It is
+    // reachable legitimately: a one-column step-up from the right-island
+    // cell (8,2). Same verdict with and without the corridor, which is the
+    // point — the corridor grants it no special authority.
+    expect(reach.has(1 * width + 9), "riser top via corridor run").toBe(true);
+    const fromRight = computeReachable(
+        tiles, width, height, { x: 7, y: 2 }, false, null);
+    expect(fromRight.has(1 * width + 9), "riser top standalone").toBe(true);
+    // The conservative core: corridor cells added NO extra reach beyond the
+    // union of (left island) U (right island) U (corridor walkway).
+    const leftIsland = computeReachable(
+        tiles, width, height, { x: 2, y: 2 }, false, null);
+    const rightIsland = fromRight;
+    for (const k of reach) {
+        const x = k % width, y = (k - x) / width;
+        const isWalkway = y === 2 && x >= 3 && x <= 6;
+        expect(leftIsland.has(k) || rightIsland.has(k) || isWalkway,
+            `extra reach (${x},${y}) off the walkway`).toBe(true);
+    }
 });

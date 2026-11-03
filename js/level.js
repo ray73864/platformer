@@ -84,25 +84,52 @@ const SPINY_CAP_DIVISOR = 3;
 // measurement, not by eye.
 const HOSTILE_MIN_RUN = 4;
 
-// --- Moving platforms (optional traversal aids, player ask 2026-11-03) -----
-// Decks are placed AFTER generation validity completes and consume rng only
-// after every geometry/marker/portal/coin/kind stream (see the constructor's
-// tail), so terrain stays byte-identical and BFS-validated routes never need
-// — and can never be blocked by — a platform. Gates:
+// --- Deck bridges: REQUIRED crossings over unjumpable gaps ------------------
+// Player ruling 2026-11-04: "moving platforms should only appear when the gap
+// is too large to jump over." This replaces the old optional-aids placement
+// (decks over already-jumpable gaps) entirely: decks now CARRY routes. The
+// generator emits a BRIDGE GAP segment wider than anything the plain BFS
+// accepts, and validation runs through the deck's virtual corridor (see
+// computeReachable's corridor parameter). Gates:
 //  * Level 8+: the basic tier (L1..7) stays pristine while the player is
-//    learning the core verbs.
-//  * Horizontal maps only this wave: the gap scan below is heightmap-shaped
-//    (all-air columns with flush flanks). Vertical shaft elevators are a
-//    deferred second type — the manager already supports axis 'v'.
-const MOVING_PLATFORM_FIRST_LEVEL = 8;
-const MAX_MOVING_PLATFORMS = 2;      // per map
-const MP_ACCEPT_CHANCE = 0.9;        // per candidate gap (measured ~50% horiz coverage)
-const MP_GAP_MIN_WIDTH = 3;          // tiles of air between the flanks
-const MP_GAP_MAX_WIDTH = 6;
+//    learning the core verbs — and byte-identical generation there is a
+//    determinism gate (the roll below must never fire for L1..7).
+//  * Horizontal maps only this wave; vertical shaft elevators are the next
+//    wave (the manager already supports axis 'v' and the prev-top catch fix).
+const DECK_BRIDGE_FIRST_LEVEL = 8;
+const MAX_DECK_BRIDGES = 1;          // per map this wave (structural gate)
+// Per-attempt roll for a bridge on an eligible horizontal map. MEASURED
+// realized coverage of shipped horizontal L8+ maps (12 seeds x L8..100):
+// raw 0.45 -> 26%, 0.55 -> 31%, 0.60 -> 37%, 0.65 -> 41%. Tuned to 0.60 for
+// the middle of the 30-45% band; realized < raw because narrow tiers
+// (L8..24) have no feasible slots at all and failing attempts reroll.
+const BRIDGE_CHANCE = 0.6;
+// WHY 6: Step-0 physics measurement (scratch sim on the shipped Player/
+// Physics, brute-forced press frames incl. the full coyote window) shows a
+// flush-flanked pit is jumpable up to 5 tiles at same height (~2.7px pixel-
+// perfect margin at W5) and 6 tiles when the far flank sits 1 row LOWER.
+// The generator's modeled envelope (MAX_H_JUMP=4 landing scan) refuses pits
+// ≥ 4 columns wide, but the physical envelope is the fairness contract:
+// a "required" bridge the speedrunner can skip is a lie. 6 clears the
+// worst physical case with margin; flanks are additionally forced EXACTLY
+// flush (bridgeIntact) so the down-1 bonus never applies.
+const MIN_DECK_GAP = 6;              // tiles of pure void between the lips
+const MAX_DECK_GAP = 7;              // variety band, both ≥ MIN
+const BRIDGE_MIN_START_COL = 7;      // left lip ≥ one past the spawn zone
+// Right lip capped at width-6 so the corridor never touches the portal band
+// (x >= width-4) and shares the hazard band's runway discipline.
+// Boarding fairness: the deck HOLDS flush at each lip for this long — a
+// required crossing must offer a walk-on window, not a departing plank.
+const DECK_DWELL_S = 0.8;
 const MP_DECK_TILES = 2;             // deck width in tiles
 const MP_CLEARANCE_ROWS = 3;         // air rows required above the sweep
-const MP_SPEED_MIN = 26;             // px/s — slower than the 200 px/s walk
-const MP_SPEED_RANGE = 18;           // ..so riders always out-move the ride
+const MP_SPEED_MIN = 26;             // px/s — slower than the 200 px/s walk:
+const MP_SPEED_RANGE = 18;           // riders always out-move the ride
+// Enemy-marker exclusion around a bridge: lip columns are a-1 and b+1, so
+// ±2 columns from each lip = [a-3, b+3]. Hostiles near a FORCED boarding
+// point are unfair (shelf ruling lineage); the corridor itself can never
+// host a site (no solid support beneath any corridor cell).
+const BRIDGE_LIP_BAN_COLS = 3;
 
 // Contiguous type-1 tiles on a support row through a column: the solid-run
 // width of the shelf a spawn cell stands on (same measurement as the
@@ -208,12 +235,35 @@ function shuffle(items, rng = Math.random) {
 // row for solidity. Horizontal heightmaps structurally never put a ceiling
 // over a standable cell, so their callers keep the default (false) and
 // byte-identical behaviour.
+// Optional `corridor` (deck bridges): a virtual walkway { a, b, S } spanning
+// gap columns a..b with its deck-top row at S (rider body row S-1). The
+// generator declares one per bridge gap so the BFS can validate the route
+// THROUGH the deck — without it a bridge map would reject itself. Rules,
+// deliberately conservative (the deck moves horizontally; only dwell
+// positions near the lips offer stable jumps, and we promise nothing from
+// mid-corridor stances):
+//   - Corridor cells connect HORIZONTALLY to each other and to both lip
+//     cells (bidirectional: flush across, one step up onto a higher flank,
+//     one step down off a higher lip onto the dwelling deck). Left-flowing
+//     levels get this for free — the model is symmetric in x and the 'left'
+//     mirror transforms the descriptor alongside the grid.
+//   - Corridor cells NEVER launch anything else: no fall scans, no dist-2
+//     overhang climbs, no upward jumps beyond the lips. A cell reached only
+//     via the corridor cannot become a launchpad for further strict-rule
+//     derivation.
+//   - Corridor cells join reachableTiles (they are ROUTE cells): hazard
+//     protections apply upstream (pit columns carry no spike support by
+//     construction; markers are banned within BRIDGE_LIP_BAN_COLS of either
+//     lip), and coins may sit on them (collectible exactly once while
+//     riding across — the crossing is mandatory anyway).
+// Callers without a bridge pass null: behavior is byte-identical.
 export function computeReachable(
     tiles,
     width,
     height,
     startTile,
-    requireOpenHead = false
+    requireOpenHead = false,
+    corridor = null
 ) {
     const solid = (x, y) => {
         if (x < 0 || x >= width) return true;
@@ -230,6 +280,12 @@ export function computeReachable(
         freeCell(x, y) && solid(x, y + 1) &&
         (!requireOpenHead || !solid(x, y - 1));
 
+    // Virtual deck-walkway cell (bridge corridor): rider body row S-1
+    // across the gap columns. See the header for the rule set.
+    const isCorr = (x, y) =>
+        corridor !== null && y === corridor.S - 1 &&
+        x >= corridor.a && x <= corridor.b;
+
     const key = (x, y) => y * width + x;
     const reachable = new Set();
 
@@ -242,6 +298,30 @@ export function computeReachable(
 
     while (queue.length > 0) {
         const [x, y] = queue.shift();
+
+        // Corridor cells expand ONLY along the walkway and onto the lips
+        // (flush across, or one step up onto a higher flank). The standard
+        // scans below are skipped entirely for them — mid-corridor stances
+        // launch nothing (see header).
+        if (isCorr(x, y)) {
+            for (const dir of [-1, 1]) {
+                const nx = x + dir;
+                if (isCorr(nx, y)) {
+                    if (!reachable.has(key(nx, y))) {
+                        reachable.add(key(nx, y));
+                        queue.push([nx, y]);
+                    }
+                    continue;
+                }
+                for (const ny of [y, y - 1]) {
+                    if (standable(nx, ny) && !reachable.has(key(nx, ny))) {
+                        reachable.add(key(nx, ny));
+                        queue.push([nx, ny]);
+                    }
+                }
+            }
+            continue;
+        }
 
         for (const dir of [-1, 1]) {
             // Walk or fall along/across columns at current row height. A move
@@ -343,6 +423,21 @@ export function computeReachable(
                 }
             }
         }
+
+        // Boarding edge (bridge corridor): stepping off a lip column onto
+        // the dwelling deck — flush across, or one row down from a higher
+        // lip. Only columns ADJACENT to the corridor qualify, so only the
+        // two lips can board; every other cell treats the corridor as air.
+        if (corridor !== null) {
+            for (const nx of [x - 1, x + 1]) {
+                const ny = isCorr(nx, y) ? y :
+                    (isCorr(nx, y + 1) ? y + 1 : -1);
+                if (ny >= 0 && !reachable.has(key(nx, ny))) {
+                    reachable.add(key(nx, ny));
+                    queue.push([nx, ny]);
+                }
+            }
+        }
     }
 
     return reachable;
@@ -411,10 +506,13 @@ export class Level {
                 // Vertical ledges create overhangs a 32px body cannot jump
                 // out of; validate those maps headroom-aware (see
                 // computeReachable). Horizontal heightmaps keep the default.
-                this.direction === 'vertical'
+                // bridgeGap is null on vertical maps, so one argument
+                // spelling covers both directions.
+                this.direction === 'vertical',
+                this.bridgeGap
             );
             this.portalTile = this.pickPortalTile();
-            valid = this.portalTile !== null;
+            valid = this.portalTile !== null && this.bridgeIntact();
             // Patrol AI from level 5 onward is a product contract (README).
             // Jagged Phase-2 terrain can leave no legal marker site inside
             // the band, so a zero-marker construction is rejected here —
@@ -488,13 +586,15 @@ export class Level {
         // are skipped by the spawn validation.
         this.enemyManager = new EnemyManager();
         this.spawnEnemies();
-        // Moving platforms derive LAST: their candidate rolls consume this.rng
-        // only after every geometry, spike, marker, portal, coin and enemy-kind
-        // draw has finished (same discipline as spawnEnemies' kind rolls), so
-        // terrain/coins/enemies stay byte-identical against the pre-platform
-        // generator for a given seed, and decks never perturb a validated
-        // route. Fresh Level per publish/retry => fresh deck set with an
-        // identical phase schedule (replays are exact).
+        // Deck-bridge descriptors derive LAST: speed/phase rolls consume
+        // this.rng only after every geometry, spike, marker, portal, coin and
+        // enemy-kind draw has finished (same discipline as spawnEnemies' kind
+        // rolls), so terrain/coins/enemies stay byte-identical for a given
+        // seed and the schedule never perturbs a validated route. The bridge
+        // GAP itself was decided and validated inside generateLevel/the
+        // attempt loop above — a map with a corridor always ships its deck.
+        // Fresh Level per publish/retry => fresh manager with an identical
+        // phase schedule (replays are exact).
         this.movingPlatforms = this.deriveMovingPlatforms();
     }
 
@@ -531,6 +631,9 @@ export class Level {
         // Cells carrying the validated vertical route (jump-off/landing);
         // spikes must never cover them. Null for horizontal generation.
         this.pathCells = null;
+        // Deck-bridge corridor (canonical space until the 'left' flip below;
+        // generatePlatforms sets it, everything else keeps it null).
+        this.bridgeGap = null;
 
         if (this.direction === 'vertical') {
             this.generateVertical(tiles);
@@ -553,7 +656,8 @@ export class Level {
             this.width,
             this.height,
             this.canonicalSpawnTile(),
-            this.direction === 'vertical'
+            this.direction === 'vertical',
+            this.bridgeGap
         );
         this.placeEnemyMarkers(tiles);
 
@@ -561,9 +665,15 @@ export class Level {
         // zone, end zone, portal band and hazard exclusions are all written
         // for that space — and mirrors afterwards. The column flip maps the
         // terrain, the spike/marker exclusion bands, and the movement model
-        // (symmetric in x) onto exact mirrored counterparts.
+        // (symmetric in x) onto exact mirrored counterparts. The bridge
+        // corridor descriptor rides the same transform: gap columns [a..b]
+        // map to [width-1-b .. width-1-a], deck row unchanged.
         if (this.direction === 'left') {
             for (const row of tiles) row.reverse();
+            if (this.bridgeGap) {
+                const { a, b, S } = this.bridgeGap;
+                this.bridgeGap = { a: this.width - 1 - b, b: this.width - 1 - a, S };
+            }
         }
 
         return tiles;
@@ -654,12 +764,69 @@ export class Level {
         let currentY = this.height - 3; // Top solid row of the ground column
         let gapStreak = 0;
 
+        // --- Deck-bridge slot (canonical space; see DECK_BRIDGE_* constants)
+        // ONE roll per eligible construction attempt. L1..7 never roll (the
+        // byte-identity gate for the basic tier depends on this stream being
+        // untouched); from L8 up every horizontal map consumes exactly one
+        // draw here, which reshuffles those maps by design.
+        // FEASIBILITY GATE: a bridge void devours its own columns plus the
+        // ±3 besideDropOff ring around each lip and the ±2 marker-lip ban —
+        // roughly gapW+6 hazard-band columns. The constructor REQUIRES both
+        // a deployed enemy and a spike on horizontal Phase-2 maps, so a slot
+        // is only offered when BOTH flanking segments of the hazard band
+        // keep >= 2 usable columns (one hosts the spike, the other the
+        // patrol; the void separates them by > THREAT_SPACING for free).
+        // Narrow tiers (24/28-wide maps, L8..24) fail this arithmetically
+        // and simply generate WITHOUT a bridge — never forced, no wasted
+        // retries. Expert tier and up (>= 32 wide) carry feasible slots.
+        let bridgeA = -1;
+        let bridgeW = 0;
+        let bridgeS = -1;
+        if (this.levelNumber >= DECK_BRIDGE_FIRST_LEVEL &&
+            this.rng() < BRIDGE_CHANCE) {
+            const bandLo = HAZARD_SPAWN_EXCLUDE_COLS;   // 9
+            const bandHi = this.width - 6;
+            const slots = [];
+            for (let wGap = MIN_DECK_GAP; wGap <= MAX_DECK_GAP; wGap++) {
+                for (let s = BRIDGE_MIN_START_COL; s + wGap - 1 <= this.width - 6; s++) {
+                    const leftSeg = Math.max(0, Math.min(s - 4, bandHi) - bandLo + 1);
+                    const rightSeg = Math.max(0, bandHi - Math.max(s + wGap - 1 + 4, bandLo) + 1);
+                    if (leftSeg >= 2 && rightSeg >= 2) slots.push({ s, wGap });
+                }
+            }
+            if (slots.length > 0) {
+                const pick = slots[Math.floor(this.rng() * slots.length)];
+                bridgeA = pick.s;
+                bridgeW = pick.wGap;
+            }
+        }
+
         for (let x = 0; x < this.width; x++) {
+            // Bridge void columns: pure air top-to-bottom (falling in =
+            // void death only, never a spiked floor). currentY passes
+            // through untouched, so both lips end up EXACTLY flush —
+            // Step 0 showed a far flank 1 row lower makes even a 6-wide
+            // pit coyote-jumpable, and flush keeps the crossing deck-only.
+            if (bridgeA >= 0 && x === bridgeA) bridgeS = currentY;
+            if (bridgeA >= 0 && x >= bridgeA && x < bridgeA + bridgeW) {
+                continue;
+            }
+            if (bridgeA >= 0 && x === bridgeA + bridgeW) {
+                // Forced flush right lip (no junction step, fresh plateau).
+                for (let y = currentY; y < this.height; y++) tiles[y][x] = 1;
+                segRemaining = 1 + Math.floor(this.rng() * 4);
+                continue;
+            }
+
             const isSpawnZone = x < 6;
             const isEndZone = x >= this.width - 5;
 
+            // The column left of a bridge lip must be solid (it IS the lip):
+            // suppress the ordinary gap roll there. Columns inside the
+            // corridor never reach this line.
             if (!isSpawnZone && !isEndZone && gapStreak < maxGap &&
-                segRemaining === 0 && this.rng() < gapChance) {
+                segRemaining === 0 && !(bridgeA >= 0 && x === bridgeA - 1) &&
+                this.rng() < gapChance) {
                 gapStreak++;
                 continue; // Air column (pit) at a segment edge; max maxGap in a row
             }
@@ -697,6 +864,9 @@ export class Level {
             }
         }
 
+        if (bridgeA >= 0) {
+            this.bridgeGap = { a: bridgeA, b: bridgeA + bridgeW - 1, S: bridgeS };
+        }
         return tiles;
     }
 
@@ -784,12 +954,21 @@ export class Level {
                 if (!this.reachableTiles.has(y * this.width + x)) continue;
                 const span = this.patrolSpan(this.tiles, x, y);
                 if (!span) continue;
-                spawns.push({
-                    x,
-                    y,
-                    left: Math.max(span.left, bandMin),
-                    right: Math.min(span.right, bandMax)
-                });
+                let left = Math.max(span.left, bandMin);
+                let right = Math.min(span.right, bandMax);
+                // Forced-boarding fairness (deck bridges): isMarkerSite bans
+                // SITES inside the lip window, but a legal site just outside
+                // it can patrol INTO the window — the approach to a REQUIRED
+                // boarding point would still be swept. End the patrol at the
+                // window edge (the site's own column always survives: it is
+                // outside the window by construction).
+                if (this.bridgeGap) {
+                    const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
+                    const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+                    if (x < wLo) right = Math.min(right, wLo - 1);
+                    else if (x > wHi) left = Math.max(left, wHi + 1);
+                }
+                spawns.push({ x, y, left, right });
             }
         }
         return spawns;
@@ -917,7 +1096,8 @@ export class Level {
         // validation exactly.
         const placementSafe = () => {
             const reachable = computeReachable(
-                tiles, this.width, this.height, spawn, headroom);
+                tiles, this.width, this.height, spawn, headroom,
+                this.bridgeGap);
             let portalBand = false;
             for (const key of reachable) {
                 const x = key % this.width;
@@ -985,6 +1165,18 @@ export class Level {
     isMarkerSite(tiles, x, y, reachable, opts = {}) {
         if (!this.hazardPlacementAllowed(
             this.direction === 'vertical' ? y : x)) {
+            return false;
+        }
+        // Forced-boarding fairness (deck bridges): no enemy site within two
+        // columns of either lip — a hostile patrolling the approach to a
+        // REQUIRED boarding point is an ambush on a move the player cannot
+        // skip (shelf ruling lineage). The corridor columns themselves can
+        // never host a site anyway (no solid support beneath them), so this
+        // window closes the whole approach. Evaluated in canonical space
+        // during generation; deployed markers mirror with the grid.
+        if (this.bridgeGap &&
+            x >= this.bridgeGap.a - BRIDGE_LIP_BAN_COLS &&
+            x <= this.bridgeGap.b + BRIDGE_LIP_BAN_COLS) {
             return false;
         }
         if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1) return false;
@@ -1353,75 +1545,83 @@ export class Level {
     }
 
     /**
-     * Placement pass for optional traversal decks (see the MOVING_PLATFORM_*
-     * constants header). Candidate scan: maximal runs of all-air columns on
-     * the ground plane, 3..6 tiles wide, whose flanking columns are solid
-     * within ONE row of each other — the deck top sits flush with the lower
-     * lip (so riders step on/off like adjacent tiles) and one row below the
-     * higher one (a rider walked to that end face-braces the flank wall like
-     * any ordinary wall, bounded by one frame's carry delta — no jitter, no
-     * tunnelling, pinned by tests). HARD VALIDATION over the entire swept
-     * range before a deck ships:
-     *  - every cell under the sweep (deck rows S..S+1 across the gap) is air;
-     *  - MP_CLEARANCE_ROWS air rows above the sweep across the whole span;
-     *  - no enemy patrol rect intersects the swept volume;
-     *  - the spawn cell and portal cell are outside the swept volume.
-     * On today's heightmaps most of these hold by construction (gap columns
-     * carry no solid, spike support, or patrol span), but they are re-checked
-     * here so a future generator change cannot silently arm a deck with a
-     * route-blocking cell. Illegal candidates are rejected silently.
-     * Rolls follow the one-unconditional-draw-per-item discipline: one accept
-     * roll per candidate regardless of outcome, speed/phase drawn only when
-     * a deck actually ships. Collision height is a full tile while the drawn
-     * plank is ~half that: at max fall speed 600 px/s against the 0.05 s dt
-     * cap a body sinks ~30 px/frame, and a half-tile collider would risk
-     * tunnelling straight through a falling player.
+     * Hard validation of the declared bridge corridor against the FINAL
+     * grid (post-mirror), run inside the constructor's validity loop so a
+     * broken bridge rejects the whole construction instead of shipping a
+     * soft-locked required crossing:
+     *  - exactly one gap per map, width within [MIN_DECK_GAP, MAX_DECK_GAP]
+     *    (> the physical jump envelope — see the MIN_DECK_GAP WHY-comment);
+     *  - flanks EXACTLY flush at row S (a far flank one row lower makes
+     *    even a 6-wide pit coyote-jumpable per Step 0);
+     *  - pure void pit: every cell of every gap column, top to bottom, is
+     *    air — no solids, no spike support, nothing to land on;
+     *  - spawn and portal outside the corridor columns.
+     * Maps without a bridge (roll missed, vertical, or L1..7) pass trivially.
+     */
+    bridgeIntact() {
+        const g = this.bridgeGap;
+        if (!g) return true;
+        const { a, b, S } = g;
+        const w = b - a + 1;
+        if (w < MIN_DECK_GAP || w > MAX_DECK_GAP) return false;
+        if (S < 1 || S >= this.height) return false;
+        if (this.columnTopRow(a - 1) !== S || this.columnTopRow(b + 1) !== S) {
+            return false;
+        }
+        for (let x = a; x <= b; x++) {
+            for (let y = 0; y < this.height; y++) {
+                if (this.tiles[y][x] !== 0) return false;
+            }
+        }
+        if ((this.spawnTile.x >= a && this.spawnTile.x <= b) ||
+            (this.portalTile &&
+                this.portalTile.x >= a && this.portalTile.x <= b)) {
+            return false;
+        }
+        // Swept-volume legality (patrols / spawn / portal cells against the
+        // deck's full shuttle band) is decided HERE, inside the retry loop,
+        // so deriveMovingPlatforms at the constructor tail can never see a
+        // different verdict and ship a validated bridge without its deck.
+        return this.movingDeckLegal(a, b, S);
+    }
+
+    /**
+     * Descriptor pass for deck bridges (see the DECK_BRIDGE_* constants
+     * header). Runs LAST so speed/phase draws consume rng only after every
+     * geometry/marker/portal/coin/kind stream — schedule-only noise, never
+     * terrain noise. Exactly one shuttle spans the declared corridor (cap
+     * MAX_DECK_BRIDGES), its full travel range inside the gap columns; the
+     * swept volume is re-checked like any deck candidate before shipping
+     * (defense-in-depth over bridgeIntact: patrols, spawn/portal cells).
+     * Collision height is a full tile while the drawn plank is ~half that:
+     * at max fall speed 600 px/s against the 0.05 s dt cap a body sinks
+     * ~30 px/frame, and a half-tile collider would risk tunnelling straight
+     * through a falling player.
      */
     deriveMovingPlatforms() {
         const out = [];
-        if (this.levelNumber < MOVING_PLATFORM_FIRST_LEVEL) return out;
-        if (this.direction === 'vertical') return out; // elevators deferred
-
+        const g = this.bridgeGap;
+        if (!g || this.direction === 'vertical') return out;
         const T = this.tileSize;
-        const candidates = [];
-        let x = 1; // interior runs only: both flanks must exist
-        while (x < this.width - 1) {
-            if (this.columnTopRow(x) !== null) { x++; continue; }
-            const a = x;
-            while (x < this.width - 1 && this.columnTopRow(x) === null) x++;
-            const b = x - 1;
-            const w = b - a + 1;
-            if (w < MP_GAP_MIN_WIDTH || w > MP_GAP_MAX_WIDTH) continue;
-            const leftTop = this.columnTopRow(a - 1);
-            const rightTop = this.columnTopRow(b + 1);
-            if (leftTop === null || rightTop === null) continue;
-            if (Math.abs(leftTop - rightTop) > 1) continue;
-            const S = Math.max(leftTop, rightTop); // flush with the lower lip
-            if (this.movingDeckLegal(a, b, S)) candidates.push({ a, b, S });
-        }
-
-        shuffle(candidates, this.rng);
-        for (const c of candidates) {
-            const roll = this.rng(); // consumed whether or not it lands
-            if (out.length >= MAX_MOVING_PLATFORMS) continue;
-            if (roll >= MP_ACCEPT_CHANCE) continue;
-            const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
-            const phase = this.rng();
-            out.push({
-                x: c.a * T,
-                y: c.S * T,
-                width: MP_DECK_TILES * T,
-                height: T,
-                axis: 'h',
-                min: c.a * T,
-                max: (c.b + 1) * T - MP_DECK_TILES * T,
-                speed,
-                phase,
-                vx: 0,
-                vy: 0
-            });
-        }
-        return out;
+        const S = Math.max(this.columnTopRow(g.a - 1), this.columnTopRow(g.b + 1));
+        if (!this.movingDeckLegal(g.a, g.b, S)) return out;
+        const speed = MP_SPEED_MIN + this.rng() * MP_SPEED_RANGE;
+        const phase = this.rng();
+        out.push({
+            x: g.a * T,
+            y: S * T,
+            width: MP_DECK_TILES * T,
+            height: T,
+            axis: 'h',
+            min: g.a * T,
+            max: (g.b + 1) * T - MP_DECK_TILES * T,
+            speed,
+            phase,
+            dwell: DECK_DWELL_S,
+            vx: 0,
+            vy: 0
+        });
+        return out.slice(0, MAX_DECK_BRIDGES);
     }
 
     // Swept-volume legality for one gap candidate [a..b] with flush flank

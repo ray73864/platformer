@@ -1604,6 +1604,16 @@ export class Sprites {
                     ctx.lineTo(bx, p.y + H - 4);
                     ctx.fill();
                 }
+            } else if (p.dwelling) {
+                // Boarding affordance (deck bridges): a PARKED deck lights
+                // its rim and end caps — "step on now" without any clock or
+                // RNG, so replays render identical frames. The chevrons are
+                // dark precisely because the deck holds still; this is the
+                // complementary signal during the dwell window.
+                ctx.fillStyle = 'rgba(255,255,255,0.55)';
+                ctx.fillRect(p.x, p.y, p.width, 2);
+                ctx.fillRect(p.x, p.y + 2, 3, H - 6);
+                ctx.fillRect(p.x + p.width - 3, p.y + 2, 3, H - 6);
             }
         }
     }

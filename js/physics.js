@@ -104,7 +104,12 @@ export class Physics {
                         // 1. Side hit: feet were already BELOW the platform
                         //    top before this frame's movement — sinking into
                         //    a gap alongside a wall must not snap onto the
-                        //    wall's top corner.
+                        //    wall's top corner. For an UPWARD-moving platform
+                        //    the credible surface is its PREVIOUS top: the
+                        //    current one has already risen past the feet it
+                        //    is about to catch, and comparing against it
+                        //    phases fast risers straight through their riders
+                        //    (matches MovingPlatformManager.oneWayRects).
                         // 2. Level-corner clip: feet were exactly at the
                         //    platform's top height and only entered its
                         //    horizontal span this frame — walking off one
@@ -113,14 +118,15 @@ export class Physics {
                         //    this, players glide across 1-2 tile gaps.
                         if (player.prevY !== undefined) {
                             const prevBottom = player.prevY + player.height;
-                            if (prevBottom > platform.y + LANDING_TOLERANCE) {
+                            const topRef = platform.dy !== undefined && platform.dy < 0 ? platform.prevY : platform.y;
+                            if (prevBottom > topRef + LANDING_TOLERANCE) {
                                 continue; // Side contact: resolveXCollision handles it
                             }
                             const prevXOverlap = player.prevX === undefined ||
                                 (player.prevX < platform.x + platform.width &&
                                  player.prevX + player.width > platform.x);
                             if (!prevXOverlap &&
-                                prevBottom >= platform.y - LANDING_TOLERANCE) {
+                                prevBottom >= topRef - LANDING_TOLERANCE) {
                                 continue; // Level-corner clip: not a landing
                             }
                         }

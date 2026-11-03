@@ -275,8 +275,7 @@ test("rider at journey end against a taller flank stays bounded (no jitter/tunne
 
 // --- Jump-off inheritance -----------------------------------------------------
 
-test("applyJumpBoost adds deck velocity additively, capped", () => {
-    const p = new Player(0, 0, 200, 350);
+test("applyJumpBoost adds deck velocity additively, capped", () => {    const p = new Player(0, 0, 200, 350);
     applyJumpBoost(p, { vx: 30, vy: 0 });
     expect(p.vx).toBe(30);
     p.vx = 0;
@@ -305,4 +304,230 @@ test("jumping off a ridden deck inherits its motion", () => {
     applyJumpBoost(p, deck);
     expect(Math.abs(p.vx)).toBeGreaterThanOrEqual(Math.abs(vxAfterJump));
     expect(Math.abs(p.vx - vxAfterJump)).toBeLessThanOrEqual(JUMP_BOOST_CAP + 1e-9);
+});
+
+// --- Dwell schedule (deck-bridge wave, required crossings) ---------------------
+// The bridge ruling demands a fair boarding window: the deck HOLDS flush at
+// each lip for `dwell` seconds. The wave stays closed-form and piecewise —
+// determinism preserved — with zero deltas during the holds.
+
+const DWELL = 0.8;
+
+function bridgeDesc(arenaObj, { speed = 30, phase = 0, dwell = DWELL } = {}) {
+    return { ...deckDesc(arenaObj, { speed, phase }), dwell };
+}
+
+test("dwell wave shape: holds at both bounds, monotone legs, continuous", () => {
+    const ar = arena({ gapCols: 6 });
+    const p = new MovingPlatform(bridgeDesc(ar, { speed: 40, phase: 0 }));
+    const leg = p.traverseSeconds();
+    const period = p.periodSeconds();
+    expect(leg).toBeCloseTo((p.max - p.min) / 40, 9);
+    expect(period).toBeCloseTo(2 * (leg + DWELL), 9);
+    // Named sample points across one period (phase 0 starts in the min hold).
+    expect(p.positionAt(0)).toBe(p.min);
+    expect(p.positionAt(DWELL * 0.5)).toBe(p.min);
+    expect(p.positionAt(DWELL + leg * 0.5)).toBeCloseTo(p.min + (p.max - p.min) / 2, 9);
+    expect(p.positionAt(DWELL + leg + DWELL * 0.5)).toBe(p.max);
+    expect(p.positionAt(2 * DWELL + leg + leg * 0.5))
+        .toBeCloseTo(p.max - (p.max - p.min) / 2, 9);
+    // Continuity + speed bound everywhere (piecewise-linear, slope <= speed).
+    let prev = p.positionAt(0);
+    const H = 0.001;
+    for (let t = H; t <= period; t += H) {
+        const v = p.positionAt(t);
+        expect(Math.abs(v - prev)).toBeLessThanOrEqual(40 * H + 1e-9);
+        prev = v;
+    }
+    // Monotone segment signature over one period: hold(+0), rise(+), hold(0),
+    // fall(-) — exactly two sign changes plus the two zero plateaus.
+    const signs = [];
+    for (let t = 0; t < period - H; t += H) {
+        const d = Math.sign(p.positionAt(t + H) - p.positionAt(t));
+        if (signs[signs.length - 1] !== d) signs.push(d);
+    }
+    expect(signs).toEqual([0, 1, 0, -1]);
+});
+
+test("dwell windows carry zero deltas and set the dwelling flag", () => {
+    const ar = arena({ gapCols: 6 });
+    const p = new MovingPlatform(bridgeDesc(ar, { speed: 40, phase: 0 }));
+    // First hold spans elapsed [0, DWELL): every update inside moves nothing.
+    // Stop two frames short of the boundary: float accumulation makes the
+    // exact-dwell frame's flag value representation-dependent.
+    let sawDwelling = false, sawMoving = false;
+    for (let i = 0; i < Math.floor((DWELL - 2 * DT) / DT); i++) {
+        p.update(DT);
+        expect(Math.abs(p.dx), `hold frame ${i}`).toBeLessThan(1e-9);
+        expect(p.dwelling).toBe(true);
+        sawDwelling = true;
+    }
+    expect(sawDwelling).toBe(true);
+    // Through a full period: some frames move (dwelling false), and the two
+    // holds are detected by isDwellingAt at their nominal centers.
+    const leg = p.traverseSeconds();
+    expect(p.isDwellingAt(DWELL * 0.5)).toBe(true);
+    expect(p.isDwellingAt(DWELL + leg * 0.5)).toBe(false);
+    expect(p.isDwellingAt(DWELL + leg + DWELL * 0.5)).toBe(true);
+    let movingFrames = 0;
+    for (let i = 0; i < Math.floor((DWELL + leg) / DT); i++) {
+        p.update(DT);
+        if (!p.dwelling && Math.abs(p.dx) > 1e-9) movingFrames++;
+        sawMoving = sawMoving || !p.dwelling;
+    }
+    expect(sawMoving).toBe(true);
+    expect(movingFrames).toBeGreaterThan(0);
+});
+
+test("rider on a dwelling deck stands still (carry deltas zero)", () => {
+    const ar = arena({ gapCols: 6 });
+    const g = makeGame([bridgeDesc(ar, { speed: 40, phase: 0 })], ar.rects);
+    const deck = g.manager.platforms[0];
+    const p = g.player;
+    // Drop onto the deck while it holds at the left bound.
+    p.x = deck.x + 16;
+    p.y = deck.y - 32 - 40;
+    p.vy = 60;
+    let landed = -1;
+    for (let i = 0; i < 60 && landed < 0; i++) {
+        stepFrame(g, DT);
+        if (p.grounded && g.riding === deck) landed = i;
+    }
+    expect(landed, "landed on the dwelling deck").toBeGreaterThanOrEqual(0);
+    const xAt = p.x;
+    for (let i = 0; i < 20; i++) {
+        stepFrame(g, DT);
+        expect(g.riding).toBe(deck);
+        expect(Math.abs(p.x - xAt), `parked rider drift ${i}`).toBeLessThan(1e-6);
+    }
+});
+
+// --- One-way credibility vs the deck's PREVIOUS top (review Minor 1 fix) -------
+// Pinned scenario (horizontal-only-wave review): a riser at 240 px/s must catch
+// a near-stationary player. The old gate compared the CURRENT (already-risen)
+// top, vetoed on the crossing frame whenever the per-frame rise outran the
+// feet-to-top distance, and phased through forever after. No v-decks deploy
+// yet; this pins the fix ahead of the elevator wave.
+
+test("240 px/s rising deck catches a slow-falling player (prev-top gate)", () => {
+    const ar = arena({ gapCols: 3 });
+    const desc = {
+        x: ar.a * T, y: ar.S * T, width: 2 * T, height: T, axis: 'v',
+        min: (ar.S - 6) * T, max: ar.S * T, speed: 240, phase: 0.5, vx: 0, vy: 0
+        // phase 0.5 starts the riser at its BOTTOM bound moving up: the
+        // rider is caught on the first sweep instead of being hammered down
+        // by an opening downward pass (head-hit is correct behaviour, just
+        // not the one under test).
+    };
+    const g = makeGame([desc], ar.rects);
+    const elev = g.manager.platforms[0];
+    const p = g.player;
+    // Hover the rider inside the riser's full stroke with a steady slow
+    // descent. The deck sweeps the feet line every period, so a correct
+    // one-way gate MUST catch on an upward pass. The old gate compared the
+    // CURRENT (already-risen) top, vetoed every crossing frame where the
+    // per-frame rise (4 px) outran the feet-to-top distance, and phased
+    // through forever after. No v-decks deploy yet; this pins the fix ahead
+    // of the elevator wave.
+    p.x = elev.x + 16;
+    p.y = (ar.S - 4) * T; // feet mid-stroke
+    let caught = -1;
+    for (let i = 0; i < 900 && caught < 0; i++) {
+        p.vy = 30; // pinned slow fall (~0.5 px/frame)
+        stepFrame(g, DT);
+        if (g.riding === elev && p.grounded) caught = i;
+    }
+    expect(caught, "riser caught the slow faller").toBeGreaterThanOrEqual(0);
+    expect(elev.dy, "deck rose on the catch frame").toBeLessThan(0);
+    expect(p.grounded, "grounded on the catch frame").toBe(true);
+    expect(Math.abs((p.y + p.height) - elev.y)).toBeLessThan(1.5);
+    // Known scope note (NOT pinned): at the stroke apex the gate legitimately
+    // releases the rider, and a 240 px/s riser cannot meet a rider already
+    // past it — smooth elevator reversals are a carry/glue design question
+    // for the future 'axis:v' wave, outside this fix's one-way credibility
+    // contract.
+});
+
+test("horizontal decks keep prevY === y (behavior provably unchanged)", () => {
+    const ar = arena({ gapCols: 6 });
+    const p = new MovingPlatform(bridgeDesc(ar, { speed: 37, phase: 0.2 }));
+    for (let i = 0; i < 600; i++) {
+        p.update(DT);
+        expect(p.prevY).toBe(p.y);
+        expect(p.dy).toBe(0);
+    }
+});
+
+// --- Rider safety edge cases (required-crossing fairness) -----------------------
+
+test("walking off a flush lip onto a dwelling deck lands (boarding feel)", () => {
+    const ar = arena({ gapCols: 6 });
+    // Phase so the deck holds at the LEFT bound first: park it there.
+    const g = makeGame([bridgeDesc(ar, { speed: 40, phase: 0 })], ar.rects);
+    const deck = g.manager.platforms[0];
+    const p = g.player;
+    p.x = (ar.a - 1) * T;
+    p.y = ar.S * T - 32;
+    p.grounded = true;
+    let boarded = false;
+    for (let i = 0; i < Math.floor(DWELL / DT) && !boarded; i++) {
+        stepFrame(g, DT, { left: false, right: true });
+        boarded = g.riding === deck;
+    }
+    expect(boarded, "stepped onto the dwelling deck as a landing").toBe(true);
+    expect(p.grounded).toBe(true);
+});
+
+test("riding into the far flank parks flush; a hop lands on solid ground", () => {
+    const ar = arena({ gapCols: 6 });
+    const g = makeGame([bridgeDesc(ar, { speed: 40, phase: 0 })], ar.rects);
+    const deck = g.manager.platforms[0];
+    const p = g.player;
+    p.x = deck.x + 8;
+    p.y = deck.y - 32;
+    p.vy = 0;
+    // Ride until the deck completes its journey and dwells at max.
+    const rideFrames = Math.ceil((DWELL + deck.traverseSeconds()) / DT);
+    for (let i = 0; i < rideFrames; i++) stepFrame(g, DT);
+    expect(deck.x).toBeCloseTo(deck.max, 6);
+    // Flush-seam ruling: WALKING off a deck into a same-height terrain lip
+    // is physics.js resolveYCollision rule 2 (level-corner clip) — a wall,
+    // not a floor, by design (removing it would let players glide across
+    // 1-2 tile gaps everywhere else). Egress is therefore a HOP: press jump
+    // from the parked deck and land on the flank.
+    let steppedOff = false, hopped = false;
+    for (let i = 0; i < 90 && !steppedOff; i++) {
+        if (p.grounded && !hopped) {
+            // A measured hop (~10 px rise, ~55 px reach): the full jump
+            // arc would sail clean off the two-column flank.
+            p.vy = -140;
+            p.grounded = false;
+            hopped = true;
+        }
+        stepFrame(g, DT, { left: false, right: true });
+        steppedOff = p.x >= (ar.b + 1) * T && g.riding === null && p.grounded;
+    }
+    expect(steppedOff, "hopped from the parked deck onto the far flank")
+        .toBe(true);
+    expect(Math.abs((p.y + p.height) - ar.S * T)).toBeLessThan(1.5);
+});
+
+test("stepping off mid-corridor drops the rider into the void (fair, visible)", () => {
+    const ar = arena({ gapCols: 6 });
+    const g = makeGame([bridgeDesc(ar, { speed: 40, phase: 0 })], ar.rects);
+    const deck = g.manager.platforms[0];
+    const p = g.player;
+    // Stand on the deck's trailing edge while it dwells at min.
+    p.x = deck.x + deck.width - 32;
+    p.y = deck.y - 32;
+    p.vy = 0;
+    stepFrame(g, DT);
+    expect(g.riding).toBe(deck);
+    // Walk right off the plank before the deck travels: no support -> falls.
+    let fell = false;
+    for (let i = 0; i < 45; i++) {
+        stepFrame(g, DT, { left: false, right: true });
+        if (!p.grounded && p.vy > 0 && p.y > deck.y + deck.height) fell = true;
+    }
+    expect(fell, "left the deck early: falls into the pit").toBe(true);
 });
