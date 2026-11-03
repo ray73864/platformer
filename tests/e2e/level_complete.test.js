@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import {
-    startServer, openGame, startGame, abEvalJSON, abWaitFn, waitLanded,
+    startServer, openGame, startGame, ab, abEvalJSON, abWaitFn, waitLanded,
     screenshot, elementState, closeSession, sessionName
 } from "./helpers.js";
 
@@ -101,4 +101,70 @@ test("Player reaches portal to complete level", async () => {
     expect(advanced.state).toBe("PLAYING");
     expect(advanced.level).toBe(2);
     expect(advanced.hud).toBe("Level: 2");
+}, 90000);
+
+test("LEVEL_COMPLETE overlay shows the clear-bonus breakdown (score economy ruling)", async () => {
+    openGame(SESSION, server.url, 800, 600);
+    startGame(SESSION);
+    abWaitFn(SESSION, "window.game.state === 'PLAYING'");
+
+    // Force the win through the same debug seam the phase2/phase3 e2e files
+    // use: meet the coin gate via the real Collectibles API, then drop the
+    // player onto the live portal. Level 1 is basic tier — generation ships
+    // no enemies or spikes below level 5 — so this win is flawless by
+    // construction and pays the full CLEAR_BONUS_BASE of 100. Seam-collected
+    // coins never touch game.score, so the breakdown's coin line is 0 here;
+    // the integration suite pins the nonzero-coin breakdown instead.
+    abEvalJSON(
+        SESSION,
+        `(() => { const g = window.game;
+                  const c = g.collectibles;
+                  const coins = c.getCoins();
+                  for (let i = 0; i < coins.length && !c.meetsPortalRequirement(); i++) c.collectCoin(i);
+                  const p = g.level.portal;
+                  g.player.x = p.x; g.player.y = p.y - 60;
+                  g.player.vx = 0; g.player.vy = 0; g.player.grounded = false;
+                  return true; })()`
+    );
+    abWaitFn(
+        SESSION,
+        "window.game.state === 'LEVEL_COMPLETE' || window.game.state === 'GAME_OVER'"
+    );
+    // Freeze the 2 s auto-advance so post-completion assertions cannot race
+    // it into level 2 (I10 pattern from phase2_elements.test.js).
+    const outcome = abEvalJSON(
+        SESSION,
+        `(() => { const g = window.game;` +
+        ` if (g.state === 'LEVEL_COMPLETE') g.levelCompleteTimer = 60;` +
+        ` return g.state; })()`
+    );
+    expect(outcome).toBe("LEVEL_COMPLETE");
+
+    const view = abEvalJSON(
+        SESSION,
+        `{ bonusHidden: document.getElementById('clear-bonus').hidden,
+           bonusText: document.getElementById('clear-bonus').textContent,
+           bestedHidden: document.getElementById('enemies-bested').hidden,
+           breakdown: window.game.lastClearBreakdown }`
+    );
+    // Cause-and-effect copy: full bonus visible with its "+N" sign...
+    expect(view.bonusHidden).toBe(false);
+    expect(view.bonusText).toBe("Flawless clear +100");
+    // ...and the combat line stays hidden when nothing was bested.
+    expect(view.bestedHidden).toBe(true);
+    expect(view.breakdown).toEqual({
+        coins: 0, combat: 0, clearBonus: 100, enemiesBested: 0,
+        deaths: 0, flawless: true
+    });
+    screenshot(SESSION, "economy-level-complete-breakdown.png");
+
+    // Zero console errors/warnings across the whole flow (same breadth as
+    // phase3_pause_complete.test.js's assertConsoleClean).
+    const consoleOut = ab(SESSION, "console");
+    const bad = consoleOut.split("\n").filter(l => /error|warn(?:ing)?\b/i.test(l));
+    expect(bad).toEqual([]);
+
+    // Release the frozen transition so the shared session leaves no stuck
+    // LEVEL_COMPLETE behind for any later reuse.
+    abEvalJSON(SESSION, `(() => { window.game.levelCompleteTimer = 0; return true; })()`);
 }, 90000);

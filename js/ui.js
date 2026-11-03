@@ -249,6 +249,33 @@ export class UI {
         this.showOverlay('level-complete-screen');
     }
 
+    // Level-complete cause-and-effect lines (owner ruling 2026-11-04). Same
+    // conventions as #score-penalty in showGameOver: text written here, the
+    // node hidden whenever there is nothing to report, aria-live polite in
+    // the markup announces the dynamic copy. Copy:
+    //   flawless → "Flawless clear +100"
+    //   issues   → "Cleared after 2 deaths +40"
+    //   combat   → "Enemies bested +N" only when N > 0.
+    setLevelCompleteBreakdown(breakdown) {
+        const { clearBonus = 0, enemiesBested = 0, deaths = 0,
+            flawless = false } = breakdown || {};
+        const bonusEl = document.getElementById('clear-bonus');
+        if (bonusEl) {
+            const text = clearBonus > 0
+                ? (flawless
+                    ? `Flawless clear +${clearBonus}`
+                    : `Cleared after ${deaths} death${deaths === 1 ? '' : 's'} +${clearBonus}`)
+                : '';
+            bonusEl.textContent = text;
+            bonusEl.hidden = !text;
+        }
+        const bestedEl = document.getElementById('enemies-bested');
+        if (bestedEl) {
+            bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : '';
+            bestedEl.hidden = !(enemiesBested > 0);
+        }
+    }
+
     getScore() {
         if (this.scoreElement) {
             return parseInt(this.scoreElement.textContent.replace('Score: ', '')) || 0;

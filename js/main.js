@@ -5,7 +5,7 @@ import { Level } from './level.js';
 import { Camera } from './camera.js';
 import { UI } from './ui.js';
 import { COIN_POINTS } from './collectibles.js';
-import { Difficulty } from './difficulty.js';
+import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
 import { MovingPlatformManager, applyJumpBoost } from './movingplatforms.js';
@@ -74,6 +74,75 @@ export const DEATH_SCORE_PENALTY_RATE = 0.25;
 export function deathScorePenalty(score) {
     if (!Number.isFinite(score) || score <= 0) return 0;
     return Math.floor(score * DEATH_SCORE_PENALTY_RATE);
+}
+
+// --- Score economy (owner ruling 2026-11-04) --------------------------------
+// "You should get points for clearing a level successfully, reduced points
+// for clearing a level with some issues. You should get points for killing
+// enemies or dodging past them. I don't want to make it too easy to get
+// points though." Baseline unit throughout: COIN_POINTS = 10 — coins stay
+// the backbone income (every level demands ALL of them through the portal
+// gate), so every award below is justified as a multiple of that coin.
+//
+// Flawless clear bonus base: 10 coins' worth. Measured against generation
+// (25-seed survey): extractCoins TARGETS min(5 + level, 30) but reachability/
+// patrol/spike exclusions place ~6 coins at L1 and ~13 at L60, so real coin
+// income runs ~60 early / ~135 late. A flawless L1 clear totals 160 ≈ 2.7×
+// its coin income (no enemies exist below level 5, so the bonus carries the
+// whole "clearing well" reward there); a flawless L60 pays 140 on ~135 coins
+// (≈ 1.0× bonus-only, ≈ 2.0× total before combat, ≈ 2.8× with realistic
+// stomps/dodges stacked on top). Kept deliberately in the same order of
+// magnitude as one level's coins — big enough to matter, small enough that
+// farming clears cannot outrun playing well.
+export const CLEAR_BONUS_BASE = 100;
+// One extra coin per tier boundary crossed (difficulty.js TIER_BOUNDARIES):
+// legend-level flawless clears pay 150. Mild on purpose — tier difficulty
+// already pays out through more/larger coin targets and enemy counts.
+export const CLEAR_BONUS_TIER_STEP = 10;
+// "Reduced points for clearing a level with some issues": any death on the
+// level attempt series drops the bonus to 40% (floored). At L60 that is 56
+// against a flawless 140 — finishing-after-dying stays worthwhile, but the
+// three compounding 25% penalties (~77 on a realistic ~135-coin bank) plus
+// the forfeited 84-point gap to the flawless bonus keep a careless run far
+// behind a clean one (measured: ~113 vs ~382 end-of-level totals).
+export const CLEAR_BONUS_REDUCED_RATE = 0.4;
+// Stomp kill: 2.5 coins for a skill check with a real miss-death ("not too
+// easy": a perfect-stomp run earns faster than a coin sweep, a sloppy one
+// dies and pays the 25% penalty instead). Bats do not exist as a kind —
+// enemies.js ships walker|spiny|charger only — so this value covers walkers.
+export const STOMP_POINTS = 25;
+// Charger stomp: +15 over a walker as the explicit mid-dash risk premium —
+// timing a stomp on a body moving 2.2x patrol speed is the hardest combat
+// read in the game (enemies.js KINDS contract).
+export const CHARGER_STOMP_POINTS = 40;
+// Dodging past a live enemy: half a coin, once per enemy per level attempt
+// (per-enemy `dodged` flag, fresh with each rebuilt Level). Cheap enough to
+// be a thank-you for crossing safely, small enough that weaving along a
+// patrol line farming flips cannot rival collecting the coins the portal
+// actually demands.
+export const DODGE_POINTS = 5;
+// Continuity guard for the centre-cross dodge rule (see the dodge pass in
+// Game.update): the largest per-frame relative position step a REAL crossing
+// can produce. Worst case = player full speed (200) + ridden-deck carry
+// (~44 max, MP_SPEED_MIN+RANGE in level.js) + charger closing dash (~88) against the dt
+// cap of 0.05 s ≈ 17 px; 40 leaves generous margin. Anything larger is a
+// teleport (E2E debug seams, future warp mechanics) — re-baseline the
+// tracker WITHOUT paying, so a seam drop across an enemy's centre line can
+// never mint free points.
+const DODGE_MAX_CROSS_STEP = 40;
+
+// Pure clear-bonus math, exported for unit tests (guard style mirrors
+// deathScorePenalty: never throws, always returns whole points). Full bonus
+// only for exactly zero deaths on this level's attempt series; anything
+// else — ≥1 death, negative, fractional, NaN — reads as "some issues" and
+// takes the reduced rate, so corrupt state can never hand out flawless
+// points. Invalid level numbers fall back to the basic-tier base (mirrors
+// difficulty.configFor's silent-for-economy-callers fallback).
+export function clearBonusFor(deathsOnThisLevel, levelNumber) {
+    const base = CLEAR_BONUS_BASE +
+        CLEAR_BONUS_TIER_STEP * tierIndexFor(levelNumber);
+    const flawless = deathsOnThisLevel === 0;
+    return flawless ? base : Math.floor(base * CLEAR_BONUS_REDUCED_RATE);
 }
 
 // Every live Game, so test scaffolding sharing one window can tear down all
@@ -195,6 +264,22 @@ export class Game {
         // back to it so repeated retries of a regenerated level cannot farm
         // coins.
         this.levelStartScore = 0;
+        // --- Per-level economy trackers (owner ruling 2026-11-04) ----------
+        // Deaths on THIS level's attempt series: incremented in handleGameOver,
+        // reset ONLY on run start and on advancing to the NEXT level — never
+        // on a retry (retrying IS the "issues" signal feeding clearBonusFor).
+        this.deathsOnCurrentLevel = 0;
+        // Coin/combat points scored through the loop on this level's attempt
+        // series (banked across retries: coins collected before a death were
+        // still earned on this level). Deliberately NOT reset in publishLevel
+        // — that also runs on every retry — only via resetLevelEconomyTrackers().
+        this.levelCoinPoints = 0;
+        this.levelCombatPoints = 0;
+        this.levelEnemiesKilled = 0;
+        this.levelEnemiesDodged = 0;
+        // Breakdown handed to the LEVEL_COMPLETE overlay by handleWin
+        // {coins, combat, clearBonus, enemiesBested, deaths, flawless}.
+        this.lastClearBreakdown = null;
         this.currentLevel = 1;
         this.lastTime = 0;
         this.levelCompleteTimer = 0;
@@ -465,6 +550,19 @@ export class Game {
         this.returnToMenu();
     }
 
+    // Zero the per-level economy counters. Called on run start (startGame)
+    // and when advancing to the NEXT level only — never from publishLevel,
+    // which also serves retries and loop recovery on the SAME level, where
+    // deathsOnCurrentLevel and the accumulators must persist (the retry
+    // contract: progress converges, but the "issues" count keeps climbing).
+    resetLevelEconomyTrackers() {
+        this.deathsOnCurrentLevel = 0;
+        this.levelCoinPoints = 0;
+        this.levelCombatPoints = 0;
+        this.levelEnemiesKilled = 0;
+        this.levelEnemiesDodged = 0;
+    }
+
     startGame() {
         // Construct before mutating anything (same discipline as startLevel):
         // if generation exhausts and fails, a GAME_COMPLETE/GAME_OVER screen
@@ -477,6 +575,9 @@ export class Game {
         if (!level) return false;
         this.score = 0;
         this.currentLevel = 1;
+        // A brand-new run starts with a clean economy sheet: no deaths, no
+        // per-level accumulators carried over from the previous run.
+        this.resetLevelEconomyTrackers();
         // A brand-new run always gets a fresh clock; whether it ticks at all
         // is decided per level by publishLevel's difficulty-tier gate.
         this.timer.timeRemaining = this.timer.baseTime;
@@ -646,6 +747,21 @@ export class Game {
     }
 
     handleWin() {
+        // Clear bonus (owner ruling 2026-11-04): awarded BEFORE any overlay
+        // bookkeeping so the HUD total, the overlay breakdown and the banked
+        // score all describe the same run. Completion never CHARGES anything
+        // (the death penalty stays a handleGameOver-exclusive cost); this is
+        // the reward half of cause-and-effect.
+        const clearBonus = clearBonusFor(this.deathsOnCurrentLevel, this.currentLevel);
+        this.score = Math.min(this.score + clearBonus, Number.MAX_SAFE_INTEGER);
+        this.lastClearBreakdown = {
+            coins: this.levelCoinPoints,
+            combat: this.levelCombatPoints,
+            clearBonus,
+            enemiesBested: this.levelEnemiesKilled + this.levelEnemiesDodged,
+            deaths: this.deathsOnCurrentLevel,
+            flawless: this.deathsOnCurrentLevel === 0
+        };
         this.setState(STATE.LEVEL_COMPLETE);
         // Win sting over the top of the still-running music: the transition
         // is a 2 s beat, not an ending, so the loop carries through to the
@@ -658,6 +774,7 @@ export class Game {
         this.levelTransitionStalled = false;
         this.levelTransitionStallFrames = 0;
 
+        this.ui.setLevelCompleteBreakdown(this.lastClearBreakdown);
         this.ui.showOverlay('level-complete-screen');
 
         // Level advance is driven solely by the update-timer path in update();
@@ -666,6 +783,11 @@ export class Game {
 
     handleGameOver(cause) {
         this.setState(STATE.GAME_OVER);
+        // Per-level "issues" counter feeding clearBonusFor (owner ruling
+        // 2026-11-04): charged at the same once-per-death site as the score
+        // penalty below. It survives the retry on purpose — restartCurrentLevel
+        // never resets it; only run start and advancing to the NEXT level do.
+        this.deathsOnCurrentLevel++;
         // Music stops dead at death; the falling sting carries the moment.
         audio.stopMusic();
         audio.playSfx('death');
@@ -876,6 +998,18 @@ export class Game {
                     this.player.x + this.player.width / 2,
                     this.player.y + this.player.height,
                     '#c96bf5', 10);
+                // Stomp awards (owner ruling 2026-11-04): scored per enemy by
+                // kind from resolvePlayerContact's list — chargers pay the
+                // mid-dash risk premium. The stomped enemies are dead now, so
+                // the dodge pass below can never double-pay one of them.
+                let stompPoints = 0;
+                for (const killed of contact.stompedEnemies) {
+                    stompPoints += killed.kind === 'charger'
+                        ? CHARGER_STOMP_POINTS : STOMP_POINTS;
+                }
+                this.levelCombatPoints += stompPoints;
+                this.levelEnemiesKilled += contact.stompedEnemies.length;
+                this.score = Math.min(this.score + stompPoints, Number.MAX_SAFE_INTEGER);
             }
             if (contact.deadly) {
                 // Teach the spiked-back rule at the exact moment it bites.
@@ -898,6 +1032,38 @@ export class Game {
                 return;
             }
 
+            // Dodge awards (owner ruling 2026-11-04): once per live enemy per
+            // level attempt for ALREADY crossing it — the player's centre was
+            // on one side last frame and is on the other this frame, with no
+            // death having ended the tick (every deadly check above returns
+            // first, so a dying frame can never award). Dead enemies are
+            // skipped forever, which pins stomp/dodge mutual exclusion: an
+            // enemy killed before being crossed stays skipped by its `dead`
+            // flag and never collects the dodge. The per-enemy `dodged` flag
+            // caps repeat flips (patrol turnarounds, pacing back and forth)
+            // at one award; it is born false with each rebuilt Level, so a
+            // retry re-arms every patrol. Riding a moving deck past counts —
+            // the rule reads centres, not inputs. A flip whose position step
+            // exceeds DODGE_MAX_CROSS_STEP is a teleport, not a crossing:
+            // re-baseline unpaid. dt-driven only: this lives inside the
+            // PLAYING branch, so PAUSED cannot farm flips.
+            for (const enemy of this.enemyManager.enemies) {
+                if (enemy.isDead()) continue;
+                const px = this.player.x + this.player.width / 2;
+                const side = Math.sign(px - (enemy.x + enemy.width / 2));
+                if (side === 0) continue; // straddling centres: hold last side
+                if (enemy._dodgePrevSide !== 0 && side !== enemy._dodgePrevSide &&
+                    !enemy.dodged && Math.abs(px - enemy._dodgePrevPx) <= DODGE_MAX_CROSS_STEP) {
+                    enemy.dodged = true;
+                    this.levelCombatPoints += DODGE_POINTS;
+                    this.levelEnemiesDodged++;
+                    this.score = Math.min(this.score + DODGE_POINTS,
+                        Number.MAX_SAFE_INTEGER);
+                }
+                enemy._dodgePrevSide = side;
+                enemy._dodgePrevPx = px;
+            }
+
             // Coins add onto the running total, which accumulates across
             // levels; the per-collectibles getScore() is this level's score
             // only and must never be assigned over the total. Capped at
@@ -916,6 +1082,12 @@ export class Game {
                     this.score + collectedCoins * COIN_POINTS,
                     Number.MAX_SAFE_INTEGER
                 );
+                // Per-level coin tracker for the LEVEL_COMPLETE breakdown:
+                // only loop-scored pickups land here, matching exactly what
+                // entered this.score (seam-collectCoin() calls never scored
+                // either side). Coins banked before a death stay counted —
+                // they were earned on THIS level's attempt series.
+                this.levelCoinPoints += collectedCoins * COIN_POINTS;
                 // Spec: +2 s per coin, unconditionally. The run clock is one
                 // object across the whole game, so coins banked before the
                 // timer tier (level 5) are already on it when it starts
@@ -980,6 +1152,11 @@ export class Game {
                     try {
                         const level = new Level(next, TILE_SIZE, this.seedFor(next));
                         this.currentLevel = next;
+                        // The NEXT level starts a clean economy sheet: deaths,
+                        // coin/combat accumulators and bested counts from the
+                        // cleared level are spent (its bonus was already paid
+                        // by handleWin). Retries never reach this line.
+                        this.resetLevelEconomyTrackers();
                         this.publishLevel(level);
                         this.ui.hideOverlay('level-complete-screen');
                     } catch (error) {

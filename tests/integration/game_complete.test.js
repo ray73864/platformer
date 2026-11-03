@@ -81,7 +81,12 @@ function finishTransition(game) {
     }
 }
 
-// A run parked at GAME_COMPLETE with score 250 on the final level.
+// A run parked at GAME_COMPLETE with score 250 banked before the final win.
+// The flawless FINAL_LEVEL clear adds its bonus (clearBonusFor(0, 100) =
+// 100 base + 10 × five tier boundaries = 150), so the finished run totals
+// 400 — literal here because every downstream assertion compares against it.
+const FINAL_RUN_SCORE = 400;
+
 function reachGameComplete() {
     const game = startPlaying();
     hideOverlays(game);
@@ -129,9 +134,9 @@ test("completing the final level ends the run in GAME_COMPLETE with overlay and 
 
     expect(game.currentLevel).toBe(FINAL_LEVEL);
     expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
-    expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
-    expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
-    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
+    expect(document.getElementById('game-complete-score').textContent).toBe(`Score: ${FINAL_RUN_SCORE}`);
+    expect(document.getElementById('high-score').textContent).toBe(`High Score: ${FINAL_RUN_SCORE}`);
+    expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe(String(FINAL_RUN_SCORE));
 });
 
 test("winning the level before the final one advances into FINAL_LEVEL and starts it", () => {
@@ -187,7 +192,7 @@ function installThrowingStorage(method) {
 function assertStorageFailureCompletesRun(game) {
     expect(game.state).toBe(STATE.GAME_COMPLETE);
     expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
-    expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
+    expect(document.getElementById('high-score').textContent).toBe(`High Score: ${FINAL_RUN_SCORE}`);
     // No soft-lock: further updates must not re-enter the completion path.
     game.update(DT);
     game.update(DT);

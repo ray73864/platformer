@@ -169,6 +169,21 @@ button:active {
     color: #b3261e;
 }
 
+/* Clear reward on the level-complete panel (see UI.setLevelCompleteBreakdown):
+   the green counterpart to #score-penalty's red loss line — same size and
+   pixel-face voice, opposite meaning. Hidden via [hidden] when there is
+   nothing to report; #enemies-bested sits quieter beneath it (secondary
+   detail, same tone as the pause hint). */
+#clear-bonus {
+    font-size: 0.75rem;
+    color: #2e7d32;
+}
+
+#enemies-bested {
+    font-size: 0.75rem;
+    color: var(--dirt-deep);
+}
+
 /* Loop-error notice (see UI.showErrorMessage). Above every overlay. */
 #error-message {
     position: absolute;

@@ -60,6 +60,27 @@ const LEVEL_CONFIGS = {
     }
 };
 
+// Lower bounds of every tier above basic, ascending: [intermediate, advanced,
+// expert, master, legend]. Exported so score-economy tier scaling (clearBonusFor
+// in main.js) counts the SAME boundaries the tiers themselves use — retuning a
+// boundary here moves both, and a silent desync is impossible.
+export const TIER_BOUNDARIES = [PHASE2_FIRST_LEVEL, 10, 25, 50, 75];
+
+const TIER_ORDER = ['basic', 'intermediate', 'advanced', 'expert', 'master', 'legend'];
+
+// Silent tier index: 0 (basic) .. 5 (legend) = how many TIER_BOUNDARIES the
+// level has crossed. Invalid input reads as basic WITHOUT warning — the
+// warn-once contract belongs to configFor (the generator's entry); per-frame
+// economy callers must not flood the console the way the R26 lesson warns.
+export function tierIndexFor(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1) return 0;
+    let index = 0;
+    for (const boundary of TIER_BOUNDARIES) {
+        if (levelNumber >= boundary) index++;
+    }
+    return index;
+}
+
 // Tier lookup is internal: consumers ask for the specific parameter they need.
 // Spec §Error Handling (Difficulty Scaling): level number must be a positive
 // integer; anything else warns and falls back to the basic tier instead of
@@ -71,12 +92,7 @@ function configFor(levelNumber) {
             levelNumber, '- defaulting to basic tier');
         return LEVEL_CONFIGS.basic;
     }
-    if (levelNumber >= 75) return LEVEL_CONFIGS.legend;
-    if (levelNumber >= 50) return LEVEL_CONFIGS.master;
-    if (levelNumber >= 25) return LEVEL_CONFIGS.expert;
-    if (levelNumber >= 10) return LEVEL_CONFIGS.advanced;
-    if (levelNumber >= PHASE2_FIRST_LEVEL) return LEVEL_CONFIGS.intermediate;
-    return LEVEL_CONFIGS.basic;
+    return LEVEL_CONFIGS[TIER_ORDER[tierIndexFor(levelNumber)]];
 }
 
 export class Difficulty {

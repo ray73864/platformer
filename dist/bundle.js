@@ -40,11 +40,18 @@
   // js/main.js
   var exports_main = {};
   __export(exports_main, {
+    CHARGER_STOMP_POINTS: () => CHARGER_STOMP_POINTS,
+    CLEAR_BONUS_BASE: () => CLEAR_BONUS_BASE,
+    CLEAR_BONUS_REDUCED_RATE: () => CLEAR_BONUS_REDUCED_RATE,
+    CLEAR_BONUS_TIER_STEP: () => CLEAR_BONUS_TIER_STEP,
     DEATH_SCORE_PENALTY_RATE: () => DEATH_SCORE_PENALTY_RATE,
+    DODGE_POINTS: () => DODGE_POINTS,
     FINAL_LEVEL: () => FINAL_LEVEL,
     Game: () => Game,
     STATE: () => STATE,
+    STOMP_POINTS: () => STOMP_POINTS,
     TILE_SIZE: () => TILE_SIZE,
+    clearBonusFor: () => clearBonusFor,
     computeZoom: () => computeZoom,
     deathScorePenalty: () => deathScorePenalty,
     destroyAllGames: () => destroyAllGames,
@@ -454,22 +461,24 @@
       hasTimer: true
     }
   };
+  var TIER_BOUNDARIES = [PHASE2_FIRST_LEVEL, 10, 25, 50, 75];
+  var TIER_ORDER = ["basic", "intermediate", "advanced", "expert", "master", "legend"];
+  function tierIndexFor(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return 0;
+    let index = 0;
+    for (const boundary of TIER_BOUNDARIES) {
+      if (levelNumber >= boundary)
+        index++;
+    }
+    return index;
+  }
   function configFor(levelNumber) {
     if (!Number.isInteger(levelNumber) || levelNumber < 1) {
       console.warn("Invalid level number for difficulty scaling:", levelNumber, "- defaulting to basic tier");
       return LEVEL_CONFIGS.basic;
     }
-    if (levelNumber >= 75)
-      return LEVEL_CONFIGS.legend;
-    if (levelNumber >= 50)
-      return LEVEL_CONFIGS.master;
-    if (levelNumber >= 25)
-      return LEVEL_CONFIGS.expert;
-    if (levelNumber >= 10)
-      return LEVEL_CONFIGS.advanced;
-    if (levelNumber >= PHASE2_FIRST_LEVEL)
-      return LEVEL_CONFIGS.intermediate;
-    return LEVEL_CONFIGS.basic;
+    return LEVEL_CONFIGS[TIER_ORDER[tierIndexFor(levelNumber)]];
   }
 
   class Difficulty {
@@ -515,6 +524,9 @@
       this.kind = kind;
       this.state = "patrol";
       this.stateTime = 0;
+      this.dodged = false;
+      this._dodgePrevSide = 0;
+      this._dodgePrevPx = 0;
     }
     update(dt, player = null) {
       if (this.dead)
@@ -674,6 +686,7 @@
       let stomped = 0;
       let deadly = false;
       let deadlyBySpiny = false;
+      const stompedEnemies = [];
       const prevBottom = (player.prevY !== undefined ? player.prevY : player.y) + player.height;
       for (const enemy of this.enemies) {
         if (enemy.isDead())
@@ -686,11 +699,12 @@
         } else if (player.vy > 0 && prevBottom <= enemy.y + ENEMY_STOMP_TOLERANCE) {
           enemy.die();
           stomped++;
+          stompedEnemies.push(enemy);
         } else {
           deadly = true;
         }
       }
-      return { stomped, deadly, deadlyBySpiny };
+      return { stomped, deadly, deadlyBySpiny, stompedEnemies };
     }
     getActiveEnemies() {
       return this.enemies.filter((enemy) => !enemy.isDead());
@@ -1832,6 +1846,25 @@
     }
     showLevelComplete() {
       this.showOverlay("level-complete-screen");
+    }
+    setLevelCompleteBreakdown(breakdown) {
+      const {
+        clearBonus = 0,
+        enemiesBested = 0,
+        deaths = 0,
+        flawless = false
+      } = breakdown || {};
+      const bonusEl = document.getElementById("clear-bonus");
+      if (bonusEl) {
+        const text = clearBonus > 0 ? flawless ? `Flawless clear +${clearBonus}` : `Cleared after ${deaths} death${deaths === 1 ? "" : "s"} +${clearBonus}` : "";
+        bonusEl.textContent = text;
+        bonusEl.hidden = !text;
+      }
+      const bestedEl = document.getElementById("enemies-bested");
+      if (bestedEl) {
+        bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : "";
+        bestedEl.hidden = !(enemiesBested > 0);
+      }
     }
     getScore() {
       if (this.scoreElement) {
@@ -3947,6 +3980,18 @@
       return 0;
     return Math.floor(score * DEATH_SCORE_PENALTY_RATE);
   }
+  var CLEAR_BONUS_BASE = 100;
+  var CLEAR_BONUS_TIER_STEP = 10;
+  var CLEAR_BONUS_REDUCED_RATE = 0.4;
+  var STOMP_POINTS = 25;
+  var CHARGER_STOMP_POINTS = 40;
+  var DODGE_POINTS = 5;
+  var DODGE_MAX_CROSS_STEP = 40;
+  function clearBonusFor(deathsOnThisLevel, levelNumber) {
+    const base = CLEAR_BONUS_BASE + CLEAR_BONUS_TIER_STEP * tierIndexFor(levelNumber);
+    const flawless = deathsOnThisLevel === 0;
+    return flawless ? base : Math.floor(base * CLEAR_BONUS_REDUCED_RATE);
+  }
   var liveGames = new Set;
   function destroyAllGames() {
     for (const game of liveGames)
@@ -4005,6 +4050,12 @@
       this._riding = null;
       this.score = 0;
       this.levelStartScore = 0;
+      this.deathsOnCurrentLevel = 0;
+      this.levelCoinPoints = 0;
+      this.levelCombatPoints = 0;
+      this.levelEnemiesKilled = 0;
+      this.levelEnemiesDodged = 0;
+      this.lastClearBreakdown = null;
       this.currentLevel = 1;
       this.lastTime = 0;
       this.levelCompleteTimer = 0;
@@ -4154,6 +4205,13 @@
       this.ui.hideOverlay("pause-screen");
       this.returnToMenu();
     }
+    resetLevelEconomyTrackers() {
+      this.deathsOnCurrentLevel = 0;
+      this.levelCoinPoints = 0;
+      this.levelCombatPoints = 0;
+      this.levelEnemiesKilled = 0;
+      this.levelEnemiesDodged = 0;
+    }
     startGame() {
       this.runSeed = Math.random() * 4294967295 >>> 0;
       const level = this.tryConstructLevel(1);
@@ -4161,6 +4219,7 @@
         return false;
       this.score = 0;
       this.currentLevel = 1;
+      this.resetLevelEconomyTrackers();
       this.timer.timeRemaining = this.timer.baseTime;
       this.publishLevel(level);
       this.ui.showHUD();
@@ -4239,16 +4298,28 @@
       this.publishLevel(level);
     }
     handleWin() {
+      const clearBonus = clearBonusFor(this.deathsOnCurrentLevel, this.currentLevel);
+      this.score = Math.min(this.score + clearBonus, Number.MAX_SAFE_INTEGER);
+      this.lastClearBreakdown = {
+        coins: this.levelCoinPoints,
+        combat: this.levelCombatPoints,
+        clearBonus,
+        enemiesBested: this.levelEnemiesKilled + this.levelEnemiesDodged,
+        deaths: this.deathsOnCurrentLevel,
+        flawless: this.deathsOnCurrentLevel === 0
+      };
       this.setState(STATE.LEVEL_COMPLETE);
       playSfx("level_complete");
       this.ui.setPauseEnabled(false);
       this.levelCompleteTimer = 2;
       this.levelTransitionStalled = false;
       this.levelTransitionStallFrames = 0;
+      this.ui.setLevelCompleteBreakdown(this.lastClearBreakdown);
       this.ui.showOverlay("level-complete-screen");
     }
     handleGameOver(cause) {
       this.setState(STATE.GAME_OVER);
+      this.deathsOnCurrentLevel++;
       stopMusic();
       playSfx("death");
       this.shakeTime = 0.35;
@@ -4358,6 +4429,13 @@
           this.player.coyoteTimer = 0;
           this.player.jumpCutAvailable = false;
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
+          let stompPoints = 0;
+          for (const killed of contact.stompedEnemies) {
+            stompPoints += killed.kind === "charger" ? CHARGER_STOMP_POINTS : STOMP_POINTS;
+          }
+          this.levelCombatPoints += stompPoints;
+          this.levelEnemiesKilled += contact.stompedEnemies.length;
+          this.score = Math.min(this.score + stompPoints, Number.MAX_SAFE_INTEGER);
         }
         if (contact.deadly) {
           this.handleGameOver(contact.deadlyBySpiny ? "spiny" : "enemy");
@@ -4371,11 +4449,28 @@
           this.handleGameOver("pit");
           return;
         }
+        for (const enemy of this.enemyManager.enemies) {
+          if (enemy.isDead())
+            continue;
+          const px = this.player.x + this.player.width / 2;
+          const side = Math.sign(px - (enemy.x + enemy.width / 2));
+          if (side === 0)
+            continue;
+          if (enemy._dodgePrevSide !== 0 && side !== enemy._dodgePrevSide && !enemy.dodged && Math.abs(px - enemy._dodgePrevPx) <= DODGE_MAX_CROSS_STEP) {
+            enemy.dodged = true;
+            this.levelCombatPoints += DODGE_POINTS;
+            this.levelEnemiesDodged++;
+            this.score = Math.min(this.score + DODGE_POINTS, Number.MAX_SAFE_INTEGER);
+          }
+          enemy._dodgePrevSide = side;
+          enemy._dodgePrevPx = px;
+        }
         const collectedCoins = this.collectibles.checkCollection(this.player);
         if (collectedCoins > 0) {
           playSfx("coin");
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ffd23f", 12);
           this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
+          this.levelCoinPoints += collectedCoins * COIN_POINTS;
           for (let i = 0;i < collectedCoins; i++)
             this.timer.addCoinBonus();
           this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
@@ -4405,6 +4500,7 @@
             try {
               const level = new Level(next, TILE_SIZE, this.seedFor(next));
               this.currentLevel = next;
+              this.resetLevelEconomyTrackers();
               this.publishLevel(level);
               this.ui.hideOverlay("level-complete-screen");
             } catch (error) {

@@ -92,6 +92,17 @@ export class Enemy {
         this.kind = kind;
         this.state = 'patrol';
         this.stateTime = 0;
+        // Dodge-award diagnostics (owner ruling 2026-11-04, see main.js):
+        // `dodged` latches once the game loop has paid the pass-by award;
+        // `_dodgePrevSide` remembers the sign of (player centre - enemy
+        // centre) from the previous resolved frame (0 = never observed) and
+        // `_dodgePrevPx` that frame's player centre x (continuity guard —
+        // teleport-sized jumps re-baseline unpaid). All written by
+        // Game.update only; fresh flags arrive with every rebuilt Level, so
+        // a retry re-arms the award for each patrol.
+        this.dodged = false;
+        this._dodgePrevSide = 0;
+        this._dodgePrevPx = 0;
     }
 
     update(dt, player = null) {
@@ -303,15 +314,19 @@ export class EnemyManager {
     }
 
     // Stomp-aware contact resolution (replaces the raw death check in the
-    // game loop). Returns { stomped, deadly }: stomped counts enemies the
-    // player squashed this frame (falling feet-first from above); deadly is
-    // true only when some other live enemy made contact. The caller applies
-    // the bounce/feedback so physics constants stay in main.js. Spinies are
-    // never stomped — their spiked back makes every contact deadly.
+    // game loop). Returns { stomped, deadly, deadlyBySpiny, stompedEnemies }:
+    // stomped counts enemies the player squashed this frame (falling feet-
+    // first from above); deadly is true only when some other live enemy made
+    // contact. stompedEnemies lists the killed Enemy instances (in sweep
+    // order, length === stomped) so the caller can score by kind without a
+    // second pass — the per-kind point values stay in main.js with the rest
+    // of the economy constants. Spinies are never stomped — their spiked back
+    // makes every contact deadly.
     resolvePlayerContact(player) {
         let stomped = 0;
         let deadly = false;
         let deadlyBySpiny = false;
+        const stompedEnemies = [];
         const prevBottom = (player.prevY !== undefined ? player.prevY : player.y) + player.height;
 
         for (const enemy of this.enemies) {
@@ -327,12 +342,13 @@ export class EnemyManager {
             } else if (player.vy > 0 && prevBottom <= enemy.y + ENEMY_STOMP_TOLERANCE) {
                 enemy.die();
                 stomped++;
+                stompedEnemies.push(enemy);
             } else {
                 deadly = true;
             }
         }
 
-        return { stomped, deadly, deadlyBySpiny };
+        return { stomped, deadly, deadlyBySpiny, stompedEnemies };
     }
 
     getActiveEnemies() {

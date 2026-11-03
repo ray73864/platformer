@@ -40,6 +40,11 @@
         <div id="level-complete-screen" class="overlay hidden">
             <div class="panel">
                 <h2>Level Complete!</h2>
+                <!-- Clear reward (owner ruling 2026-11-04, see UI.setLevelCompleteBreakdown):
+                     cause-and-effect copy mirroring #score-penalty — aria-live polite
+                     announces the dynamic line, hidden when there is nothing to report. -->
+                <p id="clear-bonus" aria-live="polite" hidden></p>
+                <p id="enemies-bested" aria-live="polite" hidden></p>
             </div>
         </div>
 
