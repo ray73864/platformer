@@ -15,7 +15,7 @@ import { installGameTestScaffolding, mountFixture } from "./setup.js";
 
 installGameTestScaffolding();
 
-import { Game, STATE } from "../../js/main.js";
+import { Game, STATE, FINAL_LEVEL } from "../../js/main.js";
 import { Collectibles } from "../../js/collectibles.js";
 import { Level } from "../../js/level.js";
 
@@ -419,7 +419,7 @@ test("startGame keeps end-screen state intact when generation exhausts", () => {
     // Park a finished run behind Play Again.
     game.state = STATE.GAME_COMPLETE;
     game.score = 500;
-    game.currentLevel = 15;
+    game.currentLevel = FINAL_LEVEL;
 
     const originalConsole = console.error;
     console.error = () => {};
@@ -435,7 +435,7 @@ test("startGame keeps end-screen state intact when generation exhausts", () => {
         // GAME_COMPLETE screen still describes the run it shows.
         expect(game.state).toBe(STATE.GAME_COMPLETE);
         expect(game.score).toBe(500);
-        expect(game.currentLevel).toBe(15);
+        expect(game.currentLevel).toBe(FINAL_LEVEL);
     } finally {
         console.error = originalConsole;
         Level.prototype.pickPortalTile = original;

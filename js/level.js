@@ -28,6 +28,20 @@ const COIN_SPIKE_MARGIN = 2;
 // Columns at each end of a horizontal map kept free of hazards and enemy
 // markers (see hazardPlacementAllowed): spawn runway and portal apron.
 const HAZARD_SPAWN_EXCLUDE_COLS = 9;
+// Plateau caps for the per-level density ramps (Phase 3, levels 16-100).
+// Each formula below grows linearly with the level number and would explode
+// past the shipped range: uncapped at L99 they read gapChance 2.12 (always
+// true → every segment edge becomes a pit), spike target 49, coin target 104.
+// Measured uncapped: EVERY construction from level 44 up threw after the full
+// 200-attempt budget (380/380 seeded builds across levels 25-100) — terrain
+// fragments so hard that no flat ground survives for the REQUIRED spike/enemy
+// sites. With the caps, the same sweep is 0 throws and ≤6.7 avg attempts per
+// decade. Each cap flattens its ramp at the value the curve reaches near the
+// first new tier boundary (L25), so every battle-tested level ≤25 keeps
+// byte-identical generation while late levels asymptote instead of starving.
+const GAP_CHANCE_CAP = 0.64;   // = 0.22 + 0.02*(25-4)
+const SPIKE_TARGET_CAP = 20;   // realized counts sit far lower (THREAT_SPACING)
+const COIN_TARGET_CAP = 30;    // = 5 + 25
 
 // Travel direction is deterministic from the level number so tests and E2E
 // flows can rely on it: the shipped Phase 1 ramp (levels 1-4) stays
@@ -285,8 +299,9 @@ export class Level {
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
 
-        // Difficulty tiers size horizontal maps (20x15 / 24x18 / 28x21 from
-        // level 5 / 10). Vertical levels climb a fixed 15x24 grid.
+        // Difficulty tiers size horizontal maps (see LEVEL_CONFIGS in
+        // difficulty.js: six tiers from 20x15 up to 40x30 at legend).
+        // Vertical levels climb a fixed 15x24 grid.
         if (this.direction === 'vertical') {
             this.width = VERTICAL_WIDTH;   // tiles
             this.height = VERTICAL_HEIGHT; // tiles
@@ -342,6 +357,11 @@ export class Level {
             }
             attempt++;
         }
+
+        // Accepted construction's retry cost, kept for diagnostics the same
+        // way this.seed is: sweeps read this to flag level bands drifting
+        // toward the MAX_GENERATION_ATTEMPTS budget.
+        this.generationAttempts = attempt;
 
         // Fail fast rather than hand back a soft-locked level: without a
         // portal the player can never finish, and the run would silently
@@ -530,8 +550,11 @@ export class Level {
         // (rises stay <= 1 tile via the terrace walk; gaps stay <= 3 columns,
         // inside the ~142px crossing range at speed 200).
         const maxGap = this.levelNumber >= 3 ? 3 : 2;
+        // Plateaued at GAP_CHANCE_CAP (see constant): uncapped this ramp reads
+        // 2.12 at level 99, which turns every segment edge into a pit and
+        // leaves no flat ground for spike/marker sites.
         const gapChance = isPhase2
-            ? 0.22 + 0.02 * (this.levelNumber - 4) // .24 at lvl 5 .. .32 at 9
+            ? Math.min(0.22 + 0.02 * (this.levelNumber - 4), GAP_CHANCE_CAP) // .24 at lvl 5 .. .64 at 25+
             : 0.18 + 0.04 * this.levelNumber;      // early-game ramp
         // Terrain reads as designed plateaus, not per-column sawtooth noise:
         // each elevation holds for a segment, then steps at a junction.
@@ -687,9 +710,14 @@ export class Level {
         if (!DIFFICULTY.hasPhase2Content(this.levelNumber)) return;
 
         // Mild count scaling with level number, hard-capped far below the
-        // spec's 10%-of-all-tiles density limit.
+        // spec's 10%-of-all-tiles density limit. Plateaued at
+        // SPIKE_TARGET_CAP (uncapped: 49 at L99); realized counts sit far
+        // lower anyway because THREAT_SPACING claims 9 columns per spike, so
+        // on the widest shipped map (~26 band columns) only ~3 fit — the cap
+        // documents intent and stops the formula outrunning geometry.
         const target = Math.min(
             2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2),
+            SPIKE_TARGET_CAP,
             Math.floor(this.width * this.height * 0.1)
         );
 
@@ -1037,7 +1065,13 @@ export class Level {
     }
 
     extractCoins() {
-        const target = Math.max(5 + this.levelNumber, 5);
+        // Uncapped this ramp reads 104 coins at L99 — more reachable tiles
+        // than late maps offer on some rolls, and pure noise against the
+        // 20% density spec. Plateaued at COIN_TARGET_CAP (see constant).
+        const target = Math.min(
+            Math.max(5 + this.levelNumber, 5),
+            COIN_TARGET_CAP
+        );
         const coins = [];
         const used = new Set();
 

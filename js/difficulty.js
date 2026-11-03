@@ -24,10 +24,38 @@ const LEVEL_CONFIGS = {
         maxEnemies: 5,
         hasTimer: true
     },
-    advanced: {      // Levels 10+
+    advanced: {      // Levels 10-24
         width: 28,
         height: 21,
         maxEnemies: 8,
+        hasTimer: true
+    },
+    // Phase 3 tiers (levels 25-100): sizes step up one notch per band so
+    // late levels grant the generator more placement room while staying
+    // readable. Measured on the 10-seed x 100-level sweep: zero throws, avg
+    // generation attempts <= 6.7 per decade (budget 200), L100 construction
+    // p95 ~10 ms. These start values needed no step-down once the density
+    // ramps were plateaued in level.js (GAP_CHANCE_CAP / SPIKE_TARGET_CAP /
+    // COIN_TARGET_CAP — gap and coin flatten at their L25 curve values, the
+    // spike cap sits higher at its ~L42 value) — without those caps every
+    // construction from level 44
+    // up threw, so the caps, not smaller grids, carry the late-game fairness.
+    expert: {        // Levels 25-49
+        width: 32,
+        height: 24,
+        maxEnemies: 10,
+        hasTimer: true
+    },
+    master: {        // Levels 50-74
+        width: 36,
+        height: 27,
+        maxEnemies: 12,
+        hasTimer: true
+    },
+    legend: {        // Levels 75-100 (FINAL_LEVEL)
+        width: 40,
+        height: 30,
+        maxEnemies: 14,
         hasTimer: true
     }
 };
@@ -43,6 +71,9 @@ function configFor(levelNumber) {
             levelNumber, '- defaulting to basic tier');
         return LEVEL_CONFIGS.basic;
     }
+    if (levelNumber >= 75) return LEVEL_CONFIGS.legend;
+    if (levelNumber >= 50) return LEVEL_CONFIGS.master;
+    if (levelNumber >= 25) return LEVEL_CONFIGS.expert;
     if (levelNumber >= 10) return LEVEL_CONFIGS.advanced;
     if (levelNumber >= PHASE2_FIRST_LEVEL) return LEVEL_CONFIGS.intermediate;
     return LEVEL_CONFIGS.basic;

@@ -33,7 +33,8 @@ const MAX_FALL_SPEED = 600;
 // full jump so chained stomps stay skillful.
 const STOMP_BOUNCE = 260;
 // Winning this level finishes the whole run instead of generating another.
-const FINAL_LEVEL = 15;
+// Exported so tests pin their final-level fixtures to the same number.
+export const FINAL_LEVEL = 100;
 const HIGH_SCORE_KEY = 'platformerHighScore';
 // Pause-menu arrow routing (R29): value is the cycle direction.
 const PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
@@ -752,7 +753,7 @@ export class Game {
             this.levelCompleteTimer -= dt;
             if (this.levelCompleteTimer <= 0) {
                 if (this.currentLevel >= FINAL_LEVEL) {
-                    // The run ends here: never construct level 16.
+                    // The run ends here: never construct level FINAL_LEVEL+1.
                     this.handleGameComplete();
                     this.ui.hideOverlay('level-complete-screen');
                 } else {

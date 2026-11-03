@@ -40,6 +40,7 @@
   // js/main.js
   var exports_main = {};
   __export(exports_main, {
+    FINAL_LEVEL: () => FINAL_LEVEL,
     Game: () => Game,
     STATE: () => STATE,
     TILE_SIZE: () => TILE_SIZE,
@@ -431,6 +432,24 @@
       height: 21,
       maxEnemies: 8,
       hasTimer: true
+    },
+    expert: {
+      width: 32,
+      height: 24,
+      maxEnemies: 10,
+      hasTimer: true
+    },
+    master: {
+      width: 36,
+      height: 27,
+      maxEnemies: 12,
+      hasTimer: true
+    },
+    legend: {
+      width: 40,
+      height: 30,
+      maxEnemies: 14,
+      hasTimer: true
     }
   };
   function configFor(levelNumber) {
@@ -438,6 +457,12 @@
       console.warn("Invalid level number for difficulty scaling:", levelNumber, "- defaulting to basic tier");
       return LEVEL_CONFIGS.basic;
     }
+    if (levelNumber >= 75)
+      return LEVEL_CONFIGS.legend;
+    if (levelNumber >= 50)
+      return LEVEL_CONFIGS.master;
+    if (levelNumber >= 25)
+      return LEVEL_CONFIGS.expert;
     if (levelNumber >= 10)
       return LEVEL_CONFIGS.advanced;
     if (levelNumber >= PHASE2_FIRST_LEVEL)
@@ -628,6 +653,9 @@
   var VERTICAL_SPAWN_EXCL_ROWS = 6;
   var COIN_SPIKE_MARGIN = 2;
   var HAZARD_SPAWN_EXCLUDE_COLS = 9;
+  var GAP_CHANCE_CAP = 0.64;
+  var SPIKE_TARGET_CAP = 20;
+  var COIN_TARGET_CAP = 30;
   function directionForLevel(levelNumber) {
     if (levelNumber < PHASE2_FIRST_LEVEL)
       return "right";
@@ -757,6 +785,7 @@
         }
         attempt++;
       }
+      this.generationAttempts = attempt;
       if (!valid) {
         throw new Error(`Level ${levelNumber}: no reachable portal position after ` + `${MAX_GENERATION_ATTEMPTS} generation attempts`);
       }
@@ -845,7 +874,7 @@
     generatePlatforms(tiles) {
       const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
       const maxGap = this.levelNumber >= 3 ? 3 : 2;
-      const gapChance = isPhase2 ? 0.22 + 0.02 * (this.levelNumber - 4) : 0.18 + 0.04 * this.levelNumber;
+      const gapChance = isPhase2 ? Math.min(0.22 + 0.02 * (this.levelNumber - 4), GAP_CHANCE_CAP) : 0.18 + 0.04 * this.levelNumber;
       let segRemaining = 0;
       let currentY = this.height - 3;
       let gapStreak = 0;
@@ -940,7 +969,7 @@
     placeSpikes(tiles) {
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
         return;
-      const target = Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), Math.floor(this.width * this.height * 0.1));
+      const target = Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), SPIKE_TARGET_CAP, Math.floor(this.width * this.height * 0.1));
       const besideDropOff = (x, y) => {
         for (let dx = -3;dx <= 3; dx++) {
           if (dx === 0)
@@ -1152,7 +1181,7 @@
       return platforms;
     }
     extractCoins() {
-      const target = Math.max(5 + this.levelNumber, 5);
+      const target = Math.min(Math.max(5 + this.levelNumber, 5), COIN_TARGET_CAP);
       const coins = [];
       const used = new Set;
       const spawnKey = this.spawnTile.y * this.width + this.spawnTile.x;
@@ -2227,7 +2256,7 @@
   var JUMP_FORCE = 350;
   var MAX_FALL_SPEED = 600;
   var STOMP_BOUNCE = 260;
-  var FINAL_LEVEL = 15;
+  var FINAL_LEVEL = 100;
   var HIGH_SCORE_KEY = "platformerHighScore";
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
   var LOOP_ERROR_RECOVERY_FRAMES = 30;

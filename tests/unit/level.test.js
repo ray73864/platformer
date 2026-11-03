@@ -763,7 +763,15 @@ test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
     // gate gained marker-site survival). Constructions now succeed in ~1ms
     // with zero measured throws (0/800 at L13); 30 consecutive builds per
     // phase-2 level must all validate. A throw surfaces as a test failure.
-    for (const n of [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+    // Phase 3 extension: every tier contributes horizontal + vertical
+    // representatives (direction cycles right/left/vertical from level 5),
+    // so the plateau caps and new tier sizes are pinned against throws too.
+    const phase2Levels = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    for (const base of [25, 50, 75, 99]) {
+        phase2Levels.push(base, base + 1);
+    }
+    phase2Levels.push(100);
+    for (const n of phase2Levels) {
         for (let i = 0; i < 30; i++) {
             const level = new Level(n, 32);
             expect(level.hasValidPath()).toBe(true);
@@ -782,15 +790,19 @@ test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
 
 test("extractCoins enforces the 20% density cap (spec §Difficulty Scaling)", () => {
     const level = new Level(1, 32);
-    // Force a scenario generation cannot produce today (target ≤ 20 coins on
-    // ≥300-tile grids): an oversized candidate set and a coin target beyond
-    // the cap for this grid (width*height*0.2). The guard must warn and trim.
+    // Force a scenario generation cannot produce today: an oversized
+    // candidate set and a coin target beyond the cap for this grid
+    // (width*height*0.2). The guard must warn and trim. With the Phase 3
+    // plateau the target itself caps at COIN_TARGET_CAP=30 (levelNumber 95
+    // would otherwise ask for 100), so shrink the effective height until the
+    // density cap (floor(20*7*0.2)=28) sits below even that.
     const reachable = new Set();
     for (let i = 0; i < 100; i++) reachable.add(3 * level.width + i); // row 3
     level.reachableTiles = reachable;
     level.spawnTile = { x: 0, y: 0 }; // key 0, outside the candidate row
     level.portalTile = null;
-    level.levelNumber = 95; // target = 5 + 95 = 100 candidates collected
+    level.height = 7; // density cap floor(20*7*0.2) = 28 < capped target 30
+    level.levelNumber = 95; // target = min(5 + 95, 30) = 30 candidates collected
 
     const originalWarn = console.warn;
     let warned = 0;
@@ -801,6 +813,22 @@ test("extractCoins enforces the 20% density cap (spec §Difficulty Scaling)", ()
         expect(warned).toBe(1);
     } finally {
         console.warn = originalWarn;
+    }
+});
+
+test("late-level densities stay plateaued (Phase 3 caps)", () => {
+    // Uncapped formulas explode past the shipped range: gapChance 2.12,
+    // spike target 49, coin target 104 at L99 — the uncapped generator threw
+    // on every construction from level 44 up (measured 380/380). With the
+    // plateau caps, realized densities must never exceed them on any build.
+    for (const n of [90, 95, 99, 100]) {
+        for (let i = 0; i < 10; i++) {
+            const level = new Level(n, 32);
+            expect(level.getCoins().length).toBeLessThanOrEqual(30);
+            expect(level.countTilesOfType(2)).toBeLessThanOrEqual(20);
+            expect(level.deriveEnemySpawns().length).toBeLessThanOrEqual(14);
+            expect(level.hasValidPath()).toBe(true);
+        }
     }
 });
 

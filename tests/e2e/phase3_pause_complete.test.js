@@ -1,6 +1,7 @@
 // Phase 3 integration E2E: Escape toggles PAUSED (overlay + frozen physics)
-// and finishing level 15 reaches GAME_COMPLETE with the persisted high score,
-// then Play Again returns to a fresh run. Console cleanliness is asserted per
+// and finishing the final level reaches GAME_COMPLETE with the persisted high
+// score, then Play Again returns to a fresh run. Console cleanliness is
+// asserted per
 // test: the game loop's catch would otherwise log per-frame errors forever
 // (R26), so any console output here signals a regression.
 import { test, expect, beforeAll, afterAll } from "bun:test";
@@ -163,7 +164,7 @@ test("pause menu: focus lands on Resume, arrows cycle, Enter activates", async (
     assertConsoleClean();
 }, 60000);
 
-test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", async () => {
+test("Winning the final level shows GAME_COMPLETE with high score; Play Again resets", async () => {
     openGame(SESSION, server.url);
     startGame(SESSION);
     abWaitFn(SESSION, "window.game.state === 'PLAYING'");
@@ -189,12 +190,15 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
         `(() => { const g = window.game;
                   localStorage.removeItem('platformerHighScore');
                   g.runSeed = (Math.random() * 0xffffffff) >>> 0;
-                  g.currentLevel = 15; g.score = 250; g.startLevel();
+                  // FINAL_LEVEL from js/main.js (100): kept as a literal here
+                  // because this runs in the page; if the constant moves, the
+                  // GAME_COMPLETE wait below fails loudly.
+                  g.currentLevel = 100; g.score = 250; g.startLevel();
                   return { timerHidden: document.getElementById('timer-display')
                               .classList.contains('hidden'),
                            level: g.currentLevel }; })()`
     );
-    expect(summary.level).toBe(15);
+    expect(summary.level).toBe(100);
     expect(summary.timerHidden).toBe(false);
 
     // Meet the 70% coin gate through the real Collectibles API, then drop
@@ -202,7 +206,7 @@ test("Winning level 15 shows GAME_COMPLETE with high score; Play Again resets", 
     // clearance and the teleport happen in ONE eval, stale terrain
     // regenerates when a patrol is in range at the moment of the drop, and a
     // stray patrol that still kills the player mid-race is recovered via the
-    // retry button — L15 is the densest enemy tier, so the compound
+    // retry button — the final level is in the legend tier, so the compound
     // LEVEL_COMPLETE || GAME_OVER wait must not stall on a death.
     let outcome = null;
     for (let attempt = 0; attempt < 6 && outcome !== "LEVEL_COMPLETE"; attempt++) {

@@ -4,7 +4,7 @@ import { Collectibles } from "../../js/collectibles.js";
 
 installGameTestScaffolding();
 
-import { Game, STATE } from "../../js/main.js";
+import { Game, STATE, FINAL_LEVEL } from "../../js/main.js";
 
 const HIGH_SCORE_KEY = "platformerHighScore";
 const DT = 0.016;
@@ -81,11 +81,11 @@ function finishTransition(game) {
     }
 }
 
-// A run parked at GAME_COMPLETE with score 250 on level 15.
+// A run parked at GAME_COMPLETE with score 250 on the final level.
 function reachGameComplete() {
     const game = startPlaying();
     hideOverlays(game);
-    startLevelAt(game, 15);
+    startLevelAt(game, FINAL_LEVEL);
     clearGeneratedThreats(game);
     game.score = 250;
     winCurrentLevel(game);
@@ -123,15 +123,34 @@ test("coin pickups bank clock time even before the tier starts ticking it", () =
     expect(game.timer.getTimeRemaining()).toBe(before + 4);
 });
 
-test("completing level 15 ends the run in GAME_COMPLETE with overlay and persisted high score", () => {
+test("completing the final level ends the run in GAME_COMPLETE with overlay and persisted high score", () => {
     localStorage.removeItem(HIGH_SCORE_KEY); // start from clean storage (exact persistence check)
     const game = reachGameComplete();
 
-    expect(game.currentLevel).toBe(15);
+    expect(game.currentLevel).toBe(FINAL_LEVEL);
     expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(false);
     expect(document.getElementById('game-complete-score').textContent).toBe('Score: 250');
     expect(document.getElementById('high-score').textContent).toBe('High Score: 250');
     expect(localStorage.getItem(HIGH_SCORE_KEY)).toBe('250');
+});
+
+test("winning the level before the final one advances into FINAL_LEVEL and starts it", () => {
+    // The FINAL_LEVEL=100 win flow is only reachable if 99→100 actually
+    // constructs and publishes: this drives the real LEVEL_COMPLETE
+    // transition into the last level (direction cycles to 'vertical', so it
+    // climbs the fixed 15x24 grid — the constructor guard is what matters).
+    const game = startPlaying();
+    hideOverlays(game);
+    startLevelAt(game, FINAL_LEVEL - 1);
+    clearGeneratedThreats(game);
+    winCurrentLevel(game);
+    finishTransition(game);
+
+    expect(game.state).toBe(STATE.PLAYING);
+    expect(game.currentLevel).toBe(FINAL_LEVEL);
+    expect(game.level.direction).toBe('vertical');
+    expect([game.level.width, game.level.height]).toEqual([15, 24]);
+    expect(game.level.hasValidPath()).toBe(true);
 });
 
 test("a lower finishing score keeps the stored high score", () => {
