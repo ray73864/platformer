@@ -53,3 +53,75 @@ export function drawParticles(ctx, list) {
     }
     ctx.globalAlpha = 1;
 }
+
+// ---------------------------------------------------------------------------
+// Ambient motes: slow-drifting dust (day themes) or fireflies/spores. These
+// live in SCREEN space (not world), so they never collide with gameplay, and
+// their positions wrap at the viewport edges. Spawns are seeded (a local
+// mulberry32 copy — render code must never consume Math.random) so a level
+// always gets the same mote field, and each mote carries its own parallax
+// depth applied against cameraX at draw time.
+// ---------------------------------------------------------------------------
+
+export const MAX_MOTES = 20;
+
+function makeRng(seed) {
+    let s = seed >>> 0;
+    return function () {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// Build a capped mote field across a viewW×viewH screen from `seed`.
+export function createMotes(count, seed, viewW, viewH) {
+    const rng = makeRng(seed);
+    const motes = [];
+    const n = Math.min(count, MAX_MOTES);
+    for (let i = 0; i < n; i++) {
+        motes.push({
+            x: rng() * viewW,
+            y: rng() * viewH,
+            vx: 4 + rng() * 10,       // lazy horizontal drift, px/s
+            vy: -(2 + rng() * 6),     // gentle rise; wraps back at the floor
+            size: 1.5 + rng() * 2,
+            phase: rng() * Math.PI * 2,
+            wobble: 0.4 + rng() * 0.8,
+            par: 0.1 + rng() * 0.3    // per-mote parallax depth factor
+        });
+    }
+    return motes;
+}
+
+// Advance every mote; sway comes from the phase so motion never dead-reckons
+// in straight lines. Positions wrap into [0, viewW/H) — resize-safe, since
+// an out-of-range coordinate simply wraps on the next tick.
+export function stepMotes(list, dt, viewW, viewH) {
+    for (const m of list) {
+        m.phase += dt * m.wobble;
+        m.x += (m.vx + Math.sin(m.phase) * 4) * dt;
+        m.y += m.vy * dt;
+        m.x = ((m.x % viewW) + viewW) % viewW;
+        m.y = ((m.y % viewH) + viewH) % viewH;
+    }
+    return list;
+}
+
+// Draw in screen space with camera parallax. `fireflies` bumps brightness
+// and radius for night/jungle themes; day dust stays faint so it can never
+// compete with hazards for attention.
+export function drawMotes(ctx, list, cameraX, viewW, color, fireflies = false) {
+    for (const m of list) {
+        const sx = (((m.x - cameraX * m.par) % viewW) + viewW) % viewW;
+        const twinkle = 0.55 + 0.45 * Math.sin(m.phase * 2.3);
+        ctx.globalAlpha = twinkle * (fireflies ? 0.85 : 0.45);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(sx, m.y, m.size * (fireflies ? 1.4 : 1), 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+}

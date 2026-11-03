@@ -1547,10 +1547,152 @@
     BAT: [24, 25, 26]
   };
   var THEMES = [
-    { x: 0, w: 96, sky: "#dff6f5", ground: "#c2e3e8" },
-    { x: 96, w: 48, sky: "#fbc97b", ground: "#cb815e" },
-    { x: 144, w: 48, sky: "#7ff0a5", ground: "#2eb082" }
+    {
+      x: 0,
+      w: 96,
+      sky: "#dff6f5",
+      ground: "#c2e3e8",
+      skyTop: "#7cc0da",
+      skyBottom: "#e8faf7",
+      disc: { x: 0.74, y: 0.14, r: 26, core: "#fff6cf", halo: "#ffeeae" },
+      cloud: "#ffffff",
+      hillFar: "#aedbe1",
+      hillNear: "#84c2cd",
+      mote: "#fffbe0",
+      fireflies: false
+    },
+    {
+      x: 96,
+      w: 48,
+      sky: "#fbc97b",
+      ground: "#cb815e",
+      skyTop: "#c76e79",
+      skyBottom: "#fdd79b",
+      disc: { x: 0.66, y: 0.46, r: 34, core: "#ffe7ad", halo: "#ffbf7a" },
+      cloud: "#ffdcae",
+      hillFar: "#b5727c",
+      hillNear: "#93546a",
+      mote: "#ffd9a8",
+      fireflies: false
+    },
+    {
+      x: 144,
+      w: 48,
+      sky: "#7ff0a5",
+      ground: "#2eb082",
+      skyTop: "#1f9d79",
+      skyBottom: "#9ff3c3",
+      disc: { x: 0.78, y: 0.12, r: 22, core: "#f2fff5", halo: "#c9f7dd" },
+      cloud: "#d9fce6",
+      hillFar: "#4fbe93",
+      hillNear: "#2f9c78",
+      mote: "#d6ffa8",
+      fireflies: true
+    }
   ];
+  var FLOWER_COLORS = ["#ffd7e8", "#fff3b0", "#ffffff"];
+  function makeRng2(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = s + 1831565813 >>> 0;
+      let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function hash2(x, y) {
+    let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263);
+    h = Math.imul(h ^ h >>> 13, 1274126177);
+    return (h ^ h >>> 16) >>> 0;
+  }
+  function withAlpha(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+  }
+  function makeCanvas(w, h) {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+  function buildCloudBand(rng, w, h, count, color, alpha) {
+    const c = makeCanvas(w, h);
+    const g = c.getContext("2d");
+    g.globalAlpha = alpha;
+    g.fillStyle = color;
+    for (let i = 0;i < count; i++) {
+      const cx = rng() * w;
+      const cy = h * (0.25 + rng() * 0.5);
+      const s = 0.6 + rng() * 0.8;
+      const puffs = [];
+      const n = 4 + Math.floor(rng() * 3);
+      for (let p = 0;p < n; p++) {
+        puffs.push({
+          dx: (p - n / 2) * 16 * s + (rng() - 0.5) * 8,
+          dy: (rng() - 0.5) * 10 * s,
+          r: (10 + rng() * 10) * s
+        });
+      }
+      for (const shift of [-w, 0, w]) {
+        for (const p of puffs) {
+          g.beginPath();
+          g.arc(cx + shift + p.dx, cy + p.dy, p.r, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    }
+    return c;
+  }
+  function buildHills(rng, w, h, farColor, nearColor) {
+    const c = makeCanvas(w, h);
+    const g = c.getContext("2d");
+    const ridge = (color, baseY, amp1, amp2, freq1, freq2) => {
+      const p1 = rng() * Math.PI * 2;
+      const p2 = rng() * Math.PI * 2;
+      const yAt = (x) => baseY - amp1 * Math.sin(x / w * Math.PI * 2 * freq1 + p1) - amp2 * Math.sin(x / w * Math.PI * 2 * freq2 + p2);
+      g.fillStyle = color;
+      g.beginPath();
+      g.moveTo(0, h);
+      for (let x = 0;x <= w; x += 6)
+        g.lineTo(x, yAt(x));
+      g.lineTo(w, yAt(w));
+      g.lineTo(w, h);
+      g.closePath();
+      g.fill();
+    };
+    ridge(farColor, h * 0.45, h * 0.26, h * 0.12, 2, 5);
+    ridge(nearColor, h * 0.72, h * 0.2, h * 0.1, 3, 7);
+    return c;
+  }
+  function buildDisc(disc) {
+    const size = disc.r * 4;
+    const c = makeCanvas(size, size);
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(size / 2, size / 2, disc.r * 0.5, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, withAlpha(disc.halo, 0.55));
+    grad.addColorStop(0.45, withAlpha(disc.halo, 0.22));
+    grad.addColorStop(1, withAlpha(disc.halo, 0));
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = withAlpha(disc.core, 0.95);
+    g.beginPath();
+    g.arc(size / 2, size / 2, disc.r, 0, Math.PI * 2);
+    g.fill();
+    return c;
+  }
+  function buildGlow(color) {
+    const size = 64;
+    const c = makeCanvas(size, size);
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, withAlpha(color, 0.5));
+    grad.addColorStop(0.5, withAlpha(color, 0.16));
+    grad.addColorStop(1, withAlpha(color, 0));
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    return c;
+  }
   function sheetRect(sheetKey, index) {
     const { cols, cell } = SHEETS[sheetKey];
     if (!Number.isInteger(index) || index < 0) {
@@ -1564,6 +1706,9 @@
     };
   }
   var SHEET_TILE_COUNTS = { tiles: 20 * 9, characters: 9 * 3 };
+  function wrapOffset(scrollPx, w) {
+    return -((scrollPx % w + w) % w);
+  }
 
   class Sprites {
     constructor() {
@@ -1571,6 +1716,13 @@
       this.loaded = false;
       this.clock = 0;
       this._facing = new WeakMap;
+      this._skyCache = [null, null, null];
+      this._backdrop = null;
+      this._dirtVariants = null;
+      this._decor = [];
+      this._decorSource = null;
+      this._level = null;
+      this._glows = {};
       if (typeof Image === "undefined")
         return;
       let pending = Object.keys(SHEETS).length;
@@ -1596,44 +1748,127 @@
       const { sx, sy, sw, sh } = sheetRect(sheetKey, index);
       ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
     }
+    _skyGradient(ctx, themeIdx, viewH) {
+      const entry = this._skyCache[themeIdx];
+      if (entry && entry.h === viewH)
+        return entry.grad;
+      const t = THEMES[themeIdx];
+      const grad = ctx.createLinearGradient(0, 0, 0, viewH);
+      grad.addColorStop(0, t.skyTop);
+      grad.addColorStop(0.62, t.sky);
+      grad.addColorStop(1, t.skyBottom);
+      this._skyCache[themeIdx] = { h: viewH, grad };
+      return grad;
+    }
+    _ensureBackdrop(levelNumber, themeIdx) {
+      if (this._backdrop && this._backdrop.levelNumber === levelNumber) {
+        return this._backdrop;
+      }
+      const theme = THEMES[themeIdx];
+      const rng = makeRng2(Math.imul(levelNumber, 2654435761) ^ 2709177233);
+      this._backdrop = {
+        levelNumber,
+        disc: buildDisc(theme.disc),
+        cloudsFar: buildCloudBand(rng, 1024, 110, 5, theme.cloud, 0.5),
+        cloudsMid: buildCloudBand(rng, 1024, 130, 7, theme.cloud, 0.72),
+        cloudsLow: buildCloudBand(rng, 1024, 80, 6, theme.cloud, 0.45),
+        hills: buildHills(rng, 1024, 170, theme.hillFar, theme.hillNear)
+      };
+      return this._backdrop;
+    }
     drawBackground(ctx, levelNumber, cameraX, viewW, viewH, worldBottomScreen = Infinity) {
-      const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
-      ctx.fillStyle = theme.sky;
+      const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+      const theme = THEMES[themeIdx];
+      ctx.fillStyle = this._skyGradient(ctx, themeIdx, viewH);
       ctx.fillRect(0, 0, viewW, viewH);
       if (!this.images.backgrounds)
         return;
-      const img = this.images.backgrounds;
-      const decoH = 16 * 2;
-      const decoY = viewH * 0.42 - decoH;
-      this._tileStrip(ctx, img, theme.x, 32, theme.w, 16, decoH, cameraX * 0.25, decoY, viewW);
+      const bd = this._ensureBackdrop(levelNumber, themeIdx);
       const groundH = 24 * 2;
       const bandY = Math.min(viewH - groundH, worldBottomScreen);
-      this._tileStrip(ctx, img, theme.x, 48, theme.w, 24, groundH, cameraX * 0.5, bandY, viewW);
+      const disc = theme.disc;
+      ctx.drawImage(bd.disc, viewW * disc.x - cameraX * 0.02 - bd.disc.width / 2, viewH * disc.y - bd.disc.height / 2);
+      this._blitWrapped(ctx, bd.cloudsFar, cameraX * 0.1, viewH * 0.06, viewW);
+      this._blitWrapped(ctx, bd.cloudsMid, cameraX * 0.25, viewH * 0.2, viewW);
+      this._blitWrapped(ctx, bd.hills, cameraX * 0.35, bandY - bd.hills.height + 12, viewW);
+      this._blitWrapped(ctx, bd.cloudsLow, cameraX * 0.4, bandY - bd.cloudsLow.height - 10, viewW);
+      this._tileStrip(ctx, this.images.backgrounds, theme.x, 48, theme.w, 24, groundH, cameraX * 0.5, bandY, viewW);
       if (bandY + groundH < viewH) {
         ctx.fillStyle = theme.ground;
         ctx.fillRect(0, bandY + groundH, viewW, viewH - bandY - groundH);
       }
     }
+    _blitWrapped(ctx, canvas, scrollPx, y, viewW) {
+      const w = canvas.width;
+      const start = wrapOffset(Math.round(scrollPx), w);
+      for (let x = start;x < viewW; x += w) {
+        ctx.drawImage(canvas, x, y);
+      }
+    }
     _tileStrip(ctx, img, sx, sy, srcW, srcH, chunkH, scrollX, y, viewW) {
       const chunkW = srcW * 2;
-      const offset = -((scrollX % chunkW + chunkW) % chunkW);
+      const offset = wrapOffset(Math.round(scrollX), chunkW);
       for (let x = offset;x < viewW; x += chunkW) {
         ctx.drawImage(img, sx, sy, srcW, srcH, x, y, chunkW, chunkH);
       }
     }
+    _buildDirtVariants() {
+      const rect = sheetRect("tiles", TILES.DIRT);
+      const variants = [];
+      for (let v = 0;v < 4; v++) {
+        const c = makeCanvas(rect.sw, rect.sh);
+        const g = c.getContext("2d");
+        g.drawImage(this.images.tiles, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, rect.sw, rect.sh);
+        const rng = makeRng2(856446 ^ Math.imul(v + 1, 2654435761));
+        for (let i = 0;i < 4; i++) {
+          g.fillStyle = i === 3 ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.16)";
+          g.fillRect(Math.floor(rng() * (rect.sw - 2)), Math.floor(rng() * (rect.sh - 2)), 2, 2);
+        }
+        variants.push(c);
+      }
+      this._dirtVariants = variants;
+      return variants;
+    }
+    _ensureDecor(level) {
+      if (this._decorSource === level)
+        return this._decor;
+      const decor = [];
+      const rng = makeRng2(Math.imul(level.levelNumber, 1374926497) ^ 3017259506);
+      for (let ty = 1;ty < level.height; ty++) {
+        for (let tx = 0;tx < level.width; tx++) {
+          if (level.tiles[ty][tx] !== 1 || level.tiles[ty - 1][tx] !== 0)
+            continue;
+          if (rng() > 0.34)
+            continue;
+          const roll = rng();
+          decor.push({
+            tx,
+            ty,
+            kind: roll < 0.5 ? "tuft" : roll < 0.8 ? "flower" : "pebble",
+            ox: Math.floor(rng() * 18),
+            petal: Math.floor(rng() * FLOWER_COLORS.length)
+          });
+        }
+      }
+      this._decorSource = level;
+      this._decor = decor;
+      return decor;
+    }
     drawWorld(ctx, level, cameraX, cameraY, viewW, viewH) {
+      this._level = level;
       const size = level.tileSize;
       const drawn = size + 1;
       const c0 = Math.max(0, Math.floor(cameraX / size));
       const c1 = Math.min(level.width - 1, Math.ceil((cameraX + viewW) / size));
       const r0 = Math.max(0, Math.floor(-cameraY / size));
       const r1 = Math.min(level.height - 1, Math.ceil((-cameraY + viewH) / size));
+      const dirt = this._dirtVariants ?? this._buildDirtVariants();
       for (let ty = r0;ty <= r1; ty++) {
         for (let tx = c0;tx <= c1; tx++) {
           const t = level.tiles[ty][tx];
           if (t === 1) {
             const above = ty > 0 ? level.tiles[ty - 1][tx] : 0;
-            this._drawSheet(ctx, "tiles", TILES.DIRT, tx * size, ty * size, drawn, drawn);
+            ctx.drawImage(dirt[hash2(tx, ty) & 3], 0, 0, 18, 18, tx * size, ty * size, drawn, drawn);
             if (above !== 1) {
               const cap = sheetRect("tiles", TILES.GRASS_TOP);
               ctx.drawImage(this.images.tiles, cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H, tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
@@ -1644,9 +1879,98 @@
           }
         }
       }
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          if (ty > 0 && level.tiles[ty - 1][tx] === 1)
+            continue;
+          ctx.fillRect(tx * size, ty * size, drawn, 2);
+        }
+      }
+      ctx.fillStyle = "rgba(10,16,32,0.10)";
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          if (tx > 0 && level.tiles[ty][tx - 1] === 1)
+            continue;
+          ctx.fillRect(tx * size, ty * size, 3, drawn);
+        }
+      }
+      ctx.fillStyle = "rgba(10,16,32,0.16)";
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          if (tx < level.width - 1 && level.tiles[ty][tx + 1] === 1)
+            continue;
+          ctx.fillRect((tx + 1) * size - 3, ty * size, 3, drawn);
+        }
+      }
+      this._drawDecor(ctx, this._ensureDecor(level), size, c0, c1);
+    }
+    _drawDecor(ctx, decor, size, c0, c1) {
+      for (const d of decor) {
+        if (d.tx < c0 || d.tx > c1)
+          continue;
+        const x = d.tx * size + d.ox;
+        const y = d.ty * size;
+        if (d.kind === "tuft") {
+          ctx.fillStyle = "#3f7d31";
+          ctx.fillRect(x, y - 6, 2, 6);
+          ctx.fillRect(x + 3, y - 9, 2, 9);
+          ctx.fillRect(x + 6, y - 5, 2, 5);
+        } else if (d.kind === "flower") {
+          ctx.fillStyle = "#3f7d31";
+          ctx.fillRect(x + 1, y - 7, 2, 7);
+          ctx.fillStyle = FLOWER_COLORS[d.petal];
+          ctx.fillRect(x, y - 11, 5, 4);
+        } else {
+          ctx.fillStyle = "#8f9aa3";
+          ctx.fillRect(x, y - 3, 5, 3);
+        }
+      }
+    }
+    _groundBelow(cx, feetY) {
+      const level = this._level;
+      if (!level)
+        return null;
+      const size = level.tileSize;
+      const tx = Math.floor(cx / size);
+      if (tx < 0 || tx >= level.width)
+        return null;
+      const r0 = Math.max(0, Math.floor(feetY / size));
+      const r1 = Math.min(level.height - 1, r0 + 4);
+      for (let ty = r0;ty <= r1; ty++) {
+        if (level.tiles[ty][tx] === 1)
+          return ty * size;
+      }
+      return null;
+    }
+    _entityShadow(ctx, cx, feetY, halfW) {
+      const gy = this._groundBelow(cx, feetY);
+      if (gy === null)
+        return;
+      const span = 4 * this._level.tileSize;
+      const k = Math.min(Math.max(gy - feetY, 0), span) / span;
+      ctx.save();
+      ctx.globalAlpha = 0.06 + 0.28 * (1 - k);
+      ctx.fillStyle = "#0a1020";
+      ctx.beginPath();
+      ctx.ellipse(cx, gy + 2, halfW * (1 - 0.45 * k), 5 * (1 - 0.4 * k), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    _glowSprite(color) {
+      if (!this._glows[color])
+        this._glows[color] = buildGlow(color);
+      return this._glows[color];
     }
     drawCoins(ctx, coins) {
       const bobPhase = this.clock * 3;
+      const glow = this._glowSprite("#ffd76a");
       for (const coin of coins) {
         if (coin.collected)
           continue;
@@ -1655,6 +1979,9 @@
         const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + phase) * 3;
         const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * 4 + phase)));
         const s = 26;
+        ctx.globalAlpha = 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(bobPhase * 0.8 + phase));
+        ctx.drawImage(glow, cx - 22, cy - 22, 44, 44);
+        ctx.globalAlpha = 1;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.scale(spin, 1);
@@ -1669,10 +1996,18 @@
       const w = 36;
       const h = 52;
       const feetY = portal.y + PORTAL_CELL;
+      const cx = portal.x + portal.width / 2;
+      const cy = feetY - h / 2;
+      const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.8);
+      ctx.globalAlpha = unlocked ? 0.32 + 0.26 * pulse : 0.12;
+      const glow = this._glowSprite(unlocked ? "#b06cf0" : "#8a7fa8");
+      const gs = 96 + 14 * pulse;
+      ctx.drawImage(glow, cx - gs / 2, cy - gs / 2, gs, gs);
+      ctx.globalAlpha = 1;
       ctx.save();
       if (!unlocked)
         ctx.globalAlpha = 0.35;
-      this._drawSheet(ctx, "tiles", frame, portal.x + portal.width / 2 - w / 2, feetY - h, w, h);
+      this._drawSheet(ctx, "tiles", frame, cx - w / 2, feetY - h, w, h);
       ctx.restore();
     }
     _faceOf(entity) {
@@ -1698,6 +2033,7 @@
       const w = 44;
       const h = 44 * squash;
       const cx = player.x + player.width / 2;
+      this._entityShadow(ctx, cx, player.y + player.height, 16);
       const bob = moving && player.grounded ? Math.abs(Math.sin(this.clock * 8 * Math.PI)) * 2 : 0;
       const feet = player.y + player.height - bob;
       ctx.save();
@@ -1716,6 +2052,7 @@
       const h = 42;
       const cx = enemy.x + enemy.width / 2;
       const feet = enemy.y + enemy.height;
+      this._entityShadow(ctx, cx, feet, 15);
       ctx.save();
       ctx.translate(cx, feet);
       ctx.scale(face, 1);
@@ -1768,9 +2105,61 @@
     }
     ctx.globalAlpha = 1;
   }
+  var MAX_MOTES = 20;
+  function makeRng3(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = s + 1831565813 >>> 0;
+      let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function createMotes(count, seed, viewW, viewH) {
+    const rng = makeRng3(seed);
+    const motes = [];
+    const n = Math.min(count, MAX_MOTES);
+    for (let i = 0;i < n; i++) {
+      motes.push({
+        x: rng() * viewW,
+        y: rng() * viewH,
+        vx: 4 + rng() * 10,
+        vy: -(2 + rng() * 6),
+        size: 1.5 + rng() * 2,
+        phase: rng() * Math.PI * 2,
+        wobble: 0.4 + rng() * 0.8,
+        par: 0.1 + rng() * 0.3
+      });
+    }
+    return motes;
+  }
+  function stepMotes(list, dt, viewW, viewH) {
+    for (const m of list) {
+      m.phase += dt * m.wobble;
+      m.x += (m.vx + Math.sin(m.phase) * 4) * dt;
+      m.y += m.vy * dt;
+      m.x = (m.x % viewW + viewW) % viewW;
+      m.y = (m.y % viewH + viewH) % viewH;
+    }
+    return list;
+  }
+  function drawMotes(ctx, list, cameraX, viewW, color, fireflies = false) {
+    for (const m of list) {
+      const sx = ((m.x - cameraX * m.par) % viewW + viewW) % viewW;
+      const twinkle = 0.55 + 0.45 * Math.sin(m.phase * 2.3);
+      ctx.globalAlpha = twinkle * (fireflies ? 0.85 : 0.45);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(sx, m.y, m.size * (fireflies ? 1.4 : 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // js/main.js
   var TILE_SIZE = 32;
+  var MOTE_COUNT = 18;
   function computeZoom(viewportHeight) {
     return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
   }
@@ -1824,6 +2213,8 @@
       this.timerActive = false;
       this.sprites = new Sprites;
       this.particles = [];
+      this.motes = [];
+      this._motesSource = null;
       this.shakeTime = 0;
       this.squashTimer = 0;
       this._prevGrounded = true;
@@ -2080,6 +2471,9 @@
     update(dt) {
       this.sprites.advance(dt);
       stepParticles(this.particles, dt);
+      if (this.motes.length) {
+        stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
+      }
       if (this.shakeTime > 0)
         this.shakeTime = Math.max(0, this.shakeTime - dt);
       if (this.squashTimer > 0)
@@ -2215,6 +2609,14 @@
         if (this.particles.length)
           drawParticles(this.ctx, this.particles);
         this.ctx.restore();
+        if (this._motesSource !== this.level) {
+          this._motesSource = this.level;
+          this.motes = createMotes(MOTE_COUNT, Math.imul(this.currentLevel, 2654435761) >>> 0, viewW, viewH);
+        }
+        if (this.motes.length) {
+          const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+          drawMotes(this.ctx, this.motes, this.camera.x, viewW, amb.mote, amb.fireflies);
+        }
       }
     }
     loop(time) {

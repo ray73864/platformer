@@ -7,11 +7,15 @@ import { UI } from './ui.js';
 import { COIN_POINTS } from './collectibles.js';
 import { Difficulty } from './difficulty.js';
 import { Timer } from './timer.js';
-import { Sprites } from './sprites.js';
-import { spawnBurst, stepParticles, drawParticles } from './particles.js';
+import { Sprites, THEMES } from './sprites.js';
+import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
 
 // Game constants
 export const TILE_SIZE = 32;
+
+// Ambient drifting motes per level (dust/fireflies by theme). Deliberately
+// far below MAX_MOTES: ambience should never read as noise.
+const MOTE_COUNT = 18;
 
 // Integer world zoom: on large displays the pixel art scales up to fill the
 // viewport instead of sitting small in the top-left. Target ~540 CSS px of
@@ -125,6 +129,10 @@ export class Game {
         // Game-feel state: coin/death sparks, death screen-shake, landing
         // squash. All visual-only — physics and hitboxes are untouched.
         this.particles = [];
+        // Ambient motes: rebuilt per level instance, stepped every frame in
+        // screen space (visual-only, like the bursts above).
+        this.motes = [];
+        this._motesSource = null;
         this.shakeTime = 0;
         this.squashTimer = 0;
         this._prevGrounded = true;
@@ -587,6 +595,9 @@ export class Game {
         // out on the GAME_OVER screen.
         this.sprites.advance(dt);
         stepParticles(this.particles, dt);
+        if (this.motes.length) {
+            stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
+        }
         if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - dt);
         if (this.squashTimer > 0) this.squashTimer = Math.max(0, this.squashTimer - dt);
 
@@ -855,6 +866,20 @@ export class Game {
             if (this.particles.length) drawParticles(this.ctx, this.particles);
 
             this.ctx.restore();
+
+            // Ambient motes draw OUTSIDE the world transform: they live in
+            // screen space with per-mote parallax against cameraX, rebuilt
+            // once per level instance from a level-derived seed.
+            if (this._motesSource !== this.level) {
+                this._motesSource = this.level;
+                this.motes = createMotes(MOTE_COUNT,
+                    Math.imul(this.currentLevel, 0x9E3779B1) >>> 0, viewW, viewH);
+            }
+            if (this.motes.length) {
+                const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                drawMotes(this.ctx, this.motes, this.camera.x, viewW,
+                    amb.mote, amb.fireflies);
+            }
         }
     }
 
