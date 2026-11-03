@@ -44,10 +44,15 @@ const SPIKE_BAND_H = 9;
 
 // Green band of the grass-cap tile (tile 2): source rows 2..8 of its 18px
 // cell — measured from the shipped sheet; rows 0-1 and 16-17 are baked dark
-// borders that must not be drawn when tiles stack.
+// borders that must not be drawn when tiles stack. The day surface cap bakes
+// this band into its strip (see _buildCapArt).
 const GRASS_BAND_Y = 2;
 const GRASS_BAND_H = 7;
-const GRASS_BAND_SRC = 18;
+
+// Baked surface-cap strip geometry (source px): rows [0, CAP_OVER) hang into
+// the air cell above the tile (blades/fringe), the rest forms the lip.
+const CAP_OVER = 4;
+const CAP_H = CAP_OVER + 9;
 
 // One tile cell: matches main.js TILE_SIZE (kept local so the sprite layer
 // stays dependency-free). Used to stand the portal flag on the ground line.
@@ -79,27 +84,80 @@ export const CHARS = {
 //  - `disc` is the sun (day/dusk) or moon (jungle) anchor: fractional screen
 //    position plus core/halo colours; `mote`/`fireflies` drive the ambient
 //    particle tint in main.js.
+//
+// Biome-identity fields (visual overhaul wave 1): each band owns its terrain
+// MATERIAL, not just its sky. `rim` tints the surface rim-light pass, `mood`
+// is the world tint composited over background+terrain+props (never entities),
+// `haze` the horizon-mist colour, `portalGlow` harmonises the goal aura with
+// the band, `ink` the near-black foreground-silhouette tone, and `dust` the
+// walking-puff colour. Terrain baking parameters live in TERRAIN_MATS below.
 export const THEMES = [
     {
         x: 0, w: 96, sky: '#dff6f5', ground: '#c2e3e8',
         skyTop: '#7cc0da', skyBottom: '#e8faf7',
         disc: { x: 0.74, y: 0.14, r: 26, core: '#fff6cf', halo: '#ffeeae' },
         cloud: '#ffffff', hillFar: '#aedbe1', hillNear: '#84c2cd',
-        mote: '#fffbe0', fireflies: false
+        mote: '#fffbe0', fireflies: false,
+        rim: 'rgba(255,255,255,0.28)',
+        mood: 'rgba(255,246,214,0.045)',
+        haze: '#eafcff',
+        portalGlow: '#b06cf0',
+        ink: '#1c2a17',
+        dust: '#cbb98a',
+        vignette: 0.10
     },
     {
         x: 96, w: 48, sky: '#fbc97b', ground: '#cb815e',
         skyTop: '#c76e79', skyBottom: '#fdd79b',
         disc: { x: 0.66, y: 0.46, r: 34, core: '#ffe7ad', halo: '#ffbf7a' },
         cloud: '#ffdcae', hillFar: '#b5727c', hillNear: '#93546a',
-        mote: '#ffd9a8', fireflies: false
+        mote: '#ffd9a8', fireflies: false,
+        rim: 'rgba(255,226,170,0.30)',
+        mood: 'rgba(255,120,54,0.11)',
+        haze: '#ffd9a0',
+        portalGlow: '#ef7fae',
+        ink: '#2b150c',
+        dust: '#c9986a',
+        vignette: 0.12
     },
     {
         x: 144, w: 48, sky: '#7ff0a5', ground: '#2eb082',
         skyTop: '#1f9d79', skyBottom: '#9ff3c3',
         disc: { x: 0.78, y: 0.12, r: 22, core: '#f2fff5', halo: '#c9f7dd' },
         cloud: '#d9fce6', hillFar: '#4fbe93', hillNear: '#2f9c78',
-        mote: '#d6ffa8', fireflies: true
+        mote: '#d6ffa8', fireflies: true,
+        rim: 'rgba(206,244,208,0.22)',
+        mood: 'rgba(24,104,66,0.12)',
+        haze: '#b8ffd9',
+        portalGlow: '#5fe8bc',
+        ink: '#0d2317',
+        dust: '#7fae7a',
+        vignette: 0.12
+    }
+];
+
+// Per-band terrain material recipes (index-aligned with THEMES). The Kenney
+// dirt cell is the structural base everywhere — these veils/grains turn it
+// into brown garden dirt (day), stratified sandstone (dusk) and dark mossy
+// earth (jungle) so the three bands never share a material again.
+const TERRAIN_MATS = [
+    {
+        // Day: keep the sheet's warm brown, just deepen the speckle.
+        veil: null,
+        grain: 'dark',           // scattered dark specks (the original look)
+        interiorVeil: 'rgba(24,14,6,0.24)'
+    },
+    {
+        // Dusk: amber sandstone with horizontal strata, blockier faces.
+        veil: 'rgba(226,146,78,0.40)',
+        grain: 'strata',
+        interiorVeil: 'rgba(74,32,12,0.26)'
+    },
+    {
+        // Jungle: cool dark mossy earth with vertical grain/root streaks.
+        veil: 'rgba(26,88,56,0.42)',
+        grain: 'vertical',
+        interiorVeil: 'rgba(4,30,16,0.30)'
     }
 ];
 
@@ -209,6 +267,276 @@ function buildHills(rng, w, h, farColor, nearColor) {
     return c;
 }
 
+// ---------------------------------------------------------------------------
+// Near-background stratum (~0.55 parallax): saturated two-tone silhouettes
+// standing on the horizon between the hill ridges and the ground strip.
+// Distance rule: MORE saturated than the hills but LOW internal contrast and
+// zero gameplay-visual vocabulary (no flat standable tops at gameplay height)
+// so nothing here can be mistaken for terrain. Shapes wrap: each is drawn at
+// x, x-w and x+w so the tiled band is seamless.
+// ---------------------------------------------------------------------------
+const NEARBG_W = 1024;
+const NEARBG_H = 190;
+
+function buildNearBg(rng, themeIdx) {
+    const c = makeCanvas(NEARBG_W, NEARBG_H);
+    const g = c.getContext('2d');
+    const base = NEARBG_H;
+    // Per-band palette: main tone + darker face + lighter accent, all kept
+    // mid-luminance so the gameplay layer stays the brightest thing on screen.
+    const PAL = [
+        { a: '#4f9e63', b: '#43895a', c: '#c2c896', d: '#8f9a6c' }, // day greenery / farm
+        { a: '#c96f4a', b: '#ad5a3a', c: '#bd6a50', d: '#8f4a34' }, // dusk terracotta
+        { a: '#2f7d57', b: '#276b4b', c: '#37946a', d: '#2c7d58' }  // jungle canopy/trunk
+    ][themeIdx];
+    const trunkAt = (x, kind) => {
+        if (kind === 0) {
+            // Tree clump: three canopy blobs on short trunks.
+            for (let i = 0; i < 3; i++) {
+                const bx = x + (i - 1) * 26;
+                const r = 16 + rng() * 10;
+                const cy = base - 26 - r;
+                g.fillStyle = i === 1 ? PAL.a : PAL.b;
+                g.fillRect(bx - 3, base - 26, 6, 26);
+                g.beginPath();
+                g.arc(bx, cy, r, 0, Math.PI * 2);
+                g.fill();
+            }
+        } else if (kind === 1) {
+            // Farm windmill: tapered tower + four-blade cross.
+            const hgt = 90 + rng() * 30;
+            g.fillStyle = PAL.d;
+            g.beginPath();
+            g.moveTo(x - 14, base);
+            g.lineTo(x - 8, base - hgt);
+            g.lineTo(x + 8, base - hgt);
+            g.lineTo(x + 14, base);
+            g.closePath();
+            g.fill();
+            g.fillStyle = PAL.c;
+            const hubY = base - hgt - 6;
+            for (let b = 0; b < 4; b++) {
+                const ang = b * Math.PI / 2 + 0.4;
+                g.save();
+                g.translate(x, hubY);
+                g.rotate(ang);
+                g.fillRect(-2, 0, 5, 34);
+                g.restore();
+            }
+        } else if (kind === 2) {
+            // Hay roll: squat bale with a winding seam hint.
+            g.fillStyle = PAL.c;
+            g.beginPath();
+            g.ellipse(x, base - 14, 20, 14, 0, 0, Math.PI * 2);
+            g.fill();
+            g.strokeStyle = PAL.d;
+            g.lineWidth = 3;
+            g.beginPath();
+            g.ellipse(x, base - 14, 11, 8, 0, 0, Math.PI * 2);
+            g.stroke();
+        } else if (kind === 3) {
+            // Mesa with an eroded arch: blocky top, cut-out opening.
+            const hgt = 80 + rng() * 50;
+            const wHalf = 34 + rng() * 18;
+            g.fillStyle = PAL.a;
+            g.beginPath();
+            g.moveTo(x - wHalf, base);
+            g.lineTo(x - wHalf + 8, base - hgt);
+            g.lineTo(x + wHalf - 8, base - hgt);
+            g.lineTo(x + wHalf, base);
+            g.closePath();
+            g.fill();
+            g.fillStyle = PAL.b;
+            g.fillRect(x + wHalf - 14, base - hgt, 8, hgt);
+            // Arch notch (destination-out punches through to the sky behind).
+            g.save();
+            g.globalCompositeOperation = 'destination-out';
+            g.beginPath();
+            g.arc(x, base, 16, Math.PI, 0);
+            g.rect(x - 16, base - 1, 32, 4);
+            g.fill();
+            g.restore();
+        } else if (kind === 4) {
+            // Ruined tower: notched crown + dark window slit.
+            const hgt = 100 + rng() * 45;
+            g.fillStyle = PAL.c;
+            g.fillRect(x - 16, base - hgt, 32, hgt);
+            for (let n = 0; n < 3; n++) {
+                g.clearRect(x - 16 + n * 11 + 2, base - hgt, 6, 8);
+            }
+            g.fillStyle = PAL.d;
+            g.fillRect(x - 3, base - hgt + 22, 6, 12);
+        } else if (kind === 5) {
+            // Giant tree: flared trunk + heavy canopy mass overhead.
+            const hgt = 120 + rng() * 40;
+            g.fillStyle = PAL.a;
+            g.beginPath();
+            g.moveTo(x - 22, base);
+            g.lineTo(x - 10, base - hgt * 0.55);
+            g.lineTo(x - 12, base - hgt);
+            g.lineTo(x + 12, base - hgt);
+            g.lineTo(x + 10, base - hgt * 0.55);
+            g.lineTo(x + 22, base);
+            g.closePath();
+            g.fill();
+            g.fillStyle = PAL.b;
+            g.fillRect(x - 4, base - hgt, 4, hgt);
+            g.fillStyle = PAL.c;
+            for (let i = 0; i < 3; i++) {
+                g.beginPath();
+                g.ellipse(x + (i - 1) * 30, base - hgt - 6 + (i % 2) * 10,
+                    30, 20, 0, 0, Math.PI * 2);
+                g.fill();
+            }
+        }
+    };
+    // Band-specific item vocabulary; spacing keeps silhouettes from merging
+    // into one wall across the wrap seam.
+    const kinds = themeIdx === 0 ? [0, 1, 2, 0] : themeIdx === 1 ? [3, 4, 3] : [5, 5, 0];
+    let x = 60 + rng() * 120;
+    while (x < NEARBG_W - 60) {
+        const kind = kinds[Math.floor(rng() * kinds.length)];
+        for (const shift of [-NEARBG_W, 0, NEARBG_W]) trunkAt(x + shift, kind);
+        x += 150 + rng() * 170;
+    }
+    return c;
+}
+
+// Foreground silhouette art (per band): three very dark tuft/rock/frond
+// shapes hugging the bottom screen edge. Pure ink — they read as "lens-edge
+// foliage", never as gameplay objects.
+function buildForeArt(themeIdx) {
+    const ink = THEMES[themeIdx].ink;
+    const mk = (w, h, draw) => {
+        const c = makeCanvas(w, h);
+        const g = c.getContext('2d');
+        g.fillStyle = ink;
+        draw(g, w, h);
+        return c;
+    };
+    return [
+        // Grass tuft cluster: overlapping blade triangles.
+        mk(96, 64, (g, w, h) => {
+            const blades = [[6, 30], [18, 48], [32, 26], [46, 58], [60, 34], [74, 46], [86, 24]];
+            for (const [bx, bh] of blades) {
+                g.beginPath();
+                g.moveTo(bx - 5, h);
+                g.lineTo(bx, h - bh);
+                g.lineTo(bx + 5, h);
+                g.closePath();
+                g.fill();
+            }
+        }),
+        // Boulder: low rounded rock.
+        mk(84, 46, (g, w, h) => {
+            g.beginPath();
+            g.moveTo(4, h);
+            g.quadraticCurveTo(10, h * 0.35, w * 0.42, h * 0.18);
+            g.quadraticCurveTo(w * 0.8, h * 0.3, w - 4, h);
+            g.closePath();
+            g.fill();
+        }),
+        // Frond/spike cluster: broad leaves (day/jungle) or agave spikes (dusk).
+        mk(110, 78, (g, w, h) => {
+            const cx = w / 2;
+            for (let i = 0; i < 5; i++) {
+                const lean = (i - 2) * (w * 0.16);
+                g.beginPath();
+                g.moveTo(cx - 4, h);
+                g.quadraticCurveTo(cx + lean * 0.5, h * 0.4, cx + lean, h * 0.08);
+                g.quadraticCurveTo(cx + lean * 0.5 + 6, h * 0.5, cx + 4, h);
+                g.closePath();
+                g.fill();
+            }
+        })
+    ];
+}
+
+// Horizon haze: a slim vertical-gradient strip (transparent above -> band
+// mist colour at the horizon), blitted stretched across the viewport. Baked
+// once per theme; the per-frame cost is one drawImage, no gradient objects.
+const HAZE_H = 80;
+function buildHaze(themeIdx) {
+    const c = makeCanvas(4, HAZE_H);
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, HAZE_H);
+    grad.addColorStop(0, withAlpha(THEMES[themeIdx].haze, 0));
+    grad.addColorStop(1, withAlpha(THEMES[themeIdx].haze, 0.38));
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 4, HAZE_H);
+    return c;
+}
+
+// Signature props per band (one larger identity object standing on exposed
+// ground where there is >=3 tiles of headroom): day lone tree, dusk saguaro,
+// jungle bamboo cluster. Baked at final pixel size; canopy/arms stay within
+// 3 tiles so they can never visually block a jump arc (placement rule in
+// _ensureDecor enforces the clearance).
+const PROP_H = 92; // <= 3 tiles at TILE_SIZE 32
+function buildPropArt(themeIdx) {
+    const variants = [];
+    for (let v = 0; v < 2; v++) {
+        const rng = makeRng(0xBEEF00 + themeIdx * 31 + v * 7);
+        if (themeIdx === 0) {
+            // Tree: warm trunk, three-blob canopy, bare lower trunk so the
+            // walk line stays readable through it.
+            const c = makeCanvas(64, PROP_H);
+            const g = c.getContext('2d');
+            g.fillStyle = '#6b4a2e';
+            g.fillRect(29, PROP_H - 44, 6, 44);
+            g.fillRect(24, PROP_H - 52, 16, 10);
+            const blobs = [[20, 30], [40, 26], [30, 16]];
+            for (const [bx, by] of blobs) {
+                g.fillStyle = by < 20 ? '#4c8f3a' : '#3f7d31';
+                g.beginPath();
+                g.arc(bx + (rng() - 0.5) * 6, by + (rng() - 0.5) * 6, 17 + rng() * 5, 0, Math.PI * 2);
+                g.fill();
+            }
+            variants.push(c);
+        } else if (themeIdx === 1) {
+            // Saguaro: ribbed column with one or two raised arms.
+            const c = makeCanvas(44, PROP_H);
+            const g = c.getContext('2d');
+            g.fillStyle = '#5d8a4e';
+            g.fillRect(18, 14, 9, PROP_H - 14);
+            g.beginPath();
+            g.arc(22.5, 14, 4.5, 0, Math.PI * 2);
+            g.fill();
+            const arm = (dir) => {
+                const ax = dir < 0 ? 8 : 30;
+                const ay = 34 + rng() * 18;
+                g.fillRect(dir < 0 ? 12 : 26, ay, 12, 6);
+                g.fillRect(ax, ay - 16, 6, 22);
+                g.beginPath();
+                g.arc(ax + 3, ay - 16, 3, 0, Math.PI * 2);
+                g.fill();
+            };
+            arm(-1);
+            if (v === 1) arm(1);
+            g.fillStyle = 'rgba(30,52,26,0.35)';
+            g.fillRect(21, 16, 1, PROP_H - 18);
+            variants.push(c);
+        } else {
+            // Bamboo cluster: three segmented culms with leaf dabs.
+            const c = makeCanvas(36, PROP_H);
+            const g = c.getContext('2d');
+            for (let s = 0; s < 3; s++) {
+                const sx = 6 + s * 11 + (rng() - 0.5) * 4;
+                const top = 6 + rng() * 14;
+                g.fillStyle = s === 1 ? '#5f9e52' : '#4c8a46';
+                g.fillRect(sx, top, 4, PROP_H - top);
+                g.fillStyle = 'rgba(20,60,30,0.5)';
+                for (let n = top + 8; n < PROP_H - 4; n += 12) g.fillRect(sx, n, 4, 2);
+                g.fillStyle = '#6fb45e';
+                g.fillRect(sx - 4, top + 2, 5, 2);
+                g.fillRect(sx + 4, top + 8, 5, 2);
+            }
+            variants.push(c);
+        }
+    }
+    return variants;
+}
+
 // Sun/moon: crisp core disc inside a soft radial halo, baked once per level
 // (drawn with a slow ~2%-of-scroll parallax drift, never wraps).
 function buildDisc(disc) {
@@ -286,8 +614,13 @@ export class Sprites {
         this._skyCache = [null, null, null];
         // Prerendered atmosphere layers for the current level.
         this._backdrop = null;
-        // Speckled dirt tile variants (built once after the sheet loads).
-        this._dirtVariants = null;
+        // Per-theme terrain material sets (body/interior variants + cap).
+        this._terrainArt = [null, null, null];
+        // Per-theme foreground silhouette art + signature prop canvases.
+        this._foreArt = [null, null, null];
+        this._propArt = [null, null, null];
+        // Screen-space vignette gradient, rebuilt only on viewport resize.
+        this._vigCache = [null, null, null];
         // Grass-top decor list, rebuilt only when the level instance swaps.
         this._decor = [];
         this._decorSource = null;
@@ -340,8 +673,9 @@ export class Sprites {
         return grad;
     }
 
-    // Per-level atmosphere kit: sun/moon disc + three cloud bands + twin
-    // hill ridges, all baked into offscreen canvases from a level-seeded
+    // Per-level atmosphere kit: sun/moon disc + three cloud bands + twin hill
+    // ridges + near-background biome structures + horizon haze + foreground
+    // placement list, all baked into offscreen canvases from a level-seeded
     // PRNG. Rebuilt only when the level number changes (once per level).
     _ensureBackdrop(levelNumber, themeIdx) {
         if (this._backdrop && this._backdrop.levelNumber === levelNumber) {
@@ -349,13 +683,33 @@ export class Sprites {
         }
         const theme = THEMES[themeIdx];
         const rng = makeRng(Math.imul(levelNumber, 0x9E3779B1) ^ 0xA17AC391);
+        // Foreground tuft placements live on the same 1024px wrap band as the
+        // silhouettes; sparse on purpose (the strip frames play, never fills).
+        const fore = [];
+        const foreCount = 5 + Math.floor(rng() * 3);
+        for (let i = 0; i < foreCount; i++) {
+            fore.push({
+                a: Math.floor(rng() * 3),
+                x: rng() * NEARBG_W,
+                // Scale cap 1.15 (review F-1): at zoom=1 the tallest tufts
+                // from the old 1.35 ceiling grazed the lowest standing plane
+                // by ~3px, blurring the foreground/gameplay separation the
+                // strip exists to create.
+                s: 0.65 + rng() * 0.5,
+                ph: rng() * Math.PI * 2,
+                k: 0.6 + rng() * 0.8
+            });
+        }
         this._backdrop = {
             levelNumber,
             disc: buildDisc(theme.disc),
             cloudsFar: buildCloudBand(rng, 1024, 110, 5, theme.cloud, 0.5),
             cloudsMid: buildCloudBand(rng, 1024, 130, 7, theme.cloud, 0.72),
             cloudsLow: buildCloudBand(rng, 1024, 80, 6, theme.cloud, 0.45),
-            hills: buildHills(rng, 1024, 170, theme.hillFar, theme.hillNear)
+            hills: buildHills(rng, 1024, 170, theme.hillFar, theme.hillNear),
+            nearBg: buildNearBg(rng, themeIdx),
+            fore,
+            haze: buildHaze(themeIdx)
         };
         return this._backdrop;
     }
@@ -391,6 +745,9 @@ export class Sprites {
         this._blitWrapped(ctx, bd.cloudsMid, cameraX * 0.25, viewH * 0.2, viewW);
         this._blitWrapped(ctx, bd.hills, cameraX * 0.35,
             bandY - bd.hills.height + 12, viewW);
+        // Horizon mist fogs the ridgeline (distance cue) before anything
+        // nearer draws over it.
+        ctx.drawImage(bd.haze, 0, bandY - HAZE_H, viewW, HAZE_H);
         // Low wisps in FRONT of the hills: reads as weather passing the
         // ridgeline, one more depth layer for free.
         this._blitWrapped(ctx, bd.cloudsLow, cameraX * 0.40,
@@ -404,6 +761,14 @@ export class Sprites {
             ctx.fillStyle = theme.ground;
             ctx.fillRect(0, bandY + groundH, viewW, viewH - bandY - groundH);
         }
+        // Near-background biome structures (factor 0.55 — nearer than the
+        // ground strip they stand on): windmill/hayrolls/tree clumps by day,
+        // mesa arches + ruined towers at dusk, giant trunks in the jungle.
+        // Saturated but low-contrast silhouettes rooted at the horizon, so
+        // they never occupy gameplay heights where a platform could be
+        // mistaken for one.
+        this._blitWrapped(ctx, bd.nearBg, cameraX * 0.55,
+            bandY - bd.nearBg.height + 14, viewW);
     }
 
     _blitWrapped(ctx, canvas, scrollPx, y, viewW) {
@@ -425,50 +790,269 @@ export class Sprites {
         }
     }
 
-    // Four speckled variants of the dirt tile, baked once: the tile-grid hash
-    // picks a variant per tile, so masses get stable texture variation
-    // without per-frame speckle draws and without flicker.
-    _buildDirtVariants() {
+    // World-space mood wash (light & mood pass): a per-band translucent veil
+    // over everything drawn so far this frame — sky, parallax strata, terrain
+    // material and props — unifying the palette. Call it inside the world
+    // transform BETWEEN drawWorld and the entity pass: entities (coins,
+    // enemies, player) paint afterwards at full contrast, preserving the
+    // hazard-readability ruling. The rect is padded past the viewport so the
+    // death shake never exposes an untinted edge.
+    drawMoodTint(ctx, levelNumber, cameraX, cameraY, effW, effH) {
+        const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+        ctx.fillStyle = theme.mood;
+        ctx.fillRect(cameraX - 16, -cameraY - 16, effW + 32, effH + 32);
+    }
+
+    // Foreground silhouette strip (~1.15 parallax, screen space): sparse dark
+    // tufts/rocks/fronds hugging the very bottom viewport edge with a lazy
+    // sway. They frame the play area from the near side; they never enter the
+    // camera's gameplay band centre or the HUD corner.
+    drawForeground(ctx, levelNumber, cameraX, viewW, viewH) {
+        const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+        const bd = this._ensureBackdrop(levelNumber, themeIdx);
+        const art = this._foreArt[themeIdx] ?? buildForeArt(themeIdx);
+        this._foreArt[themeIdx] = art;
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        const base = wrapOffset(Math.round(cameraX * 1.15), NEARBG_W);
+        const reps = Math.ceil(viewW / NEARBG_W) + 1;
+        for (const f of bd.fore) {
+            const img = art[f.a];
+            const w = img.width * f.s;
+            const h = img.height * f.s;
+            for (let rep = 0; rep <= reps; rep++) {
+                const sx = base + f.x + rep * NEARBG_W;
+                if (sx < -w || sx > viewW + w) continue;
+                ctx.save();
+                ctx.translate(sx, viewH + 2);
+                ctx.rotate(Math.sin(this.clock * f.k + f.ph) * 0.03);
+                ctx.drawImage(img, -w / 2, -h + 4, w, h);
+                ctx.restore();
+            }
+        }
+        ctx.restore();
+    }
+
+    // Very subtle screen-space vignette (corner alpha <= 0.12): pulls focus
+    // toward the centre without dimming anything the player must react to.
+    // Gradient rebuilt only when the viewport size changes.
+    drawVignette(ctx, levelNumber, viewW, viewH) {
+        const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+        const theme = THEMES[themeIdx];
+        let entry = this._vigCache[themeIdx];
+        if (!entry || entry.w !== viewW || entry.h !== viewH) {
+            const grad = ctx.createRadialGradient(
+                viewW / 2, viewH * 0.46, Math.min(viewW, viewH) * 0.42,
+                viewW / 2, viewH * 0.46, Math.max(viewW, viewH) * 0.72);
+            grad.addColorStop(0, 'rgba(8,10,20,0)');
+            grad.addColorStop(1, withAlpha('#0a0e1c', theme.vignette));
+            entry = this._vigCache[themeIdx] = { w: viewW, h: viewH, grad };
+        }
+        ctx.fillStyle = entry.grad;
+        ctx.fillRect(0, 0, viewW, viewH);
+    }
+
+    // Per-theme terrain art: four surface/body variants + two interior
+    // variants + a baked surface cap, all derived once from the sheet's dirt
+    // cell through the TERRAIN_MATS recipe (veil colour + directional grain).
+    // The tile-grid hash picks a variant, so masses get stable texture
+    // variation without per-frame draws and without flicker. Interior tiles
+    // (solid on all four sides) use the darker, flatter variants: exposed
+    // faces carry detail, buried mass reads as deep volume.
+    _ensureTerrainArt(themeIdx) {
+        if (this._terrainArt[themeIdx]) return this._terrainArt[themeIdx];
+        const mat = TERRAIN_MATS[themeIdx];
         const rect = sheetRect('tiles', TILES.DIRT);
-        const variants = [];
-        for (let v = 0; v < 4; v++) {
+        const bakeBody = (v, interior) => {
             const c = makeCanvas(rect.sw, rect.sh);
             const g = c.getContext('2d');
             g.drawImage(this.images.tiles, rect.sx, rect.sy, rect.sw, rect.sh,
                 0, 0, rect.sw, rect.sh);
-            const rng = makeRng(0xD117E ^ Math.imul(v + 1, 0x9E3779B1));
-            for (let i = 0; i < 4; i++) {
-                // Mostly dark grain, one light fleck per variant.
-                g.fillStyle = i === 3 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.16)';
-                g.fillRect(Math.floor(rng() * (rect.sw - 2)),
-                    Math.floor(rng() * (rect.sh - 2)), 2, 2);
+            if (mat.veil) {
+                g.fillStyle = mat.veil;
+                g.fillRect(0, 0, rect.sw, rect.sh);
             }
-            variants.push(c);
-        }
-        this._dirtVariants = variants;
-        return variants;
+            const rng = makeRng(0xD117E ^ Math.imul(v + 1 + (interior ? 97 : 0), 0x9E3779B1));
+            if (mat.grain === 'dark') {
+                for (let i = 0; i < 4; i++) {
+                    // Mostly dark grain, one light fleck per variant.
+                    g.fillStyle = i === 3 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.16)';
+                    g.fillRect(Math.floor(rng() * (rect.sw - 2)),
+                        Math.floor(rng() * (rect.sh - 2)), 2, 2);
+                }
+            } else if (mat.grain === 'strata') {
+                // Horizontal sediment lines: two dark beds + one lit seam.
+                for (let i = 0; i < 2; i++) {
+                    const y = 2 + Math.floor(rng() * (rect.sh - 4));
+                    g.fillStyle = 'rgba(112,54,26,0.30)';
+                    g.fillRect(0, y, rect.sw, 1 + (rng() < 0.4 ? 1 : 0));
+                }
+                g.fillStyle = 'rgba(255,226,178,0.16)';
+                g.fillRect(0, 1 + Math.floor(rng() * (rect.sh - 2)), rect.sw, 1);
+                // Chipped corners keep the blocky faces from looking stamped.
+                g.fillStyle = 'rgba(96,44,20,0.24)';
+                g.fillRect(Math.floor(rng() * (rect.sw - 3)),
+                    Math.floor(rng() * (rect.sh - 3)), 3, 2);
+            } else {
+                // Vertical grain: root streaks down the whole cell. Two
+                // soft streaks (not three hard ones) so tiled masses never
+                // pulse into a picket-fence rhythm.
+                for (let i = 0; i < 2; i++) {
+                    g.fillStyle = 'rgba(8,42,24,0.18)';
+                    g.fillRect(Math.floor(rng() * (rect.sw - 2)), 0, 2, rect.sh);
+                }
+                g.fillStyle = 'rgba(198,232,176,0.10)';
+                g.fillRect(Math.floor(rng() * rect.sw), 0, 1, rect.sh);
+            }
+            if (interior) {
+                // Buried: flatten the texture back out under a deep veil.
+                g.fillStyle = mat.interiorVeil;
+                g.fillRect(0, 0, rect.sw, rect.sh);
+            }
+            return c;
+        };
+        const body = [];
+        for (let v = 0; v < 4; v++) body.push(bakeBody(v, false));
+        const interior = [bakeBody(0, true), bakeBody(1, true)];
+        this._terrainArt[themeIdx] = { body, interior, cap: this._buildCapArt(themeIdx) };
+        return this._terrainArt[themeIdx];
     }
 
-    // Grass-top decor list: tufts, flowers and pebbles on exposed surfaces,
-    // precomputed ONCE per level instance from a level-seeded PRNG and reused
-    // every frame. Skips cells capped by anything (only pure sky above) and
-    // cells with a spike overhead, so decor never crowds a hazard.
+    // Surface cap strip baked at source resolution (18px wide): rows above
+    // CAP_OVER hang into the air cell (grass blades / moss fringe), rows below
+    // form the standable lip. Each band gets its own material voice: bright
+    // grass over the sheet cap (day), stratified sandstone steps (dusk),
+    // mossy greens with hanging filaments (jungle).
+    _buildCapArt(themeIdx) {
+        const c = makeCanvas(18, CAP_H);
+        const g = c.getContext('2d');
+        const rng = makeRng(0xCAFE0 + themeIdx * 7919);
+        if (themeIdx === 0) {
+            // Day: the sheet's verified grass band, lifted below the blades.
+            const cap = sheetRect('tiles', TILES.GRASS_TOP);
+            g.drawImage(this.images.tiles,
+                cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H,
+                0, CAP_OVER, 18, GRASS_BAND_H);
+            for (let i = 0; i < 4; i++) {
+                g.fillStyle = i % 2 ? '#7cc24e' : '#5aa03c';
+                g.fillRect(Math.floor(rng() * 17), CAP_OVER - (2 + Math.floor(rng() * 3)),
+                    1, 2 + Math.floor(rng() * 3));
+            }
+        } else if (themeIdx === 1) {
+            // Dusk: sunlit sandstone lip stepping down through strata.
+            g.fillStyle = '#f4cf94'; g.fillRect(0, CAP_OVER, 18, 2);
+            g.fillStyle = '#d99a5e'; g.fillRect(0, CAP_OVER + 2, 18, 2);
+            g.fillStyle = '#b06a3c'; g.fillRect(0, CAP_OVER + 4, 18, 2);
+            g.fillStyle = '#8f5230'; g.fillRect(0, CAP_OVER + 6, 18, 2);
+            // Blocky tonal breaks so stacked caps never look like one rail.
+            for (let i = 0; i < 3; i++) {
+                g.fillStyle = 'rgba(122,62,30,0.5)';
+                g.fillRect(Math.floor(rng() * 14), CAP_OVER + 1 + Math.floor(rng() * 6),
+                    2 + Math.floor(rng() * 3), 1);
+            }
+        } else {
+            // Jungle: bright moss dabs over a deep green body, filaments up.
+            g.fillStyle = '#4c8f4e'; g.fillRect(0, CAP_OVER, 18, 3);
+            g.fillStyle = '#2f6b3e'; g.fillRect(0, CAP_OVER + 3, 18, 3);
+            g.fillStyle = '#20502f'; g.fillRect(0, CAP_OVER + 6, 18, 2);
+            for (let i = 0; i < 5; i++) {
+                g.fillStyle = i % 2 ? '#77c46a' : '#8fd47e';
+                g.fillRect(Math.floor(rng() * 16), CAP_OVER, 2, 1);
+            }
+            for (let i = 0; i < 3; i++) {
+                g.fillStyle = '#3f7d43';
+                g.fillRect(Math.floor(rng() * 17), CAP_OVER - (2 + Math.floor(rng() * 2)),
+                    1, 2 + Math.floor(rng() * 2));
+            }
+        }
+        return c;
+    }
+
+    // Prop scatter list: small growth (per-band kinds), signature props
+    // (lone tree / saguaro / bamboo) and jungle ceiling vines, precomputed
+    // ONCE per level instance from a level-seeded PRNG and reused every
+    // frame. Exclusion rules: only pure sky above (never under an overhang
+    // or next to stacked terrain), never within one cell of a spike, and
+    // signature props additionally need three clear tiles of headroom plus a
+    // two-cell spike margin — decoration must never crowd a hazard or block
+    // a jump line.
     _ensureDecor(level) {
         if (this._decorSource === level) return this._decor;
         const decor = [];
+        const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
         const rng = makeRng(Math.imul(level.levelNumber, 0x51F3B6A1) ^ 0xB3D7B9F2);
+        const spikeNear = (tx, ty, r) => {
+            for (let y = ty - r; y <= ty + r; y++) {
+                if (y < 0 || y >= level.height) continue;
+                for (let x = tx - r; x <= tx + r; x++) {
+                    if (x < 0 || x >= level.width) continue;
+                    if (level.tiles[y][x] === 2) return true;
+                }
+            }
+            return false;
+        };
+        const openAbove = (tx, ty, n) => {
+            for (let y = ty - n; y < ty; y++) {
+                if (y < 0 || level.tiles[y][tx] !== 0) return false;
+            }
+            return true;
+        };
+        // Cumulative kind picks per band (small growth only).
+        const KINDS = [
+            [['tuft', 0.5], ['flower', 0.3], ['pebble', 0.2]],
+            [['cactus', 0.4], ['pebbles', 0.35], ['bones', 0.25]],
+            [['mushroom', 0.4], ['fern', 0.35], ['pebble', 0.25]]
+        ][themeIdx];
+        const SIGNATURE = ['tree', 'bigcactus', 'bamboo'][themeIdx];
         for (let ty = 1; ty < level.height; ty++) {
             for (let tx = 0; tx < level.width; tx++) {
                 if (level.tiles[ty][tx] !== 1 || level.tiles[ty - 1][tx] !== 0) continue;
-                if (rng() > 0.34) continue;
-                const roll = rng();
-                decor.push({
-                    tx,
-                    ty,
-                    kind: roll < 0.5 ? 'tuft' : roll < 0.8 ? 'flower' : 'pebble',
-                    ox: Math.floor(rng() * 18),
-                    petal: Math.floor(rng() * FLOWER_COLORS.length)
-                });
+                if (spikeNear(tx, ty, 1)) continue;
+                if (rng() <= 0.34) {
+                    let roll = rng();
+                    let kind = KINDS[KINDS.length - 1][0];
+                    for (const [name, weight] of KINDS) {
+                        if (roll < weight) { kind = name; break; }
+                        roll -= weight;
+                    }
+                    decor.push({
+                        tx, ty, kind,
+                        ox: Math.floor(rng() * 18),
+                        petal: Math.floor(rng() * FLOWER_COLORS.length),
+                        ph: rng() * Math.PI * 2
+                    });
+                } else if (rng() <= 0.05 && openAbove(tx, ty, 3) && !spikeNear(tx, ty, 2)) {
+                    // Signature prop: identity object with guaranteed air
+                    // space above so its silhouette can never be mistaken
+                    // for, or obstruct, a platform hop.
+                    decor.push({
+                        tx, ty, kind: SIGNATURE,
+                        ox: 0, petal: 0,
+                        v: Math.floor(rng() * 2),
+                        ph: rng() * Math.PI * 2
+                    });
+                }
+            }
+        }
+        // Jungle-only ceiling vines: hang from ledge undersides into open
+        // air. Separate RNG stream so adding them never perturbs the ground
+        // scatter sequence.
+        if (themeIdx === 2) {
+            const vrng = makeRng((Math.imul(level.levelNumber, 0x51F3B6A1) ^ 0xB3D7B9F2) + 1);
+            for (let ty = 0; ty < level.height - 1; ty++) {
+                for (let tx = 0; tx < level.width; tx++) {
+                    if (level.tiles[ty][tx] !== 1 || level.tiles[ty + 1][tx] !== 0) continue;
+                    if (vrng() > 0.16 || spikeNear(tx, ty + 1, 1)) continue;
+                    let len = 1 + Math.floor(vrng() * 3);
+                    while (len > 0 && ty + 1 + len < level.height &&
+                        level.tiles[ty + 1 + len][tx] !== 0) len--;
+                    if (len <= 0) continue;
+                    decor.push({
+                        tx, ty: ty + 1, kind: 'vine',
+                        ox: 4 + Math.floor(vrng() * 20), petal: 0,
+                        len, ph: vrng() * Math.PI * 2
+                    });
+                }
             }
         }
         this._decorSource = level;
@@ -477,41 +1061,53 @@ export class Sprites {
     }
 
     // Terrain from the tile grid with viewport culling: exposed solids get
-    // the grass cap, buried ones the hashed speckled dirt variant. Spikes
-    // draw as the tooth tile filling their cell. Readability passes (rim
-    // light, mass-edge shading, decor) run as separate fill-style batches so
+    // the band's baked surface cap, buried ones the hashed speckled body
+    // variant, and fully-enclosed tiles the darker flat interior variant
+    // (detail on exposed faces, volume in the mass). Spikes draw as the
+    // tooth tile filling their cell. Readability passes (rim light,
+    // mass-edge shading, decor) run as separate fill-style batches so
     // fillStyle never thrashes per tile.
     drawWorld(ctx, level, cameraX, cameraY, viewW, viewH) {
         // Entity drop shadows probe this grid; drawWorld precedes every
         // entity draw in main.js's frame order.
         this._level = level;
         const size = level.tileSize;
+        const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
+        const art = this._ensureTerrainArt(themeIdx);
         // +1px destination overlap: 18px source scaled to a fractional CSS
         // pixel size would otherwise leave hairline gaps between columns
         // (the nearest-neighbour rounding floors each rect independently).
         const drawn = size + 1;
+        const capScale = drawn / 18;
         const c0 = Math.max(0, Math.floor(cameraX / size));
         const c1 = Math.min(level.width - 1, Math.ceil((cameraX + viewW) / size));
         const r0 = Math.max(0, Math.floor(-cameraY / size));
         const r1 = Math.min(level.height - 1, Math.ceil((-cameraY + viewH) / size));
-        const dirt = this._dirtVariants ?? this._buildDirtVariants();
 
         for (let ty = r0; ty <= r1; ty++) {
             for (let tx = c0; tx <= c1; tx++) {
                 const t = level.tiles[ty][tx];
                 if (t === 1) {
                     const above = ty > 0 ? level.tiles[ty - 1][tx] : 0;
-                    ctx.drawImage(dirt[hash2(tx, ty) & 3],
-                        0, 0, 18, 18, tx * size, ty * size, drawn, drawn);
+                    const below = ty < level.height - 1 ? level.tiles[ty + 1][tx] : 0;
+                    const left = tx > 0 ? level.tiles[ty][tx - 1] : 0;
+                    const right = tx < level.width - 1 ? level.tiles[ty][tx + 1] : 0;
+                    const h = hash2(tx, ty);
+                    if (above === 1 && below === 1 && left === 1 && right === 1) {
+                        ctx.drawImage(art.interior[h & 1],
+                            0, 0, 18, 18, tx * size, ty * size, drawn, drawn);
+                    } else {
+                        ctx.drawImage(art.body[h & 3],
+                            0, 0, 18, 18, tx * size, ty * size, drawn, drawn);
+                    }
                     if (above !== 1) {
-                        // Exposed surface: overlay only the green band of
-                        // the cap tile (source rows 2..8). The full cap cell
-                        // carries baked dark top/bottom borders which read
-                        // as black seams when tiles stack.
-                        const cap = sheetRect('tiles', TILES.GRASS_TOP);
-                        ctx.drawImage(this.images.tiles,
-                            cap.sx, cap.sy + GRASS_BAND_Y, cap.sw, GRASS_BAND_H,
-                            tx * size, ty * size, drawn, size * GRASS_BAND_H / GRASS_BAND_SRC);
+                        // Exposed surface: the band's baked cap — grass blades
+                        // over the sheet green (day), stratified sandstone lip
+                        // (dusk), mossy fringe with filaments (jungle). Rows
+                        // above the tile line hang into the air cell.
+                        ctx.drawImage(art.cap,
+                            tx * size, ty * size - CAP_OVER * capScale,
+                            drawn, art.cap.height * capScale);
                     }
                 } else if (t === 2) {
                     // Stretch the tooth band (source rows 9..17 — measured
@@ -530,7 +1126,8 @@ export class Sprites {
 
         // Surface rim light: a 2px sheen along every exposed top edge makes
         // the standable line instantly readable against both sky and dirt.
-        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        // Tinted per band (white day sun, warm dusk lip-light, pale moss).
+        ctx.fillStyle = THEMES[themeIdx].rim;
         for (let ty = r0; ty <= r1; ty++) {
             for (let tx = c0; tx <= c1; tx++) {
                 if (level.tiles[ty][tx] !== 1) continue;
@@ -558,27 +1155,127 @@ export class Sprites {
             }
         }
 
-        this._drawDecor(ctx, this._ensureDecor(level), size, c0, c1);
+        this._drawDecor(ctx, this._ensureDecor(level), size, c0, c1, themeIdx);
     }
 
-    _drawDecor(ctx, decor, size, c0, c1) {
+    // Per-band prop palettes. Every hue here sits BELOW the spike/enemy
+    // contrast floor by construction: muted mid-tones, no bright metal or
+    // white teeth, so gameplay readability law holds everywhere.
+    _drawDecor(ctx, decor, size, c0, c1, themeIdx) {
+        const clock = this.clock;
+        const stone = ['#8f9aa3', '#a5765a', '#5d7263'][themeIdx];
         for (const d of decor) {
             if (d.tx < c0 || d.tx > c1) continue;
             const x = d.tx * size + d.ox;
             const y = d.ty * size;
-            if (d.kind === 'tuft') {
-                ctx.fillStyle = '#3f7d31';
-                ctx.fillRect(x, y - 6, 2, 6);
-                ctx.fillRect(x + 3, y - 9, 2, 9);
-                ctx.fillRect(x + 6, y - 5, 2, 5);
-            } else if (d.kind === 'flower') {
-                ctx.fillStyle = '#3f7d31';
-                ctx.fillRect(x + 1, y - 7, 2, 7);
-                ctx.fillStyle = FLOWER_COLORS[d.petal];
-                ctx.fillRect(x, y - 11, 5, 4);
-            } else {
-                ctx.fillStyle = '#8f9aa3';
-                ctx.fillRect(x, y - 3, 5, 3);
+            switch (d.kind) {
+                case 'tuft':
+                    ctx.fillStyle = '#3f7d31';
+                    ctx.fillRect(x, y - 6, 2, 6);
+                    ctx.fillRect(x + 3, y - 9, 2, 9);
+                    ctx.fillRect(x + 6, y - 5, 2, 5);
+                    break;
+                case 'flower': {
+                    const rot = Math.sin(clock * 2.2 + d.ph) * 0.06;
+                    ctx.save();
+                    ctx.translate(x + 2, y);
+                    ctx.rotate(rot);
+                    ctx.fillStyle = '#3f7d31';
+                    ctx.fillRect(-1, -7, 2, 7);
+                    ctx.fillStyle = FLOWER_COLORS[d.petal];
+                    ctx.fillRect(-2, -11, 5, 4);
+                    ctx.restore();
+                    break;
+                }
+                case 'pebble':
+                    ctx.fillStyle = stone;
+                    ctx.fillRect(x, y - 3, 5, 3);
+                    break;
+                case 'cactus': {
+                    const rot = Math.sin(clock * 1.1 + d.ph) * 0.02;
+                    ctx.save();
+                    ctx.translate(x + 2, y);
+                    ctx.rotate(rot);
+                    ctx.fillStyle = '#5d8a4e';
+                    ctx.fillRect(-2, -12, 4, 12);
+                    ctx.fillRect(-5, -8, 3, 3);
+                    ctx.fillRect(3, -10, 3, 3);
+                    ctx.fillStyle = 'rgba(28,52,24,0.35)';
+                    ctx.fillRect(-1, -11, 1, 11);
+                    ctx.restore();
+                    break;
+                }
+                case 'pebbles':
+                    ctx.fillStyle = stone;
+                    ctx.fillRect(x, y - 3, 6, 3);
+                    ctx.fillRect(x + 7, y - 2, 4, 2);
+                    ctx.fillRect(x - 4, y - 2, 3, 2);
+                    break;
+                case 'bones':
+                    ctx.fillStyle = '#e8dcc0';
+                    ctx.fillRect(x, y - 2, 13, 2);
+                    ctx.fillRect(x + 2, y - 5, 2, 4);
+                    ctx.fillRect(x + 6, y - 5, 2, 4);
+                    ctx.fillRect(x + 10, y - 4, 2, 3);
+                    break;
+                case 'mushroom':
+                    ctx.fillStyle = '#d8c9a8';
+                    ctx.fillRect(x + 1, y - 5, 3, 5);
+                    ctx.fillRect(x + 7, y - 3, 2, 3);
+                    ctx.fillStyle = '#b06a4a';
+                    ctx.fillRect(x - 1, y - 8, 7, 4);
+                    ctx.fillRect(x + 5, y - 5, 6, 3);
+                    ctx.fillStyle = '#f2e6cc';
+                    ctx.fillRect(x + 1, y - 7, 2, 1);
+                    break;
+                case 'fern': {
+                    const rot = Math.sin(clock * 1.6 + d.ph) * 0.07;
+                    ctx.save();
+                    ctx.translate(x + 4, y);
+                    ctx.rotate(rot);
+                    ctx.fillStyle = '#3f8f52';
+                    for (const lean of [-6, 0, 6]) {
+                        ctx.beginPath();
+                        ctx.moveTo(-1, 0);
+                        ctx.lineTo(lean, -13);
+                        ctx.lineTo(2, 0);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                    break;
+                }
+                case 'vine': {
+                    const rot = Math.sin(clock * 1.0 + d.ph) * 0.03;
+                    ctx.save();
+                    ctx.translate(x + 1, y);
+                    ctx.rotate(rot);
+                    const L = d.len * size - 6;
+                    ctx.fillStyle = '#2f6b3e';
+                    ctx.fillRect(-1, 0, 2, L);
+                    ctx.fillStyle = '#4c8f4e';
+                    for (let s = 8; s < L - 2; s += 12) {
+                        const side = ((s / 12) | 0) % 2 ? 1 : -4;
+                        ctx.fillRect(side, s, 5, 2);
+                    }
+                    ctx.restore();
+                    break;
+                }
+                default: {
+                    // Signature props: baked identity art, gentle sway about
+                    // the base. Canopy/arms live above the walk line inside
+                    // the guaranteed 3-tile headroom.
+                    const arts = this._propArt[themeIdx] ?? buildPropArt(themeIdx);
+                    this._propArt[themeIdx] = arts;
+                    const img = arts[d.v];
+                    const k = d.kind === 'bamboo' ? 1.3 : d.kind === 'tree' ? 0.9 : 1.1;
+                    const amp = d.kind === 'bamboo' ? 0.02 : 0.012;
+                    ctx.save();
+                    ctx.translate(d.tx * size + size / 2, y);
+                    ctx.rotate(Math.sin(clock * k + d.ph) * amp);
+                    ctx.drawImage(img, -img.width / 2, -img.height + 2);
+                    ctx.restore();
+                }
             }
         }
     }
@@ -661,9 +1358,13 @@ export class Sprites {
         const cy = feetY - h / 2;
         // Slow pulsing aura: locked it smoulders dim, unlocked it breathes —
         // the gate's state is legible at a glance, time-based not frame-based.
+        // The unlocked hue harmonises with the level's band (violet day, rose
+        // dusk, mint jungle); the locked grey-violet stays band-neutral so the
+        // "not yet" read never changes meaning between biomes.
         const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.8);
         ctx.globalAlpha = unlocked ? 0.32 + 0.26 * pulse : 0.12;
-        const glow = this._glowSprite(unlocked ? '#b06cf0' : '#8a7fa8');
+        const themeIdx = (Math.max(1, this._level?.levelNumber ?? 1) - 1) % THEMES.length;
+        const glow = this._glowSprite(unlocked ? THEMES[themeIdx].portalGlow : '#8a7fa8');
         const gs = 96 + 14 * pulse;
         ctx.drawImage(glow, cx - gs / 2, cy - gs / 2, gs, gs);
         ctx.globalAlpha = 1;

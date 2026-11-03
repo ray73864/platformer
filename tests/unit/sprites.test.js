@@ -120,3 +120,93 @@ test("Sprites never becomes ready without an image loader and tolerates advance"
     sprites.advance(0.1);
     expect(sprites.clock).toBeCloseTo(0.2, 6);
 });
+
+// ---------------------------------------------------------------------------
+// Visual-overhaul wave 1: biome identity fields + decor placement invariants.
+// The scatter is pure data until it draws, so these rules hold headlessly —
+// op-log equality like the enemy-draw determinism tests above.
+// ---------------------------------------------------------------------------
+test("themes carry biome-identity fields with hazard-safe values", () => {
+    for (const t of THEMES) {
+        for (const key of ['rim', 'mood', 'haze', 'portalGlow', 'ink', 'dust']) {
+            expect(typeof t[key], `${key} present`).toBe('string');
+            expect(t[key].length).toBeGreaterThan(3);
+        }
+        // Vignette stays a whisper: the brief caps corner alpha at 0.12.
+        expect(t.vignette).toBeLessThanOrEqual(0.12);
+        expect(t.vignette).toBeGreaterThan(0);
+    }
+});
+
+function fakeLevel(levelNumber, spikes = []) {
+    const width = 24;
+    const height = 12;
+    const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+    // Ground band rows 8-11 with a couple of bumps; deterministic shape.
+    for (let tx = 0; tx < width; tx++) {
+        const top = 8 - ((tx % 5 === 2) ? 1 : 0);
+        for (let ty = top; ty < height; ty++) tiles[ty][tx] = 1;
+    }
+    for (const [sx, sy] of spikes) tiles[sy][sx] = 2;
+    return { levelNumber, width, height, tiles, tileSize: 32 };
+}
+
+test("decor scatter is deterministic per level instance (two Sprites agree)", () => {
+    const a = new Sprites();
+    const b = new Sprites();
+    const levelA = fakeLevel(6);
+    const levelB = fakeLevel(6);
+    expect(a._ensureDecor(levelA)).toEqual(b._ensureDecor(levelB));
+    // Same instance re-read returns the cached list untouched.
+    const first = a._ensureDecor(levelA).slice();
+    expect(a._ensureDecor(levelA)).toEqual(first);
+});
+
+test("decor never lands on or beside a spike, and signatures keep headroom", () => {
+    const sprites = new Sprites();
+    for (const levelNumber of [1, 2, 3, 6, 8, 9]) {
+        const level = fakeLevel(levelNumber, [[5, 7], [6, 7], [15, 6]]);
+        const decor = sprites._ensureDecor(level);
+        for (const d of decor) {
+            if (d.kind !== 'vine') {
+                for (let y = d.ty - 1; y <= d.ty + 1; y++) {
+                    for (let x = d.tx - 1; x <= d.tx + 1; x++) {
+                        if (y < 0 || y >= level.height || x < 0 || x >= level.width) continue;
+                        expect(level.tiles[y][x],
+                            `L${levelNumber} ${d.kind} at ${d.tx},${d.ty} near spike`).not.toBe(2);
+                    }
+                }
+            }
+            if (['tree', 'bigcactus', 'bamboo'].includes(d.kind)) {
+                for (let y = d.ty - 3; y < d.ty; y++) {
+                    expect(level.tiles[y][d.tx],
+                        `signature ${d.kind} headroom at ${d.tx},${d.ty}`).toBe(0);
+                }
+            }
+            if (d.kind === 'vine') {
+                // Vines hang into open air for their whole length.
+                for (let s = 0; s < d.len; s++) {
+                    const y = d.ty + s;
+                    if (y >= level.height) break;
+                    expect(level.tiles[y][d.tx]).toBe(0);
+                }
+            }
+        }
+    }
+});
+
+test("only jungle levels grow ceiling vines", () => {
+    const sprites = new Sprites();
+    // A dense ceiling row gives the vine pass plenty of candidate undersides.
+    const withCeiling = (n) => {
+        const level = fakeLevel(n);
+        for (let tx = 2; tx < 20; tx++) level.tiles[3][tx] = 1;
+        return sprites._ensureDecor(level).some(d => d.kind === 'vine');
+    };
+    // Deterministic per level number (fixed derived seed), so these are hard
+    // assertions: day (1) and dusk (8) bands NEVER grow vines regardless of
+    // geometry; jungle (6) does grow them when ledges exist.
+    expect(withCeiling(1)).toBe(false);
+    expect(withCeiling(8)).toBe(false);
+    expect(withCeiling(6)).toBe(true);
+});

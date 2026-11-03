@@ -8,7 +8,7 @@ import { COIN_POINTS } from './collectibles.js';
 import { Difficulty } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
-import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
+import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes, MAX_PARTICLES } from './particles.js';
 import * as audio from './audio.js';
 
 // Game constants
@@ -161,6 +161,9 @@ export class Game {
         this.shakeTime = 0;
         this.squashTimer = 0;
         this._prevGrounded = true;
+        // Tile index the last walking-dust puff fired on (see update()):
+        // position-event driven so puffs are deterministic, never RNG.
+        this._dustTx = -1;
         // Portal-gate edge tracker for the unlock chime: seeded from the
         // level's current state in publishLevel so a retry that starts with
         // every coin already banked does not re-ring.
@@ -771,6 +774,33 @@ export class Game {
             }
             this._prevGrounded = this.player.grounded;
 
+            // Walking dust (terrain micro-feedback): a small puff each time a
+            // runner crosses into a new tile while grounded. Driven by the
+            // position event, not RNG, so two boots of one seed render
+            // identical frames; capped with the shared particle budget.
+            if (this.player.grounded && Math.abs(this.player.vx) > 120) {
+                const footTx = Math.floor(
+                    (this.player.x + this.player.width / 2) / this.level.tileSize);
+                if (footTx !== this._dustTx) {
+                    this._dustTx = footTx;
+                    const dir = this.player.vx > 0 ? -1 : 1;
+                    const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+                    this.particles.push({
+                        x: this.player.x + this.player.width / 2 - dir * 10,
+                        y: this.player.y + this.player.height - 2,
+                        vx: dir * (30 + (footTx & 3) * 8),
+                        vy: -(20 + (footTx & 1) * 14),
+                        life: 0.28,
+                        maxLife: 0.28,
+                        size: 2 + (footTx & 1),
+                        color: THEMES[themeIdx].dust
+                    });
+                    if (this.particles.length > MAX_PARTICLES) this.particles.shift();
+                }
+            } else {
+                this._dustTx = -1;
+            }
+
             // Phase 2 elements. Death checks run in a fixed order (enemies,
             // spikes, pit) and stop the tick at the first hit, so several
             // simultaneous contacts produce exactly one game over.
@@ -983,6 +1013,10 @@ export class Game {
             // Terrain comes from the sprite layer's culled grid pass (in
             // world units of the zoomed viewport); level.draw owns entities.
             if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
+            // Mood wash over background+terrain+props only — entities below
+            // paint at full contrast (hazard-readability ruling).
+            if (sprites) sprites.drawMoodTint(this.ctx, this.currentLevel,
+                this.camera.x, this.camera.y, effW, effH);
             this.level.draw(this.ctx, sprites);
 
             // Draw player (landing squash compresses height only)
@@ -1005,6 +1039,15 @@ export class Game {
                 const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
                 drawMotes(this.ctx, this.motes, this.camera.x, viewW,
                     amb.mote, amb.fireflies);
+            }
+
+            // Foreground silhouette strip + vignette: the near side of the
+            // lens. Both screen-space, both drawn under the seed readout so
+            // the diagnostics text stays legible.
+            if (sprites) {
+                sprites.drawForeground(this.ctx, this.currentLevel,
+                    this.camera.x, viewW, viewH);
+                sprites.drawVignette(this.ctx, this.currentLevel, viewW, viewH);
             }
 
             // Map identity readout: pins the exact generated layout from a
