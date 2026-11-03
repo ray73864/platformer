@@ -696,7 +696,7 @@
         this.portalTile = this.pickPortalTile();
         valid = this.portalTile !== null;
         if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
-          valid = this.deriveEnemySpawns().length > 0 && this.countTilesOfType(2) > 0;
+          valid = this.deriveEnemySpawns().length > 0 && (this.direction === "vertical" || this.countTilesOfType(2) > 0);
         }
         attempt++;
       }
@@ -765,7 +765,7 @@
       let x = Math.floor(w / 2);
       let dir = this.rng() < 0.5 ? 1 : -1;
       for (let row = h - 4;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-        let c = x + dir * (this.rng() < 0.4 ? 2 : 1);
+        let c = x + dir * (this.rng() < 0.15 ? 2 : 1);
         if (c < 1 || c > w - 2) {
           dir = -dir;
           c = x + dir;
@@ -882,25 +882,33 @@
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
         return;
       const target = Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), Math.floor(this.width * this.height * 0.1));
-      const surfaceTop = [];
-      for (let x = 0;x < this.width; x++) {
-        surfaceTop[x] = -1;
-        for (let y = 0;y < this.height; y++) {
-          if (tiles[y][x] === 1) {
-            surfaceTop[x] = y;
-            break;
-          }
-        }
-      }
-      const besideDropOff = (x) => {
-        const base = surfaceTop[x] < 0 ? this.height : surfaceTop[x];
+      const besideDropOff = (x, y) => {
         for (let dx = -3;dx <= 3; dx++) {
+          if (dx === 0)
+            continue;
           const nx = x + dx;
           if (nx < 0 || nx >= this.width)
             continue;
-          if (dx !== 0 && surfaceTop[nx] < 0)
+          let ground = false;
+          for (let r = y + 1;r <= y + 4 && r < this.height; r++) {
+            if (tiles[r][nx] === 1) {
+              ground = true;
+              break;
+            }
+          }
+          if (!ground)
             return true;
-          if (dx !== 0 && surfaceTop[nx] >= 0 && surfaceTop[nx] <= base - 2)
+          if (tiles[y][nx] === 1 || tiles[y - 1][nx] === 1)
+            return true;
+        }
+        return false;
+      };
+      const nearRouteCell = (x, y) => {
+        if (!this.pathCells)
+          return false;
+        for (let dx = -2;dx <= 2; dx++) {
+          const nx = x + dx;
+          if (nx >= 0 && nx < this.width && this.pathCells.has(y * this.width + nx))
             return true;
         }
         return false;
@@ -913,10 +921,12 @@
           if (!this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
             continue;
           }
-          if (this.pathCells && this.pathCells.has(y * this.width + x)) {
+          if (nearRouteCell(x, y))
             continue;
-          }
-          if (this.direction !== "vertical" && besideDropOff(x))
+          if (this.direction === "vertical") {
+            if (x < 1 || x > this.width - 2 || tiles[y + 1][x - 1] !== 1 || tiles[y + 1][x + 1] !== 1)
+              continue;
+          } else if (besideDropOff(x, y))
             continue;
           candidates.push({ x, y });
         }
@@ -968,7 +978,7 @@
         }
       }
     }
-    isMarkerSite(tiles, x, y, reachable) {
+    isMarkerSite(tiles, x, y, reachable, opts = {}) {
       if (!this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
         return false;
       }
@@ -979,6 +989,13 @@
       }
       if (!reachable.has(y * this.width + x))
         return false;
+      if (this.pathCells && !opts.allowRouteAdjacent) {
+        for (let dx = -1;dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx >= 0 && nx < this.width && this.pathCells.has(y * this.width + nx))
+            return false;
+        }
+      }
       for (let dx = -4;dx <= 4; dx++) {
         const nx = x + dx;
         if (nx < 0 || nx >= this.width)
@@ -992,20 +1009,25 @@
       if (!span)
         return false;
       const [bandMin, bandMax] = this.patrolBandBounds();
-      return Math.min(span.right, bandMax) - Math.max(span.left, bandMin) + 1 >= 2;
+      const minSpan = opts.allowRouteAdjacent ? 1 : 2;
+      return Math.min(span.right, bandMax) - Math.max(span.left, bandMin) + 1 >= minSpan;
     }
     placeEnemyMarkers(tiles) {
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
         return;
       const target = Math.min(DIFFICULTY.getMaxEnemies(this.levelNumber), Math.floor(this.levelNumber / 2));
-      const candidates = [];
-      for (let y = 0;y < this.height - 1; y++) {
-        for (let x = 0;x < this.width; x++) {
-          if (this.isMarkerSite(tiles, x, y, this.generationReachable)) {
-            candidates.push({ x, y });
+      const collectSites = (allowRouteAdjacent) => {
+        const sites = [];
+        for (let y = 0;y < this.height - 1; y++) {
+          for (let x = 0;x < this.width; x++) {
+            if (this.isMarkerSite(tiles, x, y, this.generationReachable, { allowRouteAdjacent })) {
+              sites.push({ x, y });
+            }
           }
         }
-      }
+        return sites;
+      };
+      let candidates = collectSites(false);
       shuffle(candidates, this.rng);
       let placed = 0;
       for (const c of candidates) {
@@ -1013,6 +1035,16 @@
           break;
         tiles[c.y][c.x] = 4;
         placed++;
+      }
+      if (placed === 0 && this.pathCells) {
+        candidates = collectSites(true);
+        shuffle(candidates, this.rng);
+        for (const c of candidates) {
+          if (placed >= Math.min(target, 1))
+            break;
+          tiles[c.y][c.x] = 4;
+          placed++;
+        }
       }
     }
     inCanonicalPortalBand(x, y) {
@@ -1956,7 +1988,7 @@
         console.error("Level generation failed; re-attempting once:", first);
       }
       try {
-        return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
+        return new Level(levelNumber, TILE_SIZE, (this.seedFor(levelNumber) ^ 1542469173) >>> 0);
       } catch (second) {
         console.error("Level generation failed again:", second);
         this.ui.showErrorMessage("Could not prepare that level — try again.");

@@ -300,8 +300,14 @@ export class Level {
                 // ships zero enemies while a raw count reports success. Same
                 // call spawnEnemies() makes below, on the same tiles and
                 // reachableTiles, so guard and deployment cannot diverge.
+                // Vertical climbs earn their difficulty from the ascent
+                // itself; forcing a spike onto them historically meant
+                // placing it on the route's walking surface (the map has
+                // almost nowhere else). Spikes stay REQUIRED on horizontal
+                // maps and opportunistic-but-fair on vertical ones.
                 valid = this.deriveEnemySpawns().length > 0 &&
-                    this.countTilesOfType(2) > 0;
+                    (this.direction === 'vertical' ||
+                        this.countTilesOfType(2) > 0);
             }
             attempt++;
         }
@@ -449,7 +455,7 @@ export class Level {
         let x = Math.floor(w / 2); // current standing column
         let dir = this.rng() < 0.5 ? 1 : -1;
         for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-            let c = x + dir * (this.rng() < 0.4 ? 2 : 1);
+            let c = x + dir * (this.rng() < 0.15 ? 2 : 1);
             if (c < 1 || c > w - 2) {
                 // Bounce off the wall; the flipped step always fits since
                 // every standing column stays inside [1, w-2].
@@ -654,31 +660,48 @@ export class Level {
         );
 
         // Surface hazards only: air tiles directly above solid ground, never
-        // inside the direction's exclusion zones, never on a vertical
-        // route's jump-off/landing cells (a spike there would sever the one
-        // constructed climb and burn retries), and never beside a drop-off:
-        // players WALK off ledges, and a spike one column from a 2+ tile
-        // cliff kills anyone who steps instead of jumps (playtest ruling —
-        // deaths must be explainable and avoidable by ordinary movement).
-        const surfaceTop = [];
-        for (let x = 0; x < this.width; x++) {
-            surfaceTop[x] = -1;
-            for (let y = 0; y < this.height; y++) {
-                if (tiles[y][x] === 1) { surfaceTop[x] = y; break; }
-            }
-        }
-        const besideDropOff = (x) => {
-            const base = surfaceTop[x] < 0 ? this.height : surfaceTop[x];
-            // Radius 3: a full-speed landing runs several tiles past a pit
-            // lip, and a spike inside that rollout is undodgeable even for
-            // players who saw it coming.
+        // inside the direction's exclusion zones, never within two columns
+        // of a constructed climb's jump-off/landing cells, and never beside
+        // a drop-off or raised lip: players WALK off ledges, and a tooth at
+        // feet level under a lip kills anyone who steps instead of jumps
+        // (playtest ruling — deaths must be explainable and avoidable by
+        // ordinary movement).
+        // Local geometry (works for every direction, including vertical
+        // maps whose floating ledges make any global surface array lie):
+        // the spike's own support is row y+1, so inspect neighbours against
+        // THAT surface, not the column's first solid from the sky.
+        const besideDropOff = (x, y) => {
             for (let dx = -3; dx <= 3; dx++) {
+                if (dx === 0) continue;
                 const nx = x + dx;
                 if (nx < 0 || nx >= this.width) continue;
-                if (dx !== 0 && surfaceTop[nx] < 0) return true; // pit nearby
-                // Cliff two or more tiles above the spike's own surface.
-                if (dx !== 0 && surfaceTop[nx] >= 0 &&
-                    surfaceTop[nx] <= base - 2) return true;
+                // A pit/bottomless drop within rollout distance of the tooth.
+                let ground = false;
+                for (let r = y + 1; r <= y + 4 && r < this.height; r++) {
+                    if (tiles[r][nx] === 1) { ground = true; break; }
+                }
+                if (!ground) return true;
+                // Raised mass beside the spike: players WALK off its lip and
+                // the tooth sits at feet level exactly where they land
+                // (playtest ruling — deaths must be avoidable by ordinary
+                // movement, and stepping off a ledge is ordinary).
+                if (tiles[y][nx] === 1 || tiles[y - 1][nx] === 1) return true;
+            }
+            return false;
+        };
+        const nearRouteCell = (x, y) => {
+            if (!this.pathCells) return false;
+            // Route cells are the forced landing/jump-off spots of the
+            // constructed climb. A tooth ON THE SAME WALKING SURFACE within
+            // two columns turns a mandatory jump into a pixel-perfect one
+            // (screenshot ruling: "everytime I try to jump up onto the
+            // ledge near the spikes, I end up hitting the spikes"). Other
+            // rows are different platforms; banning them starves vertical
+            // maps, where the snaking route touches nearly every row.
+            for (let dx = -2; dx <= 2; dx++) {
+                const nx = x + dx;
+                if (nx >= 0 && nx < this.width &&
+                    this.pathCells.has(y * this.width + nx)) return true;
             }
             return false;
         };
@@ -690,11 +713,16 @@ export class Level {
                     this.direction === 'vertical' ? y : x)) {
                     continue;
                 }
-                if (this.pathCells &&
-                    this.pathCells.has(y * this.width + x)) {
-                    continue;
-                }
-                if (this.direction !== 'vertical' && besideDropOff(x)) continue;
+                if (nearRouteCell(x, y)) continue;
+                if (this.direction === 'vertical') {
+                    // Vertical ledges are ALL edge, so the horizontal
+                    // rollout rule would veto every cell. Instead: teeth
+                    // sit mid-shelf only — solid support one column each
+                    // way — so a spike never caps a ledge tip over a drop.
+                    if (x < 1 || x > this.width - 2 ||
+                        tiles[y + 1][x - 1] !== 1 ||
+                        tiles[y + 1][x + 1] !== 1) continue;
+                } else if (besideDropOff(x, y)) continue;
                 candidates.push({ x, y });
             }
         }
@@ -801,7 +829,7 @@ export class Level {
     // would spawn a body that fits its bounds exactly and never moves. One
     // spelling so the gate cannot drift from placement while both report
     // success (same reasoning as deriveEnemySpawns sharing spawnEnemies).
-    isMarkerSite(tiles, x, y, reachable) {
+    isMarkerSite(tiles, x, y, reachable, opts = {}) {
         if (!this.hazardPlacementAllowed(
             this.direction === 'vertical' ? y : x)) {
             return false;
@@ -811,6 +839,18 @@ export class Level {
             return false;
         }
         if (!reachable.has(y * this.width + x)) return false;
+        // Patrols must not share a walking surface with the climb route's
+        // landing spots: a body one tile from a forced jump target is a
+        // free death on the approach (same ruling as spike clearance).
+        // Relaxed only by placeEnemyMarkers' fallback pass, which prefers
+        // an adjacent patrol over throwing the whole construction.
+        if (this.pathCells && !opts.allowRouteAdjacent) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                if (nx >= 0 && nx < this.width &&
+                    this.pathCells.has(y * this.width + nx)) return false;
+            }
+        }
         // No spike-enemy ambush combos: a patrol standing next to a tooth
         // turns "dodge the enemy" into "land on the spike" (playtest bot:
         // this pairing alone accounted for every level-5 death). Checks the
@@ -827,8 +867,14 @@ export class Level {
         const span = this.patrolSpan(tiles, x, y);
         if (!span) return false;
         const [bandMin, bandMax] = this.patrolBandBounds();
+        // Strict sites patrol at least two columns. The fallback pass also
+        // accepts a one-column shelf — a stationary enemy, which derive-
+        // EnemySpawns deploys happily (it only needs a span) and the player
+        // can see, wait out, or stomp. Starving these last sites is what
+        // burned whole 200-attempt budgets on tight climb grids.
+        const minSpan = opts.allowRouteAdjacent ? 1 : 2;
         return Math.min(span.right, bandMax) -
-            Math.max(span.left, bandMin) + 1 >= 2;
+            Math.max(span.left, bandMin) + 1 >= minSpan;
     }
 
     placeEnemyMarkers(tiles) {
@@ -858,15 +904,20 @@ export class Level {
         // while the guard demands deployed spawns — on vertical maps every
         // marker could land on an off-route ledge and burn the whole
         // 200-attempt budget. Requiring reach here makes placed ≈ deployed.
-        const candidates = [];
-        for (let y = 0; y < this.height - 1; y++) {
-            for (let x = 0; x < this.width; x++) {
-                if (this.isMarkerSite(
-                    tiles, x, y, this.generationReachable)) {
-                    candidates.push({ x, y });
+        const collectSites = (allowRouteAdjacent) => {
+            const sites = [];
+            for (let y = 0; y < this.height - 1; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    if (this.isMarkerSite(tiles, x, y,
+                        this.generationReachable, { allowRouteAdjacent })) {
+                        sites.push({ x, y });
+                    }
                 }
             }
-        }
+            return sites;
+        };
+        let candidates = collectSites(false);
+
         shuffle(candidates, this.rng);
 
         let placed = 0;
@@ -874,6 +925,18 @@ export class Level {
             if (placed >= target) break;
             tiles[c.y][c.x] = 4;
             placed++;
+        }
+        if (placed === 0 && this.pathCells) {
+            // Fallback pass on climb maps: an enemy adjacent to the route
+            // beats a construction throw (the guard demands deployed
+            // spawns; strict fairness can starve on tight late-level grids).
+            candidates = collectSites(true);
+            shuffle(candidates, this.rng);
+            for (const c of candidates) {
+                if (placed >= Math.min(target, 1)) break;
+                tiles[c.y][c.x] = 4;
+                placed++;
+            }
         }
     }
 

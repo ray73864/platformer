@@ -261,7 +261,12 @@ test("Phase 2 levels place surface spikes within density and safe zones", () => 
         const range = allowedHazardRange(level);
         const spikes = tilesOfType(level.tiles, 2);
 
-        expect(spikes.length).toBeGreaterThan(0);
+        // Vertical climbs earn difficulty from the ascent; spikes there are
+        // opportunistic (fair mid-shelf spots barely exist alongside the
+        // forced route) and presence is only required horizontally.
+        if (level.direction !== 'vertical') {
+            expect(spikes.length).toBeGreaterThan(0);
+        }
         // Spec density cap: at most 10% of all tiles.
         expect(spikes.length).toBeLessThanOrEqual(Math.floor(w * h * 0.1));
 
@@ -709,8 +714,11 @@ test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
         for (let i = 0; i < 30; i++) {
             const level = new Level(n, 32);
             expect(level.hasValidPath()).toBe(true);
-            // Presence contracts hold on every accepted construction.
-            expect(countType(level.tiles, 2)).toBeGreaterThan(0);
+            // Presence contracts hold on every accepted construction
+            // (spikes optional on vertical climbs — see placement rules).
+            if (level.direction !== 'vertical') {
+                expect(countType(level.tiles, 2)).toBeGreaterThan(0);
+            }
             expect(countType(level.tiles, 4)).toBeGreaterThan(0);
             // Deployed spawns, not raw markers (I2): the constructor's guard
             // is deriveEnemySpawns().length > 0, and that is what ships.

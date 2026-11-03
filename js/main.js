@@ -404,7 +404,11 @@ export class Game {
             console.error('Level generation failed; re-attempting once:', first);
         }
         try {
-            return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
+            // Seeded generation is deterministic: re-using the same seed
+            // would replay the exact 200-attempt sequence that just failed.
+            // Nudge into neighbouring seed space so the rescue can succeed.
+            return new Level(levelNumber, TILE_SIZE,
+                (this.seedFor(levelNumber) ^ 0x5bf03635) >>> 0);
         } catch (second) {
             console.error('Level generation failed again:', second);
             this.ui.showErrorMessage('Could not prepare that level — try again.');
