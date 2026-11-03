@@ -48,7 +48,10 @@ export function installGameTestScaffolding() {
             // path and any Phase-2 draw check would pass vacuously.
             moveTo: () => {},
             lineTo: () => {},
-            fill: () => {}
+            fill: () => {},
+            // Seed readout text (main.js draw pass); the stub only needs the
+            // call to exist — assertions never inspect rendered pixels.
+            fillText: () => {}
         };
     };
 

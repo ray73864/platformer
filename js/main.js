@@ -880,6 +880,18 @@ export class Game {
                 drawMotes(this.ctx, this.motes, this.camera.x, viewW,
                     amb.mote, amb.fireflies);
             }
+
+            // Map identity readout: pins the exact generated layout from a
+            // screenshot alone (retry replays the same seed, so what the
+            // player sees is what `new Level(level, 32, seed)` reproduces).
+            if (this.level && this.level.seed !== null) {
+                this.ctx.font = '10px monospace';
+                this.ctx.textAlign = 'right';
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+                this.ctx.fillText(`L${this.currentLevel} seed ${this.level.seed}`,
+                    viewW - 8, viewH - 8);
+                this.ctx.textAlign = 'left';
+            }
         }
     }
 

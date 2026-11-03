@@ -678,6 +678,7 @@
       this.levelNumber = levelNumber;
       this.tileSize = tileSize;
       this.rng = makeRng(seed === undefined ? Math.random() * 4294967295 >>> 0 : seed >>> 0);
+      this.seed = seed === undefined ? null : seed >>> 0;
       this.direction = directionForLevel(levelNumber);
       if (this.direction === "vertical") {
         this.width = VERTICAL_WIDTH;
@@ -2616,6 +2617,13 @@
         if (this.motes.length) {
           const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
           drawMotes(this.ctx, this.motes, this.camera.x, viewW, amb.mote, amb.fireflies);
+        }
+        if (this.level && this.level.seed !== null) {
+          this.ctx.font = "10px monospace";
+          this.ctx.textAlign = "right";
+          this.ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+          this.ctx.fillText(`L${this.currentLevel} seed ${this.level.seed}`, viewW - 8, viewH - 8);
+          this.ctx.textAlign = "left";
         }
       }
     }

@@ -250,6 +250,9 @@ export class Level {
         this.rng = makeRng(seed === undefined
             ? (Math.random() * 0xffffffff) >>> 0
             : seed >>> 0);
+        // The resolved seed, kept for diagnostics: the HUD readout lets a
+        // playtest screenshot pin the exact map for reproduction.
+        this.seed = seed === undefined ? null : seed >>> 0;
 
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
