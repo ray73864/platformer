@@ -9,6 +9,7 @@ import { Difficulty } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
 import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
+import * as audio from './audio.js';
 
 // Game constants
 export const TILE_SIZE = 32;
@@ -32,6 +33,11 @@ const MAX_FALL_SPEED = 600;
 // Upward velocity after squashing an enemy (stomp bounce): a bit under a
 // full jump so chained stomps stay skillful.
 const STOMP_BOUNCE = 260;
+// The landing thud fires only on falls into contact at least this fast
+// (px/s): stepping off a low ledge stays silent so the SFX marks genuine
+// landings instead of spamming every ground transition (~h = v²/2g puts the
+// threshold at a ~35 px drop).
+const LANDING_SFX_MIN_FALL = 260;
 // Winning this level finishes the whole run instead of generating another.
 // Exported so tests pin their final-level fixtures to the same number.
 export const FINAL_LEVEL = 100;
@@ -107,6 +113,14 @@ export class Game {
         // load (startGame's publishLevel re-enables it).
         this.ui.hideHUD();
         this.ui.setPauseEnabled(false);
+        // Sound chip reflects the persisted preference at boot. Reading it is
+        // pure localStorage — the AudioContext itself waits for the first
+        // gesture (startGame -> publishLevel -> audio.init()).
+        audio.loadMutedPreference();
+        this.ui.setMuteLabel(audio.isMuted());
+        // Debug seam for E2E audio assertions (getState() is read-only;
+        // same spirit as window.game in init()).
+        this.audio = audio;
         // One run clock for the whole game: time carries over between levels
         // because nothing resets it mid-run (startGame() and retryLevel()
         // deliberately re-arm it; level transitions never do). Whether it
@@ -129,6 +143,10 @@ export class Game {
         this.shakeTime = 0;
         this.squashTimer = 0;
         this._prevGrounded = true;
+        // Portal-gate edge tracker for the unlock chime: seeded from the
+        // level's current state in publishLevel so a retry that starts with
+        // every coin already banked does not re-ring.
+        this._portalUnlocked = false;
 
         // Game state
         this.state = STATE.MENU;
@@ -173,6 +191,9 @@ export class Game {
         this._destroyed = true;
         this._abort.abort();
         this.input.destroy();
+        // The audio singleton is shared across Games (test harnesses build
+        // many): tear it down fully so a later Game's init() rebuilds clean.
+        audio.shutdown();
     }
 
     resize() {
@@ -208,13 +229,15 @@ export class Game {
         const retryBtn = document.getElementById('retry-btn');
         const playAgainBtn = document.getElementById('play-again-btn');
         const pauseBtn = document.getElementById('pause-btn');
+        const muteBtn = document.getElementById('mute-btn');
         const resumeBtn = document.getElementById('resume-btn');
         const restartLevelBtn = document.getElementById('restart-level-btn');
         const quitMenuBtn = document.getElementById('quit-menu-btn');
-        if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn ||
+        if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn || !muteBtn ||
             !resumeBtn || !restartLevelBtn || !quitMenuBtn) {
             throw new Error('Game requires #start-btn, #retry-btn, #play-again-btn, ' +
-                '#pause-btn, #resume-btn, #restart-level-btn and #quit-menu-btn elements in the page');
+                '#pause-btn, #mute-btn, #resume-btn, #restart-level-btn and ' +
+                '#quit-menu-btn elements in the page');
         }
         // Every listener carries the abort signal (S2): destroy()'s contract
         // is "instance is inert", and a click landing after teardown would
@@ -239,6 +262,12 @@ export class Game {
         onClick(pauseBtn, () => {
             this.togglePause();
             pauseBtn.blur();
+        });
+        // Sound toggle mirrors the M key (see bindEvents' keydown listener);
+        // blur() for the same focused-button-eats-Space reason as pauseBtn.
+        onClick(muteBtn, () => {
+            this.toggleSound();
+            muteBtn.blur();
         });
 
         // Pause menu options (R29). Each click came from either a real click
@@ -267,7 +296,12 @@ export class Game {
         // during pause must not launch the player on resume.
         this.input.onJump(() => {
             if (this.state !== STATE.PLAYING || !this.player) return;
+            // Blip only on a real launch: pressJump() sets vy synchronously
+            // when grounded/coyote fires, while a buffered press leaves it
+            // alone — no phantom jump sound for inputs that did not jump.
+            const vyBefore = this.player.vy;
             this.player.pressJump();
+            if (this.player.vy < vyBefore) audio.playSfx('jump');
         });
         // Variable jump height: releasing Space mid-rise shortens the hop
         // (once per jump). Gated on PLAYING like pressJump: PAUSED freezes
@@ -308,6 +342,13 @@ export class Game {
                 } else {
                     this.togglePause();
                 }
+            } else if (!e.repeat && (code === 'KeyM' || code === 'm' || code === 'M')) {
+                // Global sound mute. Autorepeat ignored like every other
+                // edge-triggered binding here; KeyM collides with nothing
+                // (gameplay keys are arrows/WASD/Space/Shift, pause nav is
+                // Escape+arrows). Bare m/M accepted for harnesses that
+                // deliver key-only events (see resolveCode in input.js).
+                this.toggleSound();
             } else if (this.state === STATE.PAUSED && code in PAUSE_MENU_ARROWS) {
                 e.preventDefault();
                 this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
@@ -341,6 +382,9 @@ export class Game {
             this.player?.cancelJumpFeel();
             this.ui.showOverlay('pause-screen');
             this.ui.setPauseLabel(true);
+            // Music ducks to silence under the menu; the scheduler stops
+            // meanwhile so a long pause costs nothing (see audio.js).
+            audio.duckMusic(true);
             // R29: focus lands inside the menu so arrow+Enter work
             // immediately and assistive tech announces the available options.
             this.ui.focusPauseMenu();
@@ -348,15 +392,27 @@ export class Game {
             this.setState(STATE.PLAYING);
             this.ui.hideOverlay('pause-screen');
             this.ui.setPauseLabel(false);
+            audio.duckMusic(false);
             // Never leave focus on the just-hidden menu: Space would stay
             // swallowed by its focused button instead of jumping.
             this.ui.blurPauseControls();
         }
     }
 
+    // M key / HUD chip: global sound mute, persisted across sessions. Works
+    // in every state (including MENU, where it only flips the stored
+    // preference for the next run's context).
+    toggleSound() {
+        audio.toggleMute();
+        this.ui.setMuteLabel(audio.isMuted());
+    }
+
     // Spec: Escape on an end screen returns to MENU, never pauses.
     returnToMenu() {
         this.setState(STATE.MENU);
+        // The menu is a silent space by design (music starts only with a
+        // run), so leaving a run always stops the loop.
+        audio.stopMusic();
         this.ui.hideOverlay('game-over-screen');
         this.ui.hideOverlay('game-complete-screen');
         this.ui.showOverlay('menu-screen');
@@ -455,6 +511,9 @@ export class Game {
                 this.collectibles.getUncollectedCoins().length,
             this.collectibles.getCoins().length
         );
+        // Seed the chime edge tracker from the adopted level's gate state
+        // (see the unlock check in update()).
+        this._portalUnlocked = this.collectibles.meetsPortalRequirement();
         // Snapshot before any of this level's coins can be collected.
         this.levelStartScore = this.score;
         this.levelCompleteTimer = 0;
@@ -495,6 +554,17 @@ export class Game {
             level.width * level.tileSize,
             level.height * level.tileSize
         );
+        // Audio follows the published level. init() is a no-op after the
+        // first call and lands inside the Start-click gesture for a fresh
+        // run (the menu stays deliberately silent — no context exists until
+        // gameplay). unduck covers loop-error recovery, which resumes to
+        // PLAYING without passing through togglePause's resume branch. The
+        // band preset comes from the THEMES cycle; an identical running
+        // track (retry/recovery) crossfades nothing.
+        audio.init();
+        audio.duckMusic(false);
+        audio.startMusic((Math.max(1, this.currentLevel) - 1) % THEMES.length,
+            this.currentLevel);
     }
 
     // GAME_OVER "Retry Level": fresh attempt at the current level.
@@ -534,6 +604,10 @@ export class Game {
 
     handleWin() {
         this.setState(STATE.LEVEL_COMPLETE);
+        // Win sting over the top of the still-running music: the transition
+        // is a 2 s beat, not an ending, so the loop carries through to the
+        // next level (crossfading only when its band/variation changes).
+        audio.playSfx('level_complete');
         // The transition is automatic and not pausable: drop the button out
         // of the tab order until publishLevel re-enables it.
         this.ui.setPauseEnabled(false);
@@ -549,6 +623,9 @@ export class Game {
 
     handleGameOver(cause) {
         this.setState(STATE.GAME_OVER);
+        // Music stops dead at death; the falling sting carries the moment.
+        audio.stopMusic();
+        audio.playSfx('death');
         // Death feedback (visual-only): a short camera shake plus a red
         // burst at the player so the moment of loss is unmistakable.
         this.shakeTime = 0.35;
@@ -566,6 +643,11 @@ export class Game {
 
     handleGameComplete() {
         this.setState(STATE.GAME_COMPLETE);
+        // The level_complete sting already played when FINAL_LEVEL's portal
+        // was reached (handleWin fires 2 s before this handler); here the
+        // loop simply stops — end screens are quiet after their sting,
+        // matching the silent-menu rule.
+        audio.stopMusic();
         this.ui.setPauseEnabled(false);
         let highScore = this.score;
         // Storage-disabled environments throw from getItem/setItem. An
@@ -623,14 +705,27 @@ export class Game {
             // Update player. Jump-feel timers (buffer/coyote/ledge-seed)
             // tick inside Player.update against last frame's collision-
             // derived grounded state; Shift caps ground speed only.
+            const bufferWasPending = this.player.jumpBufferTimer > 0;
             this.player.update(dt, this.input.isLeft(), this.input.isRight(),
                 { walk: this.input.isWalk() });
+            // A buffered press consumed by landing contact launches mid-
+            // frame, invisible to the input callback. jump() is the only
+            // path that zeroes the buffer while driving vy negative (plain
+            // expiry leaves the timer negative), so the pair identifies the
+            // silent launch and its missing blip.
+            if (bufferWasPending && this.player.jumpBufferTimer === 0 &&
+                this.player.vy < 0) {
+                audio.playSfx('jump');
+            }
 
             // Apply physics
             this.physics.applyGravity(this.player, dt);
 
             // Check collisions
             const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
+            // Impact speed before the resolver zeroes it: gates the landing
+            // thud below.
+            const vyBeforeResolve = this.player.vy;
             this.physics.resolveCollisions(this.player, collisions);
 
             // Grounded-state edges (visual-tuning hooks, physics-safe):
@@ -639,6 +734,7 @@ export class Game {
             // coyote window it waits for expires there.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
+                if (vyBeforeResolve >= LANDING_SFX_MIN_FALL) audio.playSfx('land');
                 // Landing brake: touching down with no direction held kills
                 // the carried horizontal speed outright. Without it, jump
                 // momentum marches the player off a narrow landing before
@@ -661,6 +757,7 @@ export class Game {
             // contact is fatal.
             const contact = this.enemyManager.resolvePlayerContact(this.player);
             if (contact.stomped > 0) {
+                audio.playSfx('stomp');
                 this.player.vy = -STOMP_BOUNCE;
                 // A stomp is a launch of its own: kill the coyote window or
                 // pressJump's coyote branch steals the input and upgrades
@@ -703,6 +800,7 @@ export class Game {
             // length can wrap the score into negative territory.
             const collectedCoins = this.collectibles.checkCollection(this.player);
             if (collectedCoins > 0) {
+                audio.playSfx('coin');
                 // Sparkle at the player: pickups read as events, not silent
                 // counter bumps. Gold matches the coin sprite.
                 spawnBurst(this.particles,
@@ -723,6 +821,14 @@ export class Game {
                         this.collectibles.getUncollectedCoins().length,
                     this.collectibles.getCoins().length
                 );
+            }
+
+            // Portal-gate chime on the locked→unlocked flip only: the flag
+            // is seeded from the level's current state in publishLevel, so
+            // a retry that starts with every coin banked never re-rings.
+            if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
+                this._portalUnlocked = true;
+                audio.playSfx('portal_unlock');
             }
 
             // Check portal contact; ghosted and inert until every coin is

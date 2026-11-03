@@ -218,6 +218,14 @@ button:focus-visible {
     background: #ffe27a;
 }
 
+/* Sound chip: the emoji glyph needs a touch more body than the chip text,
+   and line-height:1 keeps it from stretching the HUD row. */
+#hud > #mute-btn {
+    font-size: 1rem;
+    line-height: 1;
+    padding: 8px 12px;
+}
+
 /* All coins collected: the portal gate is open, say so in green. */
 #hud > span.coins-done {
     background: var(--grass);

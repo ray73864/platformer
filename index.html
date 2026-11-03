@@ -71,6 +71,9 @@
             <!-- Keyboard-operable pause per spec §Accessibility; the accessible
                  name toggles to "Resume Game" while paused (see ui.setPauseLabel). -->
             <button id="pause-btn" aria-label="Pause Game">Pause</button>
+            <!-- Sound toggle: M mirrors it; glyph swaps 🔊/🔇 via ui.setMuteLabel,
+                 preference persists across sessions (see js/audio.js). -->
+            <button id="mute-btn" aria-label="Toggle sound" aria-pressed="false">🔊</button>
         </div>
 
         <!-- Loop-error notice (spec §General Error Handling: state recovery

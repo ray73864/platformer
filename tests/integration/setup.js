@@ -74,6 +74,7 @@ export function mountFixture() {
         <button id="retry-btn">Retry</button>
         <button id="play-again-btn">Play Again</button>
         <button id="pause-btn" aria-label="Pause Game">Pause</button>
+        <button id="mute-btn" aria-label="Toggle sound" aria-pressed="false">\u{1F50A}</button>
         <div id="pause-screen" class="overlay hidden">
             <h2>Game Paused</h2>
             <button id="resume-btn" aria-label="Resume Game">Resume Game</button>

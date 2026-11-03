@@ -53,6 +53,17 @@ export class UI {
         button.textContent = paused ? 'Resume' : 'Pause';
     }
 
+    // Sound chip glyph follows the mute state (M key or click, whichever
+    // moved it — Game.toggleSound keeps the label in sync). The accessible
+    // name stays "Toggle sound": it describes the action, and the glyph
+    // swap is reinforced by the aria-pressed state.
+    setMuteLabel(muted) {
+        const button = document.getElementById('mute-btn');
+        if (!button) return;
+        button.textContent = muted ? '\uD83D\uDD07' : '\uD83D\uDD0A'; // 🔇 / 🔊
+        button.setAttribute('aria-pressed', muted ? 'true' : 'false');
+    }
+
     // The pause control is only meaningful in PLAYING/PAUSED. Outside those
     // states it is disabled rather than hidden: a focusable no-op (or worse,
     // an end-screen control that silently navigates) fails WCAG 2.4.6/3.2.2,

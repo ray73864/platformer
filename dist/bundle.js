@@ -46,7 +46,7 @@
     TILE_SIZE: () => TILE_SIZE,
     computeZoom: () => computeZoom,
     destroyAllGames: () => destroyAllGames,
-    init: () => init
+    init: () => init2
   });
 
   // js/input.js
@@ -1573,6 +1573,13 @@
       button.setAttribute("aria-label", paused ? "Resume Game" : "Pause Game");
       button.textContent = paused ? "Resume" : "Pause";
     }
+    setMuteLabel(muted) {
+      const button = document.getElementById("mute-btn");
+      if (!button)
+        return;
+      button.textContent = muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+      button.setAttribute("aria-pressed", muted ? "true" : "false");
+    }
     setPauseEnabled(enabled) {
       const button = document.getElementById("pause-btn");
       if (!button)
@@ -2488,6 +2495,501 @@
     ctx.globalAlpha = 1;
   }
 
+  // js/audio.js
+  var exports_audio = {};
+  __export(exports_audio, {
+    MUSIC_PRESETS: () => MUSIC_PRESETS,
+    advanceScheduler: () => advanceScheduler,
+    buildMelodyLoop: () => buildMelodyLoop,
+    duckMusic: () => duckMusic,
+    getState: () => getState,
+    init: () => init,
+    isMuted: () => isMuted,
+    loadMutedPreference: () => loadMutedPreference,
+    playSfx: () => playSfx,
+    presetForLevel: () => presetForLevel,
+    setMuted: () => setMuted,
+    shutdown: () => shutdown,
+    startMusic: () => startMusic,
+    stopMusic: () => stopMusic,
+    toggleMute: () => toggleMute
+  });
+  var MUSIC_LEVEL = 0.35;
+  var SFX_LEVEL = 0.6;
+  var MUTE_STORAGE_KEY = "platformerMuted";
+  var SCHEDULER_INTERVAL_MS = 25;
+  var LOOKAHEAD_SEC = 0.1;
+  var CROSSFADE_SEC = 0.8;
+  var MUSIC_PRESETS = [
+    { name: "day", root: 220, scale: [0, 3, 5, 7, 10], bpm: 72, padCutoff: 900, delayWet: 0, melodyWave: "triangle" },
+    { name: "dusk", root: 146.83, scale: [0, 2, 3, 5, 7, 9, 10], bpm: 66, padCutoff: 700, delayWet: 0.14, melodyWave: "sine" },
+    { name: "jungle", root: 164.81, scale: [0, 2, 3, 5, 7, 8, 10], bpm: 78, padCutoff: 620, delayWet: 0.28, melodyWave: "sine" }
+  ];
+  var TIER_CREEP_FIRST_LEVEL = 25;
+  var TIER_CREEP_BPM = 6;
+  var STEPS_PER_BAR = 8;
+  var LOOP_STEPS = STEPS_PER_BAR * 4;
+  var CHORD_DEGREES = [0, 2, 4, 2];
+  function makeRng4(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = s + 1831565813 >>> 0;
+      let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function degreeSemitones(scale, degree) {
+    const len = scale.length;
+    const octave = Math.floor(degree / len);
+    const idx = (degree % len + len) % len;
+    return scale[idx] + 12 * octave;
+  }
+  function scaleNoteHz(preset, degree, octave = 0) {
+    return preset.root * Math.pow(2, (degreeSemitones(preset.scale, degree) + 12 * octave) / 12);
+  }
+  function musicSeedForLevel(levelNumber) {
+    return (Math.imul(levelNumber, 2654435761) ^ 1369961139) >>> 0;
+  }
+  function presetForLevel(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1) {
+      console.warn("Invalid level number for music preset:", levelNumber, "- defaulting to level 1 preset");
+      levelNumber = 1;
+    }
+    const index = (levelNumber - 1) % MUSIC_PRESETS.length;
+    const preset = MUSIC_PRESETS[index];
+    const bpm = preset.bpm + (levelNumber >= TIER_CREEP_FIRST_LEVEL ? TIER_CREEP_BPM : 0);
+    return { index, preset, bpm, seed: musicSeedForLevel(levelNumber) };
+  }
+  function buildMelodyLoop(presetIndex, levelNumber) {
+    const preset = MUSIC_PRESETS[(presetIndex % MUSIC_PRESETS.length + MUSIC_PRESETS.length) % MUSIC_PRESETS.length];
+    const rng = makeRng4(musicSeedForLevel(levelNumber));
+    const loop = new Array(LOOP_STEPS).fill(null);
+    let degree = Math.floor(rng() * preset.scale.length);
+    let i = 0;
+    while (i < LOOP_STEPS) {
+      if (rng() < 0.34) {
+        degree = Math.max(-2, Math.min(preset.scale.length + 3, degree + Math.floor(rng() * 5) - 2));
+        const oct = rng() < 0.25 ? 1 : 0;
+        const len = Math.min(1 + Math.floor(rng() * 3), LOOP_STEPS - i);
+        loop[i] = { deg: degree, oct, len };
+        i += len;
+      } else {
+        i++;
+      }
+    }
+    return loop;
+  }
+  function advanceScheduler(state, nowSec, lookaheadSec, stepDurSec, emit) {
+    if (!(stepDurSec > 0))
+      return 0;
+    if (state.nextStepTime < nowSec - stepDurSec)
+      state.nextStepTime = nowSec;
+    let count = 0;
+    while (state.nextStepTime < nowSec + lookaheadSec) {
+      emit(state.step, state.nextStepTime);
+      state.step = (state.step + 1) % LOOP_STEPS;
+      state.nextStepTime += stepDurSec;
+      count++;
+    }
+    return count;
+  }
+  var ctx = null;
+  var master = null;
+  var sfxBus = null;
+  var musicBus = null;
+  var playback = null;
+  var schedulerId = null;
+  var cleanupTimers = new Set;
+  var noiseBuffer = null;
+  var muted = false;
+  var muteLoaded = false;
+  var ducked = false;
+  function storageGet(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function storageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {}
+  }
+  function loadMutedPreference() {
+    muted = storageGet(MUTE_STORAGE_KEY) === "true";
+    muteLoaded = true;
+    return muted;
+  }
+  function audioConstructor() {
+    if (typeof AudioContext !== "undefined")
+      return AudioContext;
+    if (typeof globalThis.webkitAudioContext !== "undefined")
+      return globalThis.webkitAudioContext;
+    return null;
+  }
+  function ensureContext() {
+    if (ctx) {
+      if (ctx.state === "suspended")
+        ctx.resume().catch(() => {});
+      return true;
+    }
+    const Ctor = audioConstructor();
+    if (!Ctor)
+      return false;
+    try {
+      ctx = new Ctor;
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 1;
+      master.connect(ctx.destination);
+      sfxBus = ctx.createGain();
+      sfxBus.gain.value = SFX_LEVEL;
+      sfxBus.connect(master);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = ducked || muted ? 0 : MUSIC_LEVEL;
+      musicBus.connect(master);
+    } catch {
+      ctx = null;
+      return false;
+    }
+    return true;
+  }
+  function cachedNoiseBuffer() {
+    if (!noiseBuffer) {
+      const len = Math.floor(ctx.sampleRate * 0.3);
+      noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0;i < len; i++)
+        data[i] = Math.random() * 2 - 1;
+    }
+    return noiseBuffer;
+  }
+  function tone({ wave = "sine", freq, endFreq = 0, dur, peak, attack = 0.005, filterHz = 0, dest, when }) {
+    const t = when ?? ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = wave;
+    osc.frequency.setValueAtTime(freq, t);
+    if (endFreq > 0)
+      osc.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(peak, t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    let node = osc;
+    if (filterHz > 0) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = filterHz;
+      osc.connect(lp);
+      node = lp;
+    }
+    node.connect(g);
+    g.connect(dest || sfxBus);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+  function noiseBurst({ dur, peak, bandHz, when }) {
+    const t = when ?? ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = cachedNoiseBuffer();
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = bandHz;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(sfxBus);
+    src.start(t);
+    src.stop(t + dur + 0.05);
+  }
+  var SFX = {
+    jump() {
+      tone({ wave: "square", freq: 220, endFreq: 600, dur: 0.12, peak: 0.28 });
+    },
+    land() {
+      tone({ wave: "triangle", freq: 150, endFreq: 65, dur: 0.15, peak: 0.32, filterHz: 400 });
+    },
+    coin() {
+      const t = ctx.currentTime;
+      tone({ wave: "sine", freq: 987.77, dur: 0.07, peak: 0.26, when: t });
+      tone({ wave: "sine", freq: 1318.51, dur: 0.16, peak: 0.26, when: t + 0.07 });
+    },
+    stomp() {
+      tone({ wave: "triangle", freq: 300, endFreq: 60, dur: 0.18, peak: 0.4, filterHz: 900 });
+    },
+    death() {
+      tone({ wave: "sawtooth", freq: 380, endFreq: 50, dur: 0.35, peak: 0.32, attack: 0.01 });
+      noiseBurst({ dur: 0.15, peak: 0.22, bandHz: 900 });
+    },
+    portal_unlock() {
+      const t = ctx.currentTime;
+      [523.25, 659.25, 783.99].forEach((f, i) => tone({ wave: "sine", freq: f, dur: 0.12, peak: 0.24, when: t + i * 0.08 }));
+    },
+    level_complete() {
+      const t = ctx.currentTime;
+      [220, 261.63, 329.63, 440].forEach((f, i) => tone({
+        wave: "triangle",
+        freq: f,
+        dur: 0.55,
+        peak: 0.2,
+        attack: 0.02,
+        filterHz: 1600,
+        when: t + i * 0.12
+      }));
+    }
+  };
+  function stopScheduler() {
+    if (schedulerId !== null) {
+      clearInterval(schedulerId);
+      schedulerId = null;
+    }
+  }
+  function schedulerShouldRun() {
+    return !!ctx && !!playback && !muted && !ducked;
+  }
+  function startScheduler() {
+    if (schedulerId !== null || !schedulerShouldRun())
+      return;
+    if (playback.state.nextStepTime < ctx.currentTime) {
+      playback.state.nextStepTime = ctx.currentTime;
+    }
+    schedulerId = setInterval(() => {
+      if (!schedulerShouldRun()) {
+        stopScheduler();
+        return;
+      }
+      advanceScheduler(playback.state, ctx.currentTime, LOOKAHEAD_SEC, playback.stepDur, (step, when) => playMusicStep(playback, step, when));
+    }, SCHEDULER_INTERVAL_MS);
+  }
+  function playMusicStep(pb, step, when) {
+    const preset = pb.preset;
+    if (step % LOOP_STEPS === 0) {
+      const chordRoot = CHORD_DEGREES[0];
+      const dur = pb.stepDur * LOOP_STEPS + 2;
+      for (const offset of [0, 2, 4]) {
+        const freq = scaleNoteHz(preset, chordRoot + offset, 0);
+        for (const detune of [-6, 6]) {
+          const osc = ctx.createOscillator();
+          osc.type = "triangle";
+          osc.frequency.value = freq;
+          osc.detune.value = detune;
+          const lp = ctx.createBiquadFilter();
+          lp.type = "lowpass";
+          lp.frequency.value = preset.padCutoff;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, when);
+          g.gain.linearRampToValueAtTime(0.05, when + 1.5);
+          g.gain.setValueAtTime(0.05, when + dur - 1.8);
+          g.gain.linearRampToValueAtTime(0.0001, when + dur);
+          osc.connect(lp);
+          lp.connect(g);
+          g.connect(pb.gain);
+          osc.start(when);
+          osc.stop(when + dur + 0.05);
+        }
+      }
+    }
+    if (step % STEPS_PER_BAR === 0) {
+      const bar = step / STEPS_PER_BAR % CHORD_DEGREES.length;
+      tone({
+        wave: "sine",
+        freq: scaleNoteHz(preset, CHORD_DEGREES[bar], -1),
+        dur: pb.stepDur * 3.2,
+        peak: 0.16,
+        attack: 0.02,
+        dest: pb.gain,
+        when
+      });
+    }
+    const note = pb.melody[step];
+    if (note) {
+      const dur = Math.min(note.len * pb.stepDur * 0.9, 1.6);
+      tone({
+        wave: preset.melodyWave,
+        freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+        dur,
+        peak: 0.12,
+        attack: 0.03,
+        dest: pb.gain,
+        when
+      });
+      if (pb.delaySend) {
+        tone({
+          wave: preset.melodyWave,
+          freq: scaleNoteHz(preset, note.deg, note.oct + 1),
+          dur,
+          peak: 0.12,
+          attack: 0.03,
+          dest: pb.delaySend,
+          when
+        });
+      }
+    }
+  }
+  function later(ms, fn) {
+    const id = setTimeout(() => {
+      cleanupTimers.delete(id);
+      fn();
+    }, ms);
+    cleanupTimers.add(id);
+  }
+  function retirePlayback(pb) {
+    later(CROSSFADE_SEC * 1000 + 150, () => disconnectPlayback(pb));
+  }
+  function createPlayback(index, bpm, seed) {
+    const preset = MUSIC_PRESETS[index];
+    const stepDur = 60 / bpm / 2;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(1, ctx.currentTime + CROSSFADE_SEC);
+    gain.connect(musicBus);
+    let delaySend = null;
+    let delayNode = null;
+    let feedback = null;
+    if (preset.delayWet > 0) {
+      delayNode = ctx.createDelay(2);
+      delayNode.delayTime.value = stepDur * 3;
+      feedback = ctx.createGain();
+      feedback.gain.value = 0.32;
+      delaySend = ctx.createGain();
+      delaySend.gain.value = preset.delayWet;
+      delaySend.connect(delayNode);
+      delayNode.connect(feedback);
+      feedback.connect(delayNode);
+      delayNode.connect(gain);
+    }
+    return {
+      key: `${index}:${bpm}:${seed}`,
+      gain,
+      preset,
+      stepDur,
+      melody: buildMelodyLoop(index, seed),
+      delaySend,
+      delayNode,
+      feedback,
+      state: { step: 0, nextStepTime: ctx.currentTime }
+    };
+  }
+  function disconnectPlayback(pb) {
+    try {
+      pb.gain.disconnect();
+      if (pb.delaySend) {
+        pb.delaySend.disconnect();
+        pb.feedback.disconnect();
+        pb.delayNode.disconnect();
+      }
+    } catch {}
+  }
+  function init() {
+    if (!muteLoaded)
+      loadMutedPreference();
+    ensureContext();
+  }
+  function setMuted(value) {
+    muted = !!value;
+    muteLoaded = true;
+    storageSet(MUTE_STORAGE_KEY, muted ? "true" : "false");
+    if (ctx) {
+      const t = ctx.currentTime;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(master.gain.value, t);
+      master.gain.linearRampToValueAtTime(muted ? 0 : 1, t + 0.08);
+      if (!muted)
+        startScheduler();
+    }
+  }
+  function toggleMute() {
+    setMuted(!muted);
+    return muted;
+  }
+  function isMuted() {
+    return muted;
+  }
+  function playSfx(name) {
+    if (muted)
+      return;
+    if (!ensureContext())
+      return;
+    const fn = SFX[name];
+    if (!fn) {
+      console.warn("Unknown sound effect requested:", name);
+      return;
+    }
+    fn();
+  }
+  function startMusic(themeIndex, levelNumber) {
+    if (!ensureContext())
+      return;
+    const { index: derivedIndex, bpm, seed } = presetForLevel(levelNumber);
+    const index = Number.isInteger(themeIndex) && themeIndex >= 0 && themeIndex < MUSIC_PRESETS.length ? themeIndex : derivedIndex;
+    const key = `${index}:${bpm}:${seed}`;
+    if (playback && playback.key === key)
+      return;
+    const old = playback;
+    playback = createPlayback(index, bpm, seed);
+    if (old) {
+      const t = ctx.currentTime;
+      old.gain.gain.cancelScheduledValues(t);
+      old.gain.gain.setValueAtTime(old.gain.gain.value, t);
+      old.gain.gain.linearRampToValueAtTime(0.0001, t + CROSSFADE_SEC);
+      retirePlayback(old);
+    }
+    startScheduler();
+  }
+  function stopMusic() {
+    if (!ctx || !playback)
+      return;
+    stopScheduler();
+    const old = playback;
+    playback = null;
+    const t = ctx.currentTime;
+    old.gain.gain.cancelScheduledValues(t);
+    old.gain.gain.setValueAtTime(old.gain.gain.value, t);
+    old.gain.gain.linearRampToValueAtTime(0.0001, t + 0.25);
+    later(400, () => disconnectPlayback(old));
+  }
+  function duckMusic(on) {
+    ducked = !!on;
+    if (ctx) {
+      const t = ctx.currentTime;
+      musicBus.gain.cancelScheduledValues(t);
+      musicBus.gain.setValueAtTime(musicBus.gain.value, t);
+      musicBus.gain.linearRampToValueAtTime(ducked || muted ? 0 : MUSIC_LEVEL, t + 0.15);
+      if (!ducked)
+        startScheduler();
+    }
+  }
+  function shutdown() {
+    stopScheduler();
+    for (const id of cleanupTimers)
+      clearTimeout(id);
+    cleanupTimers.clear();
+    playback = null;
+    if (ctx) {
+      const dying = ctx;
+      ctx = null;
+      master = null;
+      sfxBus = null;
+      musicBus = null;
+      noiseBuffer = null;
+      dying.close().catch(() => {});
+    }
+  }
+  function getState() {
+    return {
+      supported: audioConstructor() !== null,
+      hasContext: !!ctx,
+      contextState: ctx ? ctx.state : null,
+      muted,
+      ducked,
+      musicKey: playback ? playback.key : null
+    };
+  }
+
   // js/main.js
   var TILE_SIZE = 32;
   var MOTE_COUNT = 18;
@@ -2499,6 +3001,7 @@
   var JUMP_FORCE = 350;
   var MAX_FALL_SPEED = 600;
   var STOMP_BOUNCE = 260;
+  var LANDING_SFX_MIN_FALL = 260;
   var FINAL_LEVEL = 100;
   var HIGH_SCORE_KEY = "platformerHighScore";
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
@@ -2536,6 +3039,9 @@
       this.ui = new UI;
       this.ui.hideHUD();
       this.ui.setPauseEnabled(false);
+      loadMutedPreference();
+      this.ui.setMuteLabel(isMuted());
+      this.audio = exports_audio;
       this.difficulty = new Difficulty;
       this.timer = new Timer(60);
       this.timerActive = false;
@@ -2546,6 +3052,7 @@
       this.shakeTime = 0;
       this.squashTimer = 0;
       this._prevGrounded = true;
+      this._portalUnlocked = false;
       this.state = STATE.MENU;
       this.level = null;
       this.runSeed = 1;
@@ -2569,6 +3076,7 @@
       this._destroyed = true;
       this._abort.abort();
       this.input.destroy();
+      shutdown();
     }
     resize() {
       const dpr = window.devicePixelRatio || 1;
@@ -2589,11 +3097,12 @@
       const retryBtn = document.getElementById("retry-btn");
       const playAgainBtn = document.getElementById("play-again-btn");
       const pauseBtn = document.getElementById("pause-btn");
+      const muteBtn = document.getElementById("mute-btn");
       const resumeBtn = document.getElementById("resume-btn");
       const restartLevelBtn = document.getElementById("restart-level-btn");
       const quitMenuBtn = document.getElementById("quit-menu-btn");
-      if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn || !resumeBtn || !restartLevelBtn || !quitMenuBtn) {
-        throw new Error("Game requires #start-btn, #retry-btn, #play-again-btn, " + "#pause-btn, #resume-btn, #restart-level-btn and #quit-menu-btn elements in the page");
+      if (!startBtn || !retryBtn || !playAgainBtn || !pauseBtn || !muteBtn || !resumeBtn || !restartLevelBtn || !quitMenuBtn) {
+        throw new Error("Game requires #start-btn, #retry-btn, #play-again-btn, " + "#pause-btn, #mute-btn, #resume-btn, #restart-level-btn and " + "#quit-menu-btn elements in the page");
       }
       const onClick = (el, fn) => el.addEventListener("click", fn, { signal: this._abort.signal });
       onClick(startBtn, () => this.startGame());
@@ -2605,6 +3114,10 @@
       onClick(pauseBtn, () => {
         this.togglePause();
         pauseBtn.blur();
+      });
+      onClick(muteBtn, () => {
+        this.toggleSound();
+        muteBtn.blur();
       });
       onClick(resumeBtn, () => {
         this.togglePause();
@@ -2621,7 +3134,10 @@
       this.input.onJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
           return;
+        const vyBefore = this.player.vy;
         this.player.pressJump();
+        if (this.player.vy < vyBefore)
+          playSfx("jump");
       });
       this.input.onReleaseJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
@@ -2644,6 +3160,8 @@
           } else {
             this.togglePause();
           }
+        } else if (!e.repeat && (code === "KeyM" || code === "m" || code === "M")) {
+          this.toggleSound();
         } else if (this.state === STATE.PAUSED && code in PAUSE_MENU_ARROWS) {
           e.preventDefault();
           this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
@@ -2664,16 +3182,23 @@
         this.player?.cancelJumpFeel();
         this.ui.showOverlay("pause-screen");
         this.ui.setPauseLabel(true);
+        duckMusic(true);
         this.ui.focusPauseMenu();
       } else if (this.state === STATE.PAUSED) {
         this.setState(STATE.PLAYING);
         this.ui.hideOverlay("pause-screen");
         this.ui.setPauseLabel(false);
+        duckMusic(false);
         this.ui.blurPauseControls();
       }
     }
+    toggleSound() {
+      toggleMute();
+      this.ui.setMuteLabel(isMuted());
+    }
     returnToMenu() {
       this.setState(STATE.MENU);
+      stopMusic();
       this.ui.hideOverlay("game-over-screen");
       this.ui.hideOverlay("game-complete-screen");
       this.ui.showOverlay("menu-screen");
@@ -2726,6 +3251,7 @@
       this.collectibles = level.getCollectibles();
       this.hazards = level.getHazards();
       this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
+      this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
       this.levelCompleteTimer = 0;
       if (!Number.isFinite(this.timer.timeRemaining) || this.timer.timeRemaining < 0 || this.timer.timeRemaining > 9999) {
@@ -2743,6 +3269,9 @@
       this.ui.setPauseEnabled(true);
       this.camera.reset();
       this.camera.follow(this.player, level.width * level.tileSize, level.height * level.tileSize);
+      init();
+      duckMusic(false);
+      startMusic((Math.max(1, this.currentLevel) - 1) % THEMES.length, this.currentLevel);
     }
     retryLevel() {
       this.restartCurrentLevel("game-over-screen");
@@ -2764,6 +3293,7 @@
     }
     handleWin() {
       this.setState(STATE.LEVEL_COMPLETE);
+      playSfx("level_complete");
       this.ui.setPauseEnabled(false);
       this.levelCompleteTimer = 2;
       this.levelTransitionStalled = false;
@@ -2772,6 +3302,8 @@
     }
     handleGameOver(cause) {
       this.setState(STATE.GAME_OVER);
+      stopMusic();
+      playSfx("death");
       this.shakeTime = 0.35;
       if (this.player) {
         spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ff5a5a", 16);
@@ -2781,6 +3313,7 @@
     }
     handleGameComplete() {
       this.setState(STATE.GAME_COMPLETE);
+      stopMusic();
       this.ui.setPauseEnabled(false);
       let highScore = this.score;
       try {
@@ -2815,12 +3348,19 @@
         }
         this.player.prevX = this.player.x;
         this.player.prevY = this.player.y;
+        const bufferWasPending = this.player.jumpBufferTimer > 0;
         this.player.update(dt, this.input.isLeft(), this.input.isRight(), { walk: this.input.isWalk() });
+        if (bufferWasPending && this.player.jumpBufferTimer === 0 && this.player.vy < 0) {
+          playSfx("jump");
+        }
         this.physics.applyGravity(this.player, dt);
         const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
+        const vyBeforeResolve = this.player.vy;
         this.physics.resolveCollisions(this.player, collisions);
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
+          if (vyBeforeResolve >= LANDING_SFX_MIN_FALL)
+            playSfx("land");
           if (!this.input.isLeft() && !this.input.isRight()) {
             this.player.vx = 0;
           }
@@ -2829,6 +3369,7 @@
         this.enemyManager.updateAll(dt, this.player);
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
+          playSfx("stomp");
           this.player.vy = -STOMP_BOUNCE;
           this.player.coyoteTimer = 0;
           this.player.jumpCutAvailable = false;
@@ -2848,11 +3389,16 @@
         }
         const collectedCoins = this.collectibles.checkCollection(this.player);
         if (collectedCoins > 0) {
+          playSfx("coin");
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ffd23f", 12);
           this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
           for (let i = 0;i < collectedCoins; i++)
             this.timer.addCoinBonus();
           this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
+        }
+        if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
+          this._portalUnlocked = true;
+          playSfx("portal_unlock");
         }
         const portal = this.level.getPortal();
         if (portal && !this.player.hasReachedPortal() && this.collectibles.meetsPortalRequirement() && this.physics.checkAABB(this.player, portal)) {
@@ -2994,7 +3540,7 @@
       }
     }
   }
-  function init() {
+  function init2() {
     const game = new Game;
     if (typeof window !== "undefined") {
       window.game = game;
@@ -3002,7 +3548,7 @@
   }
   if (typeof document !== "undefined") {
     document.addEventListener("DOMContentLoaded", () => {
-      init();
+      init2();
     });
   }
 })();
