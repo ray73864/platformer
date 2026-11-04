@@ -1421,7 +1421,7 @@
     }
     return items;
   }
-  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null, shaft = null) {
+  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null, shaft = null, transitions = null) {
     const solid = (x, y) => {
       if (x < 0 || x >= width)
         return true;
@@ -1452,6 +1452,8 @@
         for (const dir of [-1, 1]) {
           const nx = x + dir;
           if (isCorr(nx, y)) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: nx, by: y });
             if (!reachable.has(key(nx, y))) {
               reachable.add(key(nx, y));
               queue.push([nx, y]);
@@ -1459,9 +1461,13 @@
             continue;
           }
           for (const ny of [y, y - 1]) {
-            if (standable(nx, ny) && !reachable.has(key(nx, ny))) {
-              reachable.add(key(nx, ny));
-              queue.push([nx, ny]);
+            if (standable(nx, ny)) {
+              if (transitions)
+                transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+              if (!reachable.has(key(nx, ny))) {
+                reachable.add(key(nx, ny));
+                queue.push([nx, ny]);
+              }
             }
           }
         }
@@ -1470,13 +1476,19 @@
       if (isShaft(x, y)) {
         for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
           if (isShaft(nx, ny)) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: nx, by: ny });
             if (!reachable.has(key(nx, ny))) {
               reachable.add(key(nx, ny));
               queue.push([nx, ny]);
             }
-          } else if (isShaftStopRow(y) && ny === y && standable(nx, ny) && !reachable.has(key(nx, ny))) {
-            reachable.add(key(nx, ny));
-            queue.push([nx, ny]);
+          } else if (isShaftStopRow(y) && ny === y && standable(nx, ny)) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+            if (!reachable.has(key(nx, ny))) {
+              reachable.add(key(nx, ny));
+              queue.push([nx, ny]);
+            }
           }
         }
         continue;
@@ -1507,9 +1519,13 @@
           for (let ly = y;ly < height; ly++) {
             if (hazard(c, ly))
               break;
-            if (standable(c, ly) && !reachable.has(key(c, ly))) {
-              reachable.add(key(c, ly));
-              queue.push([c, ly]);
+            if (standable(c, ly)) {
+              if (transitions)
+                transitions.push({ ax: x, ay: y, bx: c, by: ly });
+              if (!reachable.has(key(c, ly))) {
+                reachable.add(key(c, ly));
+                queue.push([c, ly]);
+              }
             }
             if (solid(c, ly))
               break;
@@ -1527,31 +1543,75 @@
               clear = false;
             }
           }
-          if (clear && !reachable.has(key(c, ty))) {
-            reachable.add(key(c, ty));
-            queue.push([c, ty]);
+          if (clear) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: c, by: ty });
+            if (!reachable.has(key(c, ty))) {
+              reachable.add(key(c, ty));
+              queue.push([c, ty]);
+            }
           }
         }
       }
       if (corridor !== null) {
         for (const nx of [x - 1, x + 1]) {
           const ny = isCorr(nx, y) ? y : isCorr(nx, y + 1) ? y + 1 : -1;
-          if (ny >= 0 && !reachable.has(key(nx, ny))) {
-            reachable.add(key(nx, ny));
-            queue.push([nx, ny]);
+          if (ny >= 0) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+            if (!reachable.has(key(nx, ny))) {
+              reachable.add(key(nx, ny));
+              queue.push([nx, ny]);
+            }
           }
         }
       }
       if (shaft !== null && isShaftStopRow(y)) {
         for (const nx of [x - 1, x + 1]) {
-          if (isShaft(nx, y) && !reachable.has(key(nx, y))) {
-            reachable.add(key(nx, y));
-            queue.push([nx, y]);
+          if (isShaft(nx, y)) {
+            if (transitions)
+              transitions.push({ ax: x, ay: y, bx: nx, by: y });
+            if (!reachable.has(key(nx, y))) {
+              reachable.add(key(nx, y));
+              queue.push([nx, y]);
+            }
           }
         }
       }
     }
     return reachable;
+  }
+  function computeCoinSafeHub(width, goalTile, reachable, transitions) {
+    if (!goalTile || !transitions)
+      return null;
+    const goalKey = goalTile.y * width + goalTile.x;
+    const rev = new Map;
+    for (const t of transitions) {
+      const bk = t.by * width + t.bx;
+      let list = rev.get(bk);
+      if (!list) {
+        list = [];
+        rev.set(bk, list);
+      }
+      list.push(t.ay * width + t.ax);
+    }
+    const toPortal = new Set([goalKey]);
+    const queue = [goalKey];
+    while (queue.length > 0) {
+      const k = queue.pop();
+      for (const pk of rev.get(k) || []) {
+        if (!toPortal.has(pk)) {
+          toPortal.add(pk);
+          queue.push(pk);
+        }
+      }
+    }
+    const hub = new Set;
+    for (const k of reachable) {
+      if (toPortal.has(k))
+        hub.add(k);
+    }
+    return hub;
   }
   class Level {
     constructor(levelNumber, tileSize, seed) {
@@ -1580,7 +1640,8 @@
       while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
         this.tiles = this.generateLevel();
         this.spawnTile = this.getSpawnTile();
-        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap, this.shaftGap);
+        this.modelTransitions = [];
+        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap, this.shaftGap, this.modelTransitions);
         this.portalTile = this.pickPortalTile();
         valid = this.portalTile !== null && this.bridgeIntact() && this.shaftIntact();
         if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
@@ -1608,6 +1669,7 @@
       if (!valid) {
         throw new Error(`Level ${levelNumber}: no reachable portal position after ` + `${MAX_GENERATION_ATTEMPTS} generation attempts`);
       }
+      this.coinSafeHub = computeCoinSafeHub(this.width, this.portalTile, this.reachableTiles, this.modelTransitions);
       this.spawnPoint = {
         x: this.spawnTile.x * tileSize,
         y: this.spawnTile.y * tileSize
@@ -2624,8 +2686,11 @@
         return false;
       };
       const candidates = [];
+      const hub = this.coinSafeHub;
       for (const key of this.reachableTiles) {
         if (key === spawnKey || key === portalKey)
+          continue;
+        if (hub !== null && hub !== undefined && !hub.has(key))
           continue;
         const x = key % this.width;
         const y = Math.floor(key / this.width);

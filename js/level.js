@@ -802,6 +802,13 @@ function shuffle(items, rng = Math.random) {
 //   - Shaft cells join reachableTiles (ROUTE cells): coins may sit on them
 //     (collectible while riding); hazard/marker windows are banned upstream.
 // Callers without a shaft pass null: behavior is byte-identical.
+//
+// Optional `transitions` (coin safe-hub, fairness wave 2026-11-04): an array
+// that receives EVERY modelled transition {ax,ay,bx,by} the flood considers
+// from an expanded cell — including ones whose target was already visited.
+// Pure observation: it cannot alter the reachable set (the coin safe-hub
+// reverse-BFS runs over this record; see computeCoinSafeHub). Callers passing
+// null (every pre-existing caller) pay nothing and behave byte-identically.
 export function computeReachable(
     tiles,
     width,
@@ -809,7 +816,8 @@ export function computeReachable(
     startTile,
     requireOpenHead = false,
     corridor = null,
-    shaft = null
+    shaft = null,
+    transitions = null
 ) {
     const solid = (x, y) => {
         if (x < 0 || x >= width) return true;
@@ -863,6 +871,7 @@ export function computeReachable(
             for (const dir of [-1, 1]) {
                 const nx = x + dir;
                 if (isCorr(nx, y)) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: y });
                     if (!reachable.has(key(nx, y))) {
                         reachable.add(key(nx, y));
                         queue.push([nx, y]);
@@ -870,9 +879,12 @@ export function computeReachable(
                     continue;
                 }
                 for (const ny of [y, y - 1]) {
-                    if (standable(nx, ny) && !reachable.has(key(nx, ny))) {
-                        reachable.add(key(nx, ny));
-                        queue.push([nx, ny]);
+                    if (standable(nx, ny)) {
+                        if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+                        if (!reachable.has(key(nx, ny))) {
+                            reachable.add(key(nx, ny));
+                            queue.push([nx, ny]);
+                        }
                     }
                 }
             }
@@ -886,14 +898,17 @@ export function computeReachable(
         if (isShaft(x, y)) {
             for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
                 if (isShaft(nx, ny)) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: ny });
                     if (!reachable.has(key(nx, ny))) {
                         reachable.add(key(nx, ny));
                         queue.push([nx, ny]);
                     }
-                } else if (isShaftStopRow(y) && ny === y &&
-                    standable(nx, ny) && !reachable.has(key(nx, ny))) {
-                    reachable.add(key(nx, ny));
-                    queue.push([nx, ny]);
+                } else if (isShaftStopRow(y) && ny === y && standable(nx, ny)) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+                    if (!reachable.has(key(nx, ny))) {
+                        reachable.add(key(nx, ny));
+                        queue.push([nx, ny]);
+                    }
                 }
             }
             continue;
@@ -937,9 +952,12 @@ export function computeReachable(
                     // Falling into a spike cell is death: no landing here
                     // and nothing further down the column either.
                     if (hazard(c, ly)) break;
-                    if (standable(c, ly) && !reachable.has(key(c, ly))) {
-                        reachable.add(key(c, ly));
-                        queue.push([c, ly]);
+                    if (standable(c, ly)) {
+                        if (transitions) transitions.push({ ax: x, ay: y, bx: c, by: ly });
+                        if (!reachable.has(key(c, ly))) {
+                            reachable.add(key(c, ly));
+                            queue.push([c, ly]);
+                        }
                     }
                     if (solid(c, ly)) break;
                 }
@@ -993,9 +1011,12 @@ export function computeReachable(
                         clear = false;
                     }
                 }
-                if (clear && !reachable.has(key(c, ty))) {
-                    reachable.add(key(c, ty));
-                    queue.push([c, ty]);
+                if (clear) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: c, by: ty });
+                    if (!reachable.has(key(c, ty))) {
+                        reachable.add(key(c, ty));
+                        queue.push([c, ty]);
+                    }
                 }
             }
         }
@@ -1008,9 +1029,12 @@ export function computeReachable(
             for (const nx of [x - 1, x + 1]) {
                 const ny = isCorr(nx, y) ? y :
                     (isCorr(nx, y + 1) ? y + 1 : -1);
-                if (ny >= 0 && !reachable.has(key(nx, ny))) {
-                    reachable.add(key(nx, ny));
-                    queue.push([nx, ny]);
+                if (ny >= 0) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: ny });
+                    if (!reachable.has(key(nx, ny))) {
+                        reachable.add(key(nx, ny));
+                        queue.push([nx, ny]);
+                    }
                 }
             }
         }
@@ -1021,15 +1045,72 @@ export function computeReachable(
         // analogue here). Every other cell treats the shaft as air.
         if (shaft !== null && isShaftStopRow(y)) {
             for (const nx of [x - 1, x + 1]) {
-                if (isShaft(nx, y) && !reachable.has(key(nx, y))) {
-                    reachable.add(key(nx, y));
-                    queue.push([nx, y]);
+                if (isShaft(nx, y)) {
+                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: y });
+                    if (!reachable.has(key(nx, y))) {
+                        reachable.add(key(nx, y));
+                        queue.push([nx, y]);
+                    }
                 }
             }
         }
     }
 
     return reachable;
+}
+
+// Coin safe-hub: the subset of `reachable` from which the portal is still
+// reachable under the SAME movement model that produced it. Forward
+// reachability alone does not promise a survivable RETURN — a ledge you can
+// drop onto but not jump back off (vertical zigzag shelves behind >=2-tile
+// walls: entry fall, no <=1-row exit) passes the forward test and traps the
+// player after the grab, making death the collection mechanic (player report
+// 2026-11-04, L25: "the only way is to die after collecting the 3 coins so
+// that you can finish the level"). Coins must only sit where spawn->cell AND
+// cell->portal both hold.
+//
+// Method: BFS over the REVERSED transition relation recorded by
+// computeReachable's `transitions` out-param. Every source of a recorded edge
+// is forward-reachable by construction, so intersecting with `reachable` is
+// belt-and-braces; deck/lift edges are bidirectional in the model, so riding
+// back is credited exactly as riding in. Cost: O(V+E) extra over one flood —
+// same order as the flood itself, no physics simulation, no retries.
+//
+// Model-vs-physics fidelity (documented limits): the model is CONSERVATIVE
+// against physics wherever an escape needs more than its vocabulary (stomp
+// bounces, mid-shaft boarding, late-steer arcs) — those cells are excluded
+// from the hub even though a skilled player could leave, costing coin count,
+// never fairness. It can only lie optimistically where the model over-claims
+// an edge physics fails (~2.4% of claimed edges per the edgecheck sweep,
+// mostly long fall arcs); canyonRouteFair physics-verifies the spawn->portal
+// route, and coin cells sit on or beside validated route surface, so residual
+// trap risk beyond this guard stays small.
+export function computeCoinSafeHub(width, goalTile, reachable, transitions) {
+    if (!goalTile || !transitions) return null;
+    const goalKey = goalTile.y * width + goalTile.x;
+    const rev = new Map();
+    for (const t of transitions) {
+        const bk = t.by * width + t.bx;
+        let list = rev.get(bk);
+        if (!list) { list = []; rev.set(bk, list); }
+        list.push(t.ay * width + t.ax);
+    }
+    const toPortal = new Set([goalKey]);
+    const queue = [goalKey];
+    while (queue.length > 0) {
+        const k = queue.pop();
+        for (const pk of (rev.get(k) || [])) {
+            if (!toPortal.has(pk)) {
+                toPortal.add(pk);
+                queue.push(pk);
+            }
+        }
+    }
+    const hub = new Set();
+    for (const k of reachable) {
+        if (toPortal.has(k)) hub.add(k);
+    }
+    return hub;
 }
 
 export function canReach(
@@ -1112,6 +1193,13 @@ export class Level {
             // portal candidate survives and the retry regenerates.
             this.tiles = this.generateLevel();
             this.spawnTile = this.getSpawnTile();
+            // Coin safe-hub record (see computeCoinSafeHub): every modelled
+            // transition of THIS attempt's flood. The accepted attempt's
+            // record is the shipped grid's; extractCoins intersects its pool
+            // with the reverse-reachable-to-portal subset so no coin can sit
+            // in a one-way pocket. Pure observation — reachableTiles and the
+            // attempt economy are untouched.
+            this.modelTransitions = [];
             this.reachableTiles = computeReachable(
                 this.tiles,
                 this.width,
@@ -1124,7 +1212,8 @@ export class Level {
                 // horizontal ones, so one argument spelling covers both.
                 this.direction === 'vertical',
                 this.bridgeGap,
-                this.shaftGap
+                this.shaftGap,
+                this.modelTransitions
             );
             this.portalTile = this.pickPortalTile();
             valid = this.portalTile !== null && this.bridgeIntact() &&
@@ -1192,6 +1281,14 @@ export class Level {
                 `${MAX_GENERATION_ATTEMPTS} generation attempts`
             );
         }
+
+        // Coin safe-hub (see computeCoinSafeHub): the cells of the accepted
+        // flood from which the portal stays reachable under the same model.
+        // Derived ONCE post-acceptance; extractCoins intersects its candidate
+        // pool with it so no deployed coin can sit in a one-way pocket.
+        this.coinSafeHub = computeCoinSafeHub(
+            this.width, this.portalTile, this.reachableTiles,
+            this.modelTransitions);
 
         // Pixel-space spawn point sits on the forced flat ground at the
         // direction's spawn tile (left-facing mirrors it to the right edge,
@@ -3010,8 +3107,22 @@ export class Level {
             return false;
         };
         const candidates = [];
+        // Safe-hub restriction (fairness wave 2026-11-04, see
+        // computeCoinSafeHub): a coin must sit where the player can STILL
+        // reach the portal alive after grabbing it. Forward-reachable-only
+        // pools let vertical zigzag shelves host coins behind >=2-tile walls
+        // (drop in, never jump out) — collecting them made DEATH the only
+        // exit and, with coins persisting across retries, the completion
+        // mechanic (player report L25). Pool filtering happens HERE, after
+        // acceptance, so generation attempt counts are untouched; maps whose
+        // hub pool cannot fill the target degrade gracefully to fewer coins
+        // (never throw, never re-attempt). Fixtures that swap
+        // reachableTiles outside a constructor run clear coinSafeHub to
+        // keep the old unrestricted-pool behaviour.
+        const hub = this.coinSafeHub;
         for (const key of this.reachableTiles) {
             if (key === spawnKey || key === portalKey) continue;
+            if (hub !== null && hub !== undefined && !hub.has(key)) continue;
             const x = key % this.width;
             const y = Math.floor(key / this.width);
             candidates.push({ x, y, safe: !spikeNear(x, y) });

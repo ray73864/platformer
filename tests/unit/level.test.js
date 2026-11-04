@@ -813,6 +813,10 @@ test("extractCoins enforces the 20% density cap (spec §Difficulty Scaling)", ()
     const reachable = new Set();
     for (let i = 0; i < 100; i++) reachable.add(3 * level.width + i); // row 3
     level.reachableTiles = reachable;
+    // The synthetic pool has no safe-hub record (the constructor's hub was
+    // computed for the REAL L1 grid); clearing it restores extractCoins'
+    // unrestricted-pool behaviour, which is what this fixture exercises.
+    level.coinSafeHub = null;
     level.spawnTile = { x: 0, y: 0 }; // key 0, outside the candidate row
     level.portalTile = null;
     level.height = 7; // density cap floor(20*7*0.2) = 28 < capped target 30
