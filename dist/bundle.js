@@ -786,6 +786,7 @@
   var CHARGER_CHANCE_MAX = 0.2;
   var SPINY_CAP_DIVISOR = 3;
   var HOSTILE_MIN_RUN = 4;
+  var ENEMY_MIN_RUN = 2;
   var DECK_BRIDGE_FIRST_LEVEL = 8;
   var MAX_DECK_BRIDGES = 1;
   var BRIDGE_CHANCE = 0.6;
@@ -2285,12 +2286,6 @@
       const used = new Set;
       const spawnKey = this.spawnTile.y * this.width + this.spawnTile.x;
       const portalKey = this.portalTile ? this.portalTile.y * this.width + this.portalTile.x : -1;
-      const patrolCovered = new Set;
-      for (const s of this.deriveEnemySpawns()) {
-        for (let cx = s.left;cx <= s.right; cx++) {
-          patrolCovered.add(s.y * this.width + cx);
-        }
-      }
       const spikeNear = (x, y) => {
         for (let dy = -COIN_SPIKE_MARGIN;dy <= COIN_SPIKE_MARGIN; dy++) {
           for (let dx = -COIN_SPIKE_MARGIN;dx <= COIN_SPIKE_MARGIN; dx++) {
@@ -2306,8 +2301,6 @@
       const candidates = [];
       for (const key of this.reachableTiles) {
         if (key === spawnKey || key === portalKey)
-          continue;
-        if (patrolCovered.has(key))
           continue;
         const x = key % this.width;
         const y = Math.floor(key / this.width);
@@ -2369,11 +2362,12 @@
     spawnEnemies() {
       this.enemyManager.clear();
       const spawns = this.deriveEnemySpawns();
+      const legalSpawns = spawns.filter((s) => solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN && (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
-      const spinyCap = Math.ceil(spawns.length / SPINY_CAP_DIVISOR);
+      const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
       let spinies = 0;
-      for (const s of spawns) {
+      for (const s of legalSpawns) {
         let kind = "walker";
         const roll = this.rng();
         if (roll < spinyChance && spinies < spinyCap) {
@@ -2615,6 +2609,17 @@
           ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
         }
       }
+      if (!art) {
+        ctx.fillStyle = "#ff4444";
+        for (const spike of this.hazards.getSpikes()) {
+          ctx.beginPath();
+          ctx.moveTo(spike.x, spike.y + spike.height);
+          ctx.lineTo(spike.x + spike.width / 2, spike.y);
+          ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
+          ctx.fill();
+        }
+      }
+      this.enemyManager.drawAll(ctx, sprites);
       if (art) {
         sprites.drawCoins(ctx, this.coins);
       } else {
@@ -2627,17 +2632,6 @@
           }
         }
       }
-      if (!art) {
-        ctx.fillStyle = "#ff4444";
-        for (const spike of this.hazards.getSpikes()) {
-          ctx.beginPath();
-          ctx.moveTo(spike.x, spike.y + spike.height);
-          ctx.lineTo(spike.x + spike.width / 2, spike.y);
-          ctx.lineTo(spike.x + spike.width, spike.y + spike.height);
-          ctx.fill();
-        }
-      }
-      this.enemyManager.drawAll(ctx, sprites);
       if (art) {
         sprites.drawPortal(ctx, this.portal, this.collectibles.meetsPortalRequirement());
       } else if (this.portal && this.collectibles.meetsPortalRequirement()) {

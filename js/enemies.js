@@ -7,8 +7,9 @@
  *   terrain geometry (the contiguous solid run under its walk row, derived
  *   by Level.spawnEnemies), never a fixed radius around the spawn point.
  * - At a bound the enemy clamps flush against it and reverses; it never
- *   overshoots. Bounds are always at least one tile wide, so the body fits
- *   inside them.
+ *   overshoots. Deployment guarantees at least one full tile of travel
+ *   between bounds (ENEMY_MIN_RUN filter in level.js), so patrols never
+ *   frame-flip on a single-column shelf.
  * - `checkCollision(player)` is an axis-aligned AABB overlap against a
  *   hitbox inset from the 32x32 body (visible creature art does not fill
  *   the cell edge-to-edge; killing on invisible margins read as dying
@@ -49,7 +50,11 @@
  */
 import { aabbOverlap } from './physics.js';
 
-const ENEMY_WIDTH = 32;const ENEMY_HEIGHT = 32;
+// Exported so Level.spawnEnemies' deploy filter (ENEMY_MIN_RUN) measures
+// patrol travel against the real body width instead of mirroring a magic
+// number (same reasoning as COIN_POINTS in collectibles.js).
+export const ENEMY_WIDTH = 32;
+const ENEMY_HEIGHT = 32;
 const ENEMY_SPEED = 40; // px/s (was 50: dodging on narrow shelves read as
 // frame-perfect; 40 keeps patrols threatening without demanding precision)
 // Lethal hitbox inset from the body rect: the shipped creature art leaves

@@ -216,21 +216,16 @@ test("spawnEnemies places enemies on standable reachable tiles with geometry-der
 
     level.spawnEnemies();
 
+    // Ruling 2026-11-04 (ENEMY_MIN_RUN): the band clamp shrinks the column-9
+    // site's span to [9,9] — zero body travel, the flip-flop vibration the
+    // player reported — so the deploy filter drops it before kind rolls.
+    // Only the right-shelf site survives.
     const enemies = level.getEnemyManager().enemies;
-    expect(enemies.length).toBe(2);
+    expect(enemies.length).toBe(1);
 
     // Body rests inside the standable air tile (same convention as the
     // player spawn): bottom edge sits on the solid tile below.
-    const left = enemies[0];
-    expect(left.x).toBe(9 * 32);
-    expect(left.y).toBe(11 * 32);
-    // Patrol spans the walkable run under the walk row (columns 0-9 stop
-    // at the pit) clamped to the band: columns 9..9, so 288..320 px. The
-    // clamp keeps patrols out of the spawn runway and portal band (I3).
-    expect(left.minX).toBe(9 * 32);
-    expect(left.maxX).toBe(10 * 32);
-
-    const right = enemies[1];
+    const right = enemies[0];
     expect(right.x).toBe(13 * 32);
     expect(right.y).toBe(11 * 32);
     // Columns 12-19 clamped to band max w-6=14: 384..480 px.
@@ -276,7 +271,10 @@ test("spawnEnemies skips unreachable tiles", () => {
 
 test("spawnEnemies is idempotent across repeated calls", () => {
     const tiles = twoShelfGrid();
-    tiles[11][9] = 4; // Inside the patrol band (>= HAZARD_SPAWN_EXCLUDE_COLS)
+    // Column 13 (not 9): the band clamp would shrink a column-9 site to
+    // zero travel and the ENEMY_MIN_RUN deploy filter drops it (ruling
+    // 2026-11-04), leaving nothing for idempotency to hold onto.
+    tiles[11][13] = 4; // Inside the patrol band, >= 2 columns of travel
     const level = levelWithGrid(tiles);
 
     level.spawnEnemies();
@@ -293,16 +291,21 @@ test("patrol bounds are clamped to the band within level bounds", () => {
 
     level.spawnEnemies();
 
+    // Ruling 2026-11-04: the column-9 site's band-clamped span is [9,9]
+    // (zero travel) so the ENEMY_MIN_RUN deploy filter drops it — the
+    // spawn-runway side of the clamp now manifests as a dropped site, not
+    // a vibrating body (pinned in enemy_narrow_shelf_ban.test.js). The
+    // portal-side survivor still proves the clamp decides bounds.
     const enemies = level.getEnemyManager().enemies;
-    expect(enemies.length).toBe(2);
+    expect(enemies.length).toBe(1);
     for (const enemy of enemies) {
         expect(enemy.minX).toBeGreaterThanOrEqual(0);
         expect(enemy.maxX).toBeLessThanOrEqual(level.width * level.tileSize);
     }
     // The band clamp, not the wall, decides the bounds now: never sweep
     // the spawn runway columns 0-8 or portal-band columns 15-19.
-    expect(enemies[0].minX).toBe(9 * 32);
-    expect(enemies[1].maxX).toBe(15 * 32);
+    expect(enemies[0].minX).toBe(12 * 32);
+    expect(enemies[0].maxX).toBe(15 * 32);
 });
 
 test("hitbox is inset from the body: edge-adjacent player is safe", () => {

@@ -353,20 +353,34 @@ test("enemy markers sit on standable tiles and patrols stay walkable, banded, an
     }
 });
 
-test("coins never sit on a tile any enemy patrol sweeps", () => {
-    for (const n of [5, 6, 7, 8, 9]) {
-        const level = new Level(n, 32);
-        const covered = new Set();
-        for (const e of level.getEnemyManager().enemies) {
-            const y = e.y / 32;
-            for (let c = e.minX / 32; c <= e.maxX / 32 - 1; c++) {
-                covered.add(`${c},${y}`);
+test("coins may sit on tiles an enemy patrol sweeps (ruling 2026-11-04)", () => {
+    // The old rule excluded patrol-covered tiles ("bait for a kill"). The
+    // player ruling removed it: enemies have zero interaction with coins
+    // (only the player collects — see coin_enemy_coexistence.test.js for
+    // the runtime proof), so coins now place anywhere terrain-valid. This
+    // sweep proves the exclusion is really gone (>=1 coin inside a patrol
+    // span) while the spawn/portal courtesy still holds.
+    let onPatrol = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+        for (const n of [5, 6, 8, 9]) {
+            const level = new Level(n, 32, n * 1000 + seed);
+            const covered = new Set();
+            for (const e of level.getEnemyManager().enemies) {
+                const y = e.y / 32;
+                for (let c = e.minX / 32; c <= e.maxX / 32 - 1; c++) {
+                    covered.add(`${c},${y}`);
+                }
+            }
+            const spawn = level.spawnTile, portal = level.portalTile;
+            for (const coin of level.getCoins()) {
+                const cx = coin.x / 32, cy = coin.y / 32;
+                expect(cx === spawn.x && cy === spawn.y).toBe(false);
+                if (portal) expect(cx === portal.x && cy === portal.y).toBe(false);
+                if (covered.has(`${cx},${cy}`)) onPatrol++;
             }
         }
-        for (const coin of level.getCoins()) {
-            expect(covered.has(`${coin.x / 32},${coin.y / 32}`)).toBe(false);
-        }
     }
+    expect(onPatrol).toBeGreaterThan(0);
 });
 
 test("BFS treats spike strips at the physics-verified crossing boundary", () => {

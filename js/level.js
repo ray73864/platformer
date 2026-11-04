@@ -1,6 +1,6 @@
 import { Collectibles } from './collectibles.js';
 import { Difficulty, PHASE2_FIRST_LEVEL, tierIndexFor } from './difficulty.js';
-import { EnemyManager } from './enemies.js';
+import { EnemyManager, ENEMY_WIDTH } from './enemies.js';
 import { Hazards } from './hazards.js';
 import { Physics, aabbOverlap } from './physics.js';
 import { Player } from './player.js';
@@ -85,6 +85,23 @@ const SPINY_CAP_DIVISOR = 3;
 // to 5 for chargers specifically (dash halves the reaction room) — tune by
 // measurement, not by eye.
 const HOSTILE_MIN_RUN = 4;
+// Player ruling 2026-11-04: "Enemies that are on a single tile wide block
+// just bounce back and forth really super fast, I don't think they should be
+// able to spawn on a single wide block." The vibration is exact arithmetic:
+// a 32px body inside bounds [x*32,(x+1)*32] has ZERO px of travel, so
+// _patrolStep clamp-flips its heading every frame (sprite shivers in place
+// at frame rate). Repro sweep L5..100 x 10 seeds at HEAD f18725e: 419/3268
+// deployed enemies (12.8%) across 409/960 maps (42.6%) ended with final
+// bounds narrower than one tile of travel. Leak paths measured: 165 shaft
+// approach-window clamps + 70 bridge-lip clamps + 38 patrol-band clamps in
+// deriveEnemySpawns (a legal >=2-column site shrinks to its own column when
+// a fairness window clips it), plus 146 raw single-column markers from
+// isMarkerSite's route-adjacent fallback pass (minSpan=1) and post-marker
+// motif edits. EVERY deployed enemy of EVERY kind now requires BOTH a solid
+// support run >= ENEMY_MIN_RUN under the spawn column AND >= one full tile
+// of travel between its FINAL (post-clamp) bounds; illegal sites are dropped
+// before any kind roll (see spawnEnemies' stream note).
+const ENEMY_MIN_RUN = 2;
 
 // --- Deck bridges: REQUIRED crossings over unjumpable gaps ------------------
 // Player ruling 2026-11-04: "moving platforms should only appear when the gap
@@ -2251,8 +2268,11 @@ export class Level {
     // One geometry pass over the grid's type-4 markers producing every
     // valid enemy deployment: standable marker tile, reachable from the
     // player spawn, free patrol span (patrolSpan), clamped to the
-    // direction's band (patrolBandBounds). Shared by spawnEnemies and the
-    // coin exclusion so patrol bounds and coin placement can never diverge.
+    // direction's band (patrolBandBounds). Consumed by spawnEnemies (which
+    // additionally drops sub-ENEMY_MIN_RUN sites before rolling kinds) and
+    // by the constructor's validity guard; note the fairness-window clamps
+    // below can shrink a placement-legal span to one column, which is
+    // exactly why the deploy filter re-checks final travel (ENEMY_MIN_RUN).
     // Markers outside the band are skipped: the generator never emits them,
     // and an enemy whose spawn column sits beyond its own clamped bounds
     // would teleport on its first tick.
@@ -2584,10 +2604,13 @@ export class Level {
         if (!span) return false;
         const [bandMin, bandMax] = this.patrolBandBounds();
         // Strict sites patrol at least two columns. The fallback pass also
-        // accepts a one-column shelf — a stationary enemy, which derive-
-        // EnemySpawns deploys happily (it only needs a span) and the player
-        // can see, wait out, or stomp. Starving these last sites is what
-        // burned whole 200-attempt budgets on tight climb grids.
+        // accepts a one-column shelf: it still saves the CONSTRUCTION from
+        // being thrown (the validity guard reads raw deriveEnemySpawns, and
+        // starving these last sites is what burned whole 200-attempt
+        // budgets on tight climb grids), but since ruling 2026-11-04 the
+        // deploy filter in spawnEnemies drops such sites instead of shipping
+        // a body with sub-tile travel that clamp-flips every frame (the old
+        // "stationary enemy" claim was never true — it vibrates).
         const minSpan = opts.allowRouteAdjacent ? 1 : 2;
         return Math.min(span.right, bandMax) -
             Math.max(span.left, bandMin) + 1 >= minSpan;
@@ -2734,16 +2757,17 @@ export class Level {
             ? this.portalTile.y * this.width + this.portalTile.x
             : -1;
 
-        // Only place coins on tiles the player can actually reach — and
-        // never under an enemy patrol: the game loop's death check precedes
-        // collection, so a coin inside a sweep is bait for a kill (before
-        // this exclusion ~18% of coins sat on the enemy's own marker tile).
-        const patrolCovered = new Set();
-        for (const s of this.deriveEnemySpawns()) {
-            for (let cx = s.left; cx <= s.right; cx++) {
-                patrolCovered.add(s.y * this.width + cx);
-            }
-        }
+        // Only place coins on tiles the player can actually reach. Coins MAY
+        // sit inside an enemy patrol (player ruling 2026-11-04: "Enemies
+        // can't walk through coins, I think they should be able to, it's
+        // only me that collides with them to pick them up") — enemies have
+        // zero interaction with coins at runtime: Collectibles.checkCollection
+        // tests the PLAYER AABB only (collectibles.js), and no enemy code
+        // path reads or blocks coins. The old exclusion (~18% of coins had
+        // been sitting on marker tiles before it) also cost candidate pool
+        // on every enemy-bearing map; removing it reshuffles coin layouts
+        // there (accepted design change; L1..4 keep byte-identical layouts
+        // — those maps deploy no enemies so the excluded set was empty).
         const spikeNear = (x, y) => {
             for (let dy = -COIN_SPIKE_MARGIN; dy <= COIN_SPIKE_MARGIN; dy++) {
                 for (let dx = -COIN_SPIKE_MARGIN; dx <= COIN_SPIKE_MARGIN; dx++) {
@@ -2760,7 +2784,6 @@ export class Level {
         const candidates = [];
         for (const key of this.reachableTiles) {
             if (key === spawnKey || key === portalKey) continue;
-            if (patrolCovered.has(key)) continue;
             const x = key % this.width;
             const y = Math.floor(key / this.width);
             candidates.push({ x, y, safe: !spikeNear(x, y) });
@@ -2851,6 +2874,37 @@ export class Level {
         // and none walks through rock or spikes.
         const spawns = this.deriveEnemySpawns();
 
+        // Narrow-shelf deploy filter (player ruling 2026-11-04, see
+        // ENEMY_MIN_RUN): drop every site whose final bounds cannot carry a
+        // real patrol — support run < 2 under the spawn column, OR less than
+        // one full tile of body travel between the FINAL (post band/bridge/
+        // shaft-clamp) bounds. This catches all four leak paths at their
+        // confluence: markers are validated pre-clamp (and pre-mirror for
+        // 'left'), while the fairness windows clip spans only here, so a
+        // site that was legal at placement can arrive here as a single
+        // vibrating column. Filtering AFTER derive (never inside it) keeps
+        // terrain byte-identical: the constructor's validity guard still
+        // sees raw derive results, generation attempts never change, and no
+        // seed newly throws. Stream effects stated honestly: enemy COUNT may
+        // drop on affected maps (measured pre-fix: ~37% of L5+ maps held
+        // ONLY illegal sites and now ship zero enemies — and for VERTICAL
+        // maps specifically the rate is 96.6%: their sole markers came from
+        // the cramped route-adjacent fallback, so the vertical threat layer
+        // awaits an upstream placement wave that seats >=2-col ledges at
+        // MARKER time); dropping BEFORE the rolls consumes fewer rng draws,
+        // so kind assignments shift versus old builds on mixed maps AND the
+        // later deriveMovingPlatforms draws shift with them (deck speed /
+        // phase differ vs old builds on ~22% of maps — deterministic per
+        // seed, fairness-neutral since gap geometry validates pre-roll);
+        // cross-build comparability is broken by design — fix 2's
+        // coin-exclusion removal already reshapes the stream upstream via
+        // extractCoins' shuffle, and grew realized coin yield ~29% (the
+        // patrol cells were mostly safe surface), which the clear-bonus
+        // calibration notes in main.js should be re-checked against.
+        const legalSpawns = spawns.filter(s =>
+            solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN &&
+            (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
+
         // Kind assignment rides the SAME marker sites/spans as walkers —
         // placement fairness rules are untouched, only what stands on a site
         // varies. Rolls consume this.rng here, AFTER every geometry, spike,
@@ -2864,10 +2918,10 @@ export class Level {
         const chargerChance = kindChance(
             this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS,
             CHARGER_CHANCE_MAX);
-        const spinyCap = Math.ceil(spawns.length / SPINY_CAP_DIVISOR);
+        const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
         let spinies = 0;
 
-        for (const s of spawns) {
+        for (const s of legalSpawns) {
             let kind = 'walker';
             const roll = this.rng();
             if (roll < spinyChance && spinies < spinyCap) {
@@ -3230,21 +3284,6 @@ export class Level {
             }
         }
 
-        // Draw coins
-        if (art) {
-            sprites.drawCoins(ctx, this.coins);
-        } else {
-            ctx.fillStyle = '#FFD700'; // Gold
-
-            for (const coin of this.coins) {
-                if (!coin.collected) {
-                    ctx.beginPath();
-                    ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            }
-        }
-
         // Draw hazards (spikes). Art path: the tooth tile was painted by
         // drawWorld straight from the grid — nothing left to do here.
         if (!art) {
@@ -3261,6 +3300,27 @@ export class Level {
 
         // Draw enemies (EnemyManager owns per-enemy drawing).
         this.enemyManager.drawAll(ctx, sprites);
+
+        // Draw coins AFTER enemies (ruling 2026-11-04: patrols may cross
+        // coins again). Coins used to draw first, so a body mid-sweep fully
+        // hid the 16px pickup — that read as "enemy in FRONT of the coin",
+        // never as "walking THROUGH it". Keeping the collectible on top
+        // makes the pass-through legible frame by frame AND keeps every
+        // coin findable under the all-coins portal gate: a slime sweeping
+        // in front would blink out a coin the player must hunt down.
+        if (art) {
+            sprites.drawCoins(ctx, this.coins);
+        } else {
+            ctx.fillStyle = '#FFD700'; // Gold
+
+            for (const coin of this.coins) {
+                if (!coin.collected) {
+                    ctx.beginPath();
+                    ctx.arc(coin.x + coin.width / 2, coin.y + coin.height / 2, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
 
         // Draw portal; ghosted until the all-coins gate is met.
         if (art) {

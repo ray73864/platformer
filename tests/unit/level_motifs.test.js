@@ -19,6 +19,18 @@ const T = 32;
 // Captured from the pre-motif generator (HEAD 232edce, scratch capture in
 // /tmp/opencode/motifs/golden-capture.mjs); ANY change to L1..7 output must
 // fail this test — motifs included.
+// RECAPTURED at the fairness rulings of 2026-11-04 (ENEMY_MIN_RUN deploy
+// filter + coins may coexist with patrols): L1..4 keep their original
+// 232edce hashes byte-identically (no markers below level 5, so neither fix
+// touches those streams), while ALL 24 L5..7 fingerprints intentionally
+// changed — every enemy-bearing map reshuffles its coin candidates (the
+// patrol exclusion left extractCoins' pool) and some drop sub-tile-travel
+// deployments. Within THIS pinned band (L1..7: no motifs, no bridge/shaft
+// clamps) tiles/spikes/portal/decks stay identical and only coins and
+// enemy lists move; OUTSIDE the band moving-platform speed/phase also
+// drifts (deriveMovingPlatforms draws shift behind the dropped kind rolls
+// — see the spawnEnemies stream note in level.js). If this pin fails on
+// an L1..4 row, that IS drift.
 const GOLDEN_L1_7 = [
     [1, 11, "43dc716b"], [1, 22, "e568e737"], [1, 33, "85137246"], [1, 44, "82be8d9a"],
     [1, 55, "49f57ede"], [1, 66, "af5cd10e"], [1, 77, "20272d24"], [1, 88, "adc51e8a"],
@@ -28,12 +40,12 @@ const GOLDEN_L1_7 = [
     [3, 55, "638439fd"], [3, 66, "0ec11564"], [3, 77, "52da8cbf"], [3, 88, "aad03405"],
     [4, 11, "bc858548"], [4, 22, "b2dfcd1d"], [4, 33, "59ed6382"], [4, 44, "3a42f034"],
     [4, 55, "53bc22c7"], [4, 66, "1d0aad41"], [4, 77, "92557e86"], [4, 88, "c7657f2a"],
-    [5, 11, "c8b72f11"], [5, 22, "b8460117"], [5, 33, "1d82e3c3"], [5, 44, "81b8990a"],
-    [5, 55, "938d7f9e"], [5, 66, "5b6329ba"], [5, 77, "94d31b93"], [5, 88, "ac161927"],
-    [6, 11, "4c543208"], [6, 22, "87968b3a"], [6, 33, "79e6ffad"], [6, 44, "73f084ba"],
-    [6, 55, "a17dba91"], [6, 66, "fa9afc82"], [6, 77, "230b8d46"], [6, 88, "5e06abf3"],
-    [7, 11, "8b5bf4c0"], [7, 22, "e70faf3e"], [7, 33, "1adb8f2a"], [7, 44, "05bf7c2e"],
-    [7, 55, "08fcfcc0"], [7, 66, "4e79685e"], [7, 77, "39b86b77"], [7, 88, "edea59ad"]
+    [5, 11, "32da2172"], [5, 22, "662c56b0"], [5, 33, "88cbf158"], [5, 44, "065c9c7a"],
+    [5, 55, "493c36cc"], [5, 66, "b3fdc651"], [5, 77, "4596d13b"], [5, 88, "b47ed851"],
+    [6, 11, "e0bd7866"], [6, 22, "b99279f0"], [6, 33, "8e97045a"], [6, 44, "5cc1b713"],
+    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "20f3b6fc"], [6, 88, "0e67c32d"],
+    [7, 11, "8bbe45d7"], [7, 22, "65c32af4"], [7, 33, "77be0cff"], [7, 44, "ed077cc4"],
+    [7, 55, "4491f4c4"], [7, 66, "b9ec657c"], [7, 77, "ec900bdd"], [7, 88, "50a00bd6"]
 ];
 
 function fnv1a(str) {
@@ -182,10 +194,17 @@ for (const name of ["hills", "terraces", "archipelago", "canyon", "pillars",
                 .toBeLessThan(200);
             expect(level.getCoins().length, `L${lvl} seed ${seed}: coins`)
                 .toBeGreaterThanOrEqual(5);
-            // Phase-2 presence guards ran on motif terrain too.
+            // Phase-2 presence guards ran on motif terrain too. Ruling
+            // 2026-11-04 (ENEMY_MIN_RUN) moved the enemy floor from "every
+            // map deploys" to "every map DERIVES a site" (the constructor's
+            // own validity guard): maps whose only marker sites are cramped
+            // (single-column support or sub-tile final travel) now
+            // legitimately ship zero enemies instead of a body that
+            // clamp-flips every frame. Aggregate deployment health is
+            // pinned in enemy_narrow_shelf_ban.test.js (sweep + nonvacuity).
             if (lvl >= 5) {
-                expect(level.getEnemyManager().enemies.length,
-                    `L${lvl} seed ${seed}: enemies`).toBeGreaterThan(0);
+                expect(level.deriveEnemySpawns().length,
+                    `L${lvl} seed ${seed}: enemy sites`).toBeGreaterThan(0);
                 if (level.direction !== "vertical") {
                     expect(level.countTilesOfType(2),
                         `L${lvl} seed ${seed}: spikes`).toBeGreaterThan(0);
