@@ -498,6 +498,114 @@
     }
   }
 
+  // js/projectiles.js
+  var PROJ_RADIUS = 5;
+  var PROJ_GRAVITY = 520;
+  var PROJ_MAX_VX = 150;
+  var PROJECTILE_TERMINAL_VY = 600;
+  var PROJ_MIN_FLIGHT = 0.5;
+  function ballisticLaunch(x0, y0, x1, y1) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const t = Math.max(PROJ_MIN_FLIGHT, Math.abs(dx) / PROJ_MAX_VX);
+    return {
+      vx: dx / t,
+      vy: (dy - 0.5 * PROJ_GRAVITY * t * t) / t
+    };
+  }
+
+  class Projectile {
+    constructor(x, y, vx, vy, owner) {
+      this.x = x;
+      this.y = y;
+      this.vx = vx;
+      this.vy = vy;
+      this.r = PROJ_RADIUS;
+      this.dead = false;
+      this.owner = owner || null;
+      this._sfxCounted = false;
+    }
+  }
+
+  class ProjectileManager {
+    constructor(terrain) {
+      this.terrain = terrain;
+      this.list = [];
+    }
+    spawn(x, y, vx, vy, owner = null) {
+      const p = new Projectile(x, y, vx, vy, owner);
+      this.list.push(p);
+      return p;
+    }
+    updateAll(dt, player = null) {
+      const events = { fired: 0, impacts: [], hitPlayer: false };
+      const T = this.terrain.tileSize;
+      const maxX = (this.terrain.width + 2) * T;
+      const minX = -2 * T;
+      const maxY = (this.terrain.height + 3) * T;
+      for (const p of this.list) {
+        if (p.dead)
+          continue;
+        p.vy = Math.min(p.vy + PROJ_GRAVITY * dt, PROJECTILE_TERMINAL_VY);
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        if (this.terrain.isSolidPx(p.x, p.y)) {
+          p.dead = true;
+          events.impacts.push({ x: p.x, y: p.y });
+          continue;
+        }
+        if (player && aabbOverlap(player, {
+          x: p.x - p.r,
+          y: p.y - p.r,
+          width: 2 * p.r,
+          height: 2 * p.r
+        })) {
+          p.dead = true;
+          events.hitPlayer = true;
+          continue;
+        }
+        if (p.x < minX || p.x > maxX || p.y > maxY)
+          p.dead = true;
+        if (!p.dead && !p._sfxCounted) {
+          p._sfxCounted = true;
+          events.fired++;
+        }
+      }
+      if (this.list.some((p) => p.dead)) {
+        this.list = this.list.filter((p) => !p.dead);
+      }
+      return events;
+    }
+    getActive() {
+      return this.list.filter((p) => !p.dead);
+    }
+    clear() {
+      this.list.length = 0;
+    }
+    drawAll(ctx) {
+      for (const p of this.list) {
+        if (p.dead)
+          continue;
+        ctx.globalAlpha = 0.15;
+        ctx.fillStyle = "#23232c";
+        ctx.beginPath();
+        ctx.arc(p.x - p.vx * 0.07, p.y - p.vy * 0.07, p.r * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath();
+        ctx.arc(p.x - p.vx * 0.035, p.y - p.vy * 0.035, p.r * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#23232c";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#8b8b9a";
+        ctx.fillRect(p.x - 3, p.y - 3, 2, 2);
+      }
+    }
+  }
+
   // js/enemies.js
   var ENEMY_WIDTH = 32;
   var ENEMY_HEIGHT = 32;
@@ -511,8 +619,14 @@
   var CHARGER_DASH_SPEED_MULT = 2.2;
   var CHARGER_TRIGGER_COLS = 6;
   var CHARGER_TRIGGER_ROW_TOLERANCE = 32;
+  var BOMBARDIER_WINDUP_RANGED_TIME = 0.6;
+  var BOMBARDIER_COOLDOWN_RANGED_TIME = 1.4;
+  var BOMBARDIER_RANGE_MIN_COLS = 3;
+  var BOMBARDIER_RANGE_MAX_COLS = 8;
+  var BOMBARDIER_RANGED_ROW_TOLERANCE = 48;
+  var BOMBARDIER_CLOSE_TRIGGER_COLS = 2.5;
   class Enemy {
-    constructor(x, y, minX, maxX, kind = "walker") {
+    constructor(x, y, minX, maxX, kind = "walker", context = null) {
       this.x = x;
       this.y = y;
       this.width = ENEMY_WIDTH;
@@ -525,6 +639,9 @@
       this.kind = kind;
       this.state = "patrol";
       this.stateTime = 0;
+      this._projectiles = context && context.projectiles ? context.projectiles : null;
+      this._terrain = context && context.terrain ? context.terrain : null;
+      this.liveShot = null;
       this.dodged = false;
       this._dodgePrevSide = 0;
       this._dodgePrevPx = 0;
@@ -534,6 +651,10 @@
         return;
       if (this.kind === "charger") {
         this._updateCharger(dt, player);
+        return;
+      }
+      if (this.kind === "bombardier") {
+        this._updateBombardier(dt, player);
         return;
       }
       this._patrolStep(dt);
@@ -567,12 +688,21 @@
         case "patrol":
           this._patrolStep(dt);
           if (this._triggeredBy(player)) {
-            this.state = "windup";
-            this.stateTime = 0;
-            this._preWindupVx = this.vx;
-            this.vx = 0;
+            this._enterCloseWindup();
           }
           break;
+        default:
+          this._chargeLeg(dt, player);
+      }
+    }
+    _enterCloseWindup(keepHeading = null) {
+      this.state = "windup";
+      this.stateTime = 0;
+      this._preWindupVx = keepHeading !== null ? keepHeading : this.vx;
+      this.vx = 0;
+    }
+    _chargeLeg(dt, player) {
+      switch (this.state) {
         case "windup":
           if (!this._triggeredBy(player, this._preWindupVx)) {
             this.state = "patrol";
@@ -613,6 +743,114 @@
       this.stateTime = 0;
       this.vx = inwardDir * this.speed;
     }
+    _facingDir() {
+      if (this.vx !== 0)
+        return Math.sign(this.vx);
+      return Math.sign(this._preWindupVx || 1);
+    }
+    _muzzlePoint() {
+      const face = this._facingDir();
+      return {
+        x: this.x + this.width / 2 + face * 22,
+        y: this.y + 14
+      };
+    }
+    _lineOfFireClear(player) {
+      if (!this._terrain)
+        return true;
+      const m = this._muzzlePoint();
+      const tx = player.x + player.width / 2;
+      const ty = player.y + player.height / 2;
+      const v = ballisticLaunch(m.x, m.y, tx, ty);
+      const flight = Math.max(0.5, Math.abs(tx - m.x) / PROJ_MAX_VX);
+      const steps = 14;
+      for (let i = 1;i <= steps; i++) {
+        const t = i / steps * flight;
+        const sx = m.x + v.vx * t;
+        const sy = m.y + v.vy * t + 0.5 * PROJ_GRAVITY * t * t;
+        if (Math.abs(sx - (this.x + this.width / 2)) < 20 && Math.abs(sy - (this.y + this.height / 2)) < 20)
+          continue;
+        if (this._terrain.isSolidPx(sx, sy))
+          return false;
+      }
+      return true;
+    }
+    _rangedTriggeredBy(player, facing = this._facingDir()) {
+      if (!player || facing === 0)
+        return false;
+      if (this.liveShot && !this.liveShot.dead)
+        return false;
+      const dx = player.x + player.width / 2 - (this.x + this.width / 2);
+      if (dx === 0 || Math.sign(dx) !== Math.sign(facing))
+        return false;
+      const adx = Math.abs(dx);
+      if (adx < BOMBARDIER_RANGE_MIN_COLS * 32)
+        return false;
+      if (adx > BOMBARDIER_RANGE_MAX_COLS * 32)
+        return false;
+      const dyFeet = Math.abs(player.y + player.height - (this.y + this.height));
+      if (dyFeet > BOMBARDIER_RANGED_ROW_TOLERANCE)
+        return false;
+      return this._lineOfFireClear(player);
+    }
+    _closeTriggeredBy(player, facing = this._facingDir()) {
+      if (!player || facing === 0)
+        return false;
+      const dx = player.x + player.width / 2 - (this.x + this.width / 2);
+      if (dx === 0 || Math.sign(dx) !== Math.sign(facing))
+        return false;
+      if (Math.abs(dx) > BOMBARDIER_CLOSE_TRIGGER_COLS * 32)
+        return false;
+      const dyFeet = Math.abs(player.y + player.height - (this.y + this.height));
+      return dyFeet <= CHARGER_TRIGGER_ROW_TOLERANCE;
+    }
+    _updateBombardier(dt, player) {
+      this.stateTime += dt;
+      switch (this.state) {
+        case "patrol":
+          this._patrolStep(dt);
+          if (this._closeTriggeredBy(player)) {
+            this._enterCloseWindup();
+          } else if (this._rangedTriggeredBy(player)) {
+            this.state = "windup_ranged";
+            this.stateTime = 0;
+            this._preWindupVx = this.vx;
+            this.vx = 0;
+          }
+          break;
+        case "windup_ranged": {
+          const facing = Math.sign(this._preWindupVx || 1);
+          if (this._closeTriggeredBy(player, facing)) {
+            this._enterCloseWindup(this._preWindupVx);
+          } else if (!this._rangedTriggeredBy(player, facing)) {
+            this.state = "patrol";
+            this.stateTime = 0;
+            this.vx = this._preWindupVx || Math.abs(this.speed);
+          } else if (this.stateTime >= BOMBARDIER_WINDUP_RANGED_TIME) {
+            this._fireRanged(player);
+            this.state = "cooldown_ranged";
+            this.stateTime = 0;
+          }
+          break;
+        }
+        case "cooldown_ranged":
+          this._patrolStep(dt);
+          if (this.stateTime >= BOMBARDIER_COOLDOWN_RANGED_TIME) {
+            this.state = "patrol";
+            this.stateTime = 0;
+          }
+          break;
+        default:
+          this._chargeLeg(dt, player);
+      }
+    }
+    _fireRanged(player) {
+      if (!this._projectiles)
+        return;
+      const m = this._muzzlePoint();
+      const v = ballisticLaunch(m.x, m.y, player.x + player.width / 2, player.y + player.height / 2);
+      this.liveShot = this._projectiles.spawn(m.x, m.y, v.vx, v.vy, this);
+    }
     checkCollision(player) {
       return aabbOverlap(player, {
         x: this.x + ENEMY_HITBOX_INSET_X,
@@ -639,8 +877,11 @@
         body = "#7b4fa0";
       else if (this.kind === "charger")
         body = "#c8503c";
+      else if (this.kind === "bombardier")
+        body = "#4a1f52";
       ctx.fillStyle = body;
       ctx.fillRect(this.x, this.y, this.width, this.height);
+      const drawnFace = this.state === "windup" || this.state === "windup_ranged" ? Math.sign(this._preWindupVx || 1) : this.vx >= 0 ? 1 : -1;
       if (this.kind === "spiny") {
         ctx.fillStyle = "#1c1c24";
         for (let i = 0;i < 4; i++) {
@@ -655,10 +896,23 @@
           ctx.fillStyle = "rgba(255,232,170,0.55)";
           ctx.fillRect(this.x, this.y, this.width, this.height);
         }
+      } else if (this.kind === "bombardier") {
+        const muzzleX = drawnFace > 0 ? this.x + this.width - 2 : this.x - 10;
+        ctx.fillStyle = "#b0803a";
+        ctx.fillRect(muzzleX, this.y + 11, 12, 6);
+        if (this.state === "windup_ranged") {
+          const k = Math.min(1, this.stateTime / 0.6);
+          ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
+          const gx = drawnFace > 0 ? this.x + this.width : this.x - 4 - 4 * k;
+          ctx.fillRect(gx, this.y + 9 - 2 * k, 4 + 4 * k, 10 + 4 * k);
+        } else if (this.state === "cooldown_ranged" && this.stateTime < 0.08) {
+          ctx.fillStyle = "rgba(255,232,170,0.9)";
+          const fx = drawnFace > 0 ? this.x + this.width : this.x - 6;
+          ctx.fillRect(fx, this.y + 8, 6, 12);
+        }
       }
       ctx.fillStyle = "#fff";
-      const eyeFace = this.state === "windup" ? Math.sign(this._preWindupVx || 1) : this.vx >= 0 ? 1 : -1;
-      const eyeOffset = eyeFace >= 0 ? 18 : 6;
+      const eyeOffset = drawnFace >= 0 ? 18 : 6;
       ctx.fillRect(this.x + eyeOffset, this.y + 8, 4, 4);
     }
   }
@@ -667,8 +921,8 @@
     constructor() {
       this.enemies = [];
     }
-    addEnemy(x, y, minX, maxX, kind = "walker") {
-      this.enemies.push(new Enemy(x, y, minX, maxX, kind));
+    addEnemy(x, y, minX, maxX, kind = "walker", context = null) {
+      this.enemies.push(new Enemy(x, y, minX, maxX, kind, context));
     }
     updateAll(dt, player = null) {
       for (const enemy of this.enemies) {
@@ -784,6 +1038,10 @@
   var CHARGER_FIRST_LEVEL = 20;
   var CHARGER_RAMP_LEVELS = 21;
   var CHARGER_CHANCE_MAX = 0.2;
+  var BOMBARDIER_FIRST_LEVEL = 40;
+  var BOMBARDIER_RAMP_LEVELS = 21;
+  var BOMBARDIER_CHANCE_MAX = 0.15;
+  var BOMBARDIER_CAP_DIVISOR = 4;
   var SPINY_CAP_DIVISOR = 3;
   var HOSTILE_MIN_RUN = 4;
   var ENEMY_MIN_RUN = 2;
@@ -1367,6 +1625,27 @@
       this.hazards = new Hazards;
       this.extractHazards();
       this.enemyManager = new EnemyManager;
+      const terrainView = this;
+      this.projectileManager = new ProjectileManager({
+        get tileSize() {
+          return terrainView.tileSize;
+        },
+        get width() {
+          return terrainView.width;
+        },
+        get height() {
+          return terrainView.height;
+        },
+        isSolidPx(px, py) {
+          const c = Math.floor(px / terrainView.tileSize);
+          const r = Math.floor(py / terrainView.tileSize);
+          if (c < 0 || c >= terrainView.width)
+            return true;
+          if (r < 0 || r >= terrainView.height)
+            return false;
+          return terrainView.tiles[r][c] === 1;
+        }
+      });
       this.spawnEnemies();
       this.movingPlatforms = this.deriveMovingPlatforms();
     }
@@ -2374,8 +2653,11 @@
       const legalSpawns = spawns.filter((s) => solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN && (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
+      const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX);
       const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
+      const bombardierCap = Math.ceil(legalSpawns.length / BOMBARDIER_CAP_DIVISOR);
       let spinies = 0;
+      let bombardiers = 0;
       const hostileRuns = new Set;
       for (const s of legalSpawns) {
         let kind = "walker";
@@ -2384,8 +2666,13 @@
           kind = "spiny";
         } else if (roll >= spinyChance && roll < spinyChance + chargerChance) {
           kind = "charger";
+        } else if (roll >= spinyChance + chargerChance && roll < spinyChance + chargerChance + bombardierChance && bombardiers < bombardierCap) {
+          kind = "bombardier";
         }
         if (kind !== "walker" && solidRunWidth(this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+          kind = "walker";
+        }
+        if (kind === "bombardier" && s.x - s.left < 2 && s.right - s.x < 2) {
           kind = "walker";
         }
         if (kind !== "walker") {
@@ -2397,7 +2684,12 @@
         }
         if (kind === "spiny")
           spinies++;
-        this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind);
+        if (kind === "bombardier")
+          bombardiers++;
+        this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind, {
+          projectiles: this.projectileManager,
+          terrain: this.projectileManager.terrain
+        });
       }
     }
     columnTopRow(x) {
@@ -2604,6 +2896,9 @@
     }
     getEnemyManager() {
       return this.enemyManager;
+    }
+    getProjectileManager() {
+      return this.projectileManager;
     }
     getPortal() {
       return this.portal;
@@ -2866,7 +3161,8 @@
       enemy: "Touched a patrol",
       spiny: "A spiny’s back is spiked — no stomping",
       spike: "Landed on spikes",
-      pit: "Fell into the void"
+      pit: "Fell into the void",
+      projectile: "Took a bombardier shot"
     };
     showGameOver(score, cause, penalty = 0) {
       if (this.finalScoreElement) {
@@ -4385,6 +4681,10 @@
         this._drawCharger(ctx, enemy);
         return;
       }
+      if (kind === "bombardier") {
+        this._drawBombardier(ctx, enemy);
+        return;
+      }
       const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
       const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
       const face = this._faceOf(enemy);
@@ -4497,6 +4797,86 @@
         ctx.lineTo(-26, -16);
         ctx.moveTo(-18, -9);
         ctx.lineTo(-24, -9);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    _drawBombardier(ctx, enemy) {
+      const BOMBARDIER_WINDUP_RANGED_TIME = 0.6;
+      const cx = enemy.x + enemy.width / 2;
+      const feet = enemy.y + enemy.height;
+      this._entityShadow(ctx, cx, feet, 17);
+      const face = this._faceOf(enemy);
+      let sx = 1;
+      let sy = 1;
+      const t = enemy.stateTime || 0;
+      if (enemy.state === "windup_ranged") {
+        const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+        sx = 1 + 0.1 * k;
+        sy = 1 - 0.15 * k;
+      } else if (enemy.state === "windup") {
+        const k = Math.min(1, t / 0.45);
+        sx = 1 + 0.18 * k;
+        sy = 1 - 0.25 * k;
+      } else if (enemy.state === "dash") {
+        sx = 1.12;
+        sy = 0.9;
+      }
+      ctx.save();
+      ctx.translate(cx, feet);
+      ctx.scale(face * sx, sy);
+      ctx.fillStyle = "#4a1f52";
+      ctx.beginPath();
+      ctx.moveTo(-16, 0);
+      ctx.quadraticCurveTo(-18, -11, -10, -17);
+      ctx.quadraticCurveTo(0, -21, 10, -17);
+      ctx.quadraticCurveTo(18, -11, 16, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "rgba(14,4,20,0.3)";
+      ctx.fillRect(-16, -4, 32, 4);
+      ctx.fillStyle = "#b0803a";
+      ctx.fillRect(6, -15, 18, 6);
+      ctx.fillStyle = "#7d5a26";
+      ctx.fillRect(6, -15, 4, 6);
+      ctx.fillStyle = "#d8a94e";
+      ctx.fillRect(21, -16, 3, 8);
+      ctx.strokeStyle = "#c9c2b2";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(7, -15);
+      ctx.quadraticCurveTo(4, -21, 8, -22);
+      ctx.stroke();
+      const spark = 1.5 + (Math.floor(this.clock * 14) % 2 ? 0.6 : 0);
+      ctx.fillStyle = "#ffd23f";
+      ctx.beginPath();
+      ctx.arc(8, -22, spark, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(2, -12, 4, 4);
+      ctx.fillStyle = "#16161d";
+      ctx.fillRect(4, -11, 2, 2);
+      if (enemy.state === "windup_ranged") {
+        const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+        ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
+        ctx.beginPath();
+        ctx.arc(25, -12, 2 + 6 * k, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (enemy.state === "cooldown_ranged" && t < 0.08) {
+        ctx.fillStyle = "rgba(255,232,170,0.9)";
+        ctx.beginPath();
+        ctx.arc(26, -12, 7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (enemy.state === "dash") {
+        ctx.strokeStyle = "rgba(255,214,170,0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-19, -13);
+        ctx.lineTo(-27, -13);
+        ctx.moveTo(-19, -7);
+        ctx.lineTo(-25, -7);
         ctx.stroke();
       }
       ctx.restore();
@@ -5009,6 +5389,10 @@
     stomp() {
       tone({ wave: "triangle", freq: 300, endFreq: 60, dur: 0.18, peak: 0.4, filterHz: 900 });
     },
+    bombard_fire() {
+      tone({ wave: "triangle", freq: 110, endFreq: 45, dur: 0.22, peak: 0.4, filterHz: 320 });
+      noiseBurst({ dur: 0.12, peak: 0.18, bandHz: 240 });
+    },
     death() {
       tone({ wave: "sawtooth", freq: 380, endFreq: 50, dur: 0.35, peak: 0.32, attack: 0.01 });
       noiseBurst({ dur: 0.15, peak: 0.22, bandHz: 900 });
@@ -5408,6 +5792,7 @@
       this.enemyManager = null;
       this.collectibles = null;
       this.hazards = null;
+      this.projectiles = null;
       this.movingPlatforms = null;
       this._riding = null;
       this.score = 0;
@@ -5616,6 +6001,7 @@
       this.enemyManager = level.getEnemyManager();
       this.collectibles = level.getCollectibles();
       this.hazards = level.getHazards();
+      this.projectiles = level.getProjectileManager();
       this.movingPlatforms = new MovingPlatformManager(level.getMovingPlatforms());
       this._riding = null;
       this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
@@ -5793,7 +6179,7 @@
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
           let stompPoints = 0;
           for (const killed of contact.stompedEnemies) {
-            stompPoints += killed.kind === "charger" ? CHARGER_STOMP_POINTS : STOMP_POINTS;
+            stompPoints += killed.kind === "charger" || killed.kind === "bombardier" ? CHARGER_STOMP_POINTS : STOMP_POINTS;
           }
           this.levelCombatPoints += stompPoints;
           this.levelEnemiesKilled += contact.stompedEnemies.length;
@@ -5801,6 +6187,16 @@
         }
         if (contact.deadly) {
           this.handleGameOver(contact.deadlyBySpiny ? "spiny" : "enemy");
+          return;
+        }
+        const shots = this.projectiles.updateAll(dt, this.player);
+        if (shots.fired > 0)
+          playSfx("bombard_fire");
+        for (const impact of shots.impacts) {
+          spawnBurst(this.particles, impact.x, impact.y, "#b9a58a", 6);
+        }
+        if (shots.hitPlayer) {
+          this.handleGameOver("projectile");
           return;
         }
         if (this.hazards.checkPlayerSpikes(this.player)) {
@@ -5915,6 +6311,9 @@
         if (sprites)
           sprites.drawMoodTint(this.ctx, this.currentLevel, this.camera.x, this.camera.y, effW, effH);
         this.level.draw(this.ctx, sprites);
+        if (this.projectiles && this.projectiles.list.length) {
+          this.projectiles.drawAll(this.ctx);
+        }
         const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;
         this.player.draw(this.ctx, sprites, squash);
         if (this.particles.length)

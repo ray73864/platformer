@@ -1793,6 +1793,10 @@ export class Sprites {
             this._drawCharger(ctx, enemy);
             return;
         }
+        if (kind === 'bombardier') {
+            this._drawBombardier(ctx, enemy);
+            return;
+        }
         const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
         const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
         const face = this._faceOf(enemy);
@@ -1929,6 +1933,108 @@ export class Sprites {
             ctx.lineTo(-26, -16);
             ctx.moveTo(-18, -9);
             ctx.lineTo(-24, -9);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // Bombardier: stocky dark-plum body with a BRONZE CANNON BARREL mounted
+    // forward — the silhouette signal for "this one shoots". Dark plum sits
+    // clear of the spiny's mid-purple and the charger's rust-red, and the
+    // bronze barrel + fuse spark stay readable against all three band
+    // palettes (day/dusk/night contrast spot-checked via screenshot pixel
+    // sampling, wave 2026-11-04). All telegraph frames derive from
+    // enemy.state/stateTime — deterministic, replay- and bot-accurate.
+    // BOMBARDIER_WINDUP_RANGED_TIME mirrors the constant in enemies.js
+    // (sprite layer stays import-free by convention, same as _drawCharger).
+    _drawBombardier(ctx, enemy) {
+        const BOMBARDIER_WINDUP_RANGED_TIME = 0.6; // mirror of enemies.js
+        const cx = enemy.x + enemy.width / 2;
+        const feet = enemy.y + enemy.height;
+        this._entityShadow(ctx, cx, feet, 17);
+        const face = this._faceOf(enemy);
+        let sx = 1;
+        let sy = 1;
+        const t = enemy.stateTime || 0;
+        if (enemy.state === 'windup_ranged') {
+            // Trunnion recoil-load: sink slightly and lean back across the
+            // windup while the muzzle glow grows (the shot clock made
+            // visible).
+            const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+            sx = 1 + 0.1 * k;
+            sy = 1 - 0.15 * k;
+        } else if (enemy.state === 'windup') {
+            const k = Math.min(1, t / 0.45); // close charge: charger squash
+            sx = 1 + 0.18 * k;
+            sy = 1 - 0.25 * k;
+        } else if (enemy.state === 'dash') {
+            sx = 1.12;
+            sy = 0.9;
+        }
+        ctx.save();
+        ctx.translate(cx, feet);
+        ctx.scale(face * sx, sy);
+        // Body: squat wide dome, wider and lower than the charger's.
+        ctx.fillStyle = '#4a1f52';
+        ctx.beginPath();
+        ctx.moveTo(-16, 0);
+        ctx.quadraticCurveTo(-18, -11, -10, -17);
+        ctx.quadraticCurveTo(0, -21, 10, -17);
+        ctx.quadraticCurveTo(18, -11, 16, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(14,4,20,0.3)';
+        ctx.fillRect(-16, -4, 32, 4);
+        // THE signal: bronze cannon barrel mounted forward at muzzle height.
+        ctx.fillStyle = '#b0803a';
+        ctx.fillRect(6, -15, 18, 6);
+        ctx.fillStyle = '#7d5a26';           // breech shading
+        ctx.fillRect(6, -15, 4, 6);
+        ctx.fillStyle = '#d8a94e';           // muzzle ring highlight
+        ctx.fillRect(21, -16, 3, 8);
+        // Fuse on top of the breech with a steady micro-spark (clock-driven
+        // flicker only — deterministic like every other render pass here).
+        ctx.strokeStyle = '#c9c2b2';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(7, -15);
+        ctx.quadraticCurveTo(4, -21, 8, -22);
+        ctx.stroke();
+        const spark = 1.5 + ((Math.floor(this.clock * 14) % 2) ? 0.6 : 0);
+        ctx.fillStyle = '#ffd23f';
+        ctx.beginPath();
+        ctx.arc(8, -22, spark, 0, Math.PI * 2);
+        ctx.fill();
+        // Eye toward facing.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(2, -12, 4, 4);
+        ctx.fillStyle = '#16161d';
+        ctx.fillRect(4, -11, 2, 2);
+        if (enemy.state === 'windup_ranged') {
+            // Growing muzzle glow: radius + alpha ride stateTime, so the
+            // 0.6 s telegraph reads as a charging shot, not decoration.
+            const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+            ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
+            ctx.beginPath();
+            ctx.arc(25, -12, 2 + 6 * k, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        if (enemy.state === 'cooldown_ranged' && t < 0.08) {
+            // Brief FIRE flash frame at the muzzle.
+            ctx.fillStyle = 'rgba(255,232,170,0.9)';
+            ctx.beginPath();
+            ctx.arc(26, -12, 7, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        if (enemy.state === 'dash') {
+            // Speed streaks trailing behind (shared read with the charger).
+            ctx.strokeStyle = 'rgba(255,214,170,0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-19, -13);
+            ctx.lineTo(-27, -13);
+            ctx.moveTo(-19, -7);
+            ctx.lineTo(-25, -7);
             ctx.stroke();
         }
         ctx.restore();

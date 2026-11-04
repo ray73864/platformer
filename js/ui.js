@@ -207,7 +207,8 @@ export class UI {
         enemy: 'Touched a patrol',
         spiny: 'A spiny\u2019s back is spiked — no stomping',
         spike: 'Landed on spikes',
-        pit: 'Fell into the void'
+        pit: 'Fell into the void',
+        projectile: 'Took a bombardier shot'
     };
 
     // score is the POST-penalty total; penalty (default 0 keeps old call

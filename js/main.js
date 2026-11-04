@@ -252,6 +252,10 @@ export class Game {
         this.enemyManager = null;
         this.collectibles = null;
         this.hazards = null;
+        // Bombardier cannonballs for the published level (per-Level manager
+        // from level.getProjectileManager(); pause-freeze comes for free —
+        // updateAll only runs inside the PLAYING branch).
+        this.projectiles = null;
         // Deck bridges for the published level (fresh manager per
         // publishLevel from level.getMovingPlatforms(); pause freezes them
         // because they only advance inside the PLAYING branch). On bridge
@@ -645,6 +649,7 @@ export class Game {
         this.enemyManager = level.getEnemyManager();
         this.collectibles = level.getCollectibles();
         this.hazards = level.getHazards();
+        this.projectiles = level.getProjectileManager();
         // Decks follow the same per-level lifecycle as the systems above:
         // every publish (new level, retry, loop recovery) mints a fresh
         // manager from the adopted level's descriptors, so elapsed time — and
@@ -1011,7 +1016,13 @@ export class Game {
                 // the dodge pass below can never double-pay one of them.
                 let stompPoints = 0;
                 for (const killed of contact.stompedEnemies) {
-                    stompPoints += killed.kind === 'charger'
+                    // Premium tier (40): chargers for the mid-dash risk,
+                    // bombardiers because dismounting a gun-carrier is the
+                    // same hard read — and it carries a gun (owner ruling
+                    // 2026-11-04). Stomping KILLS a bombardier: it is not
+                    // spiny, its back is stomppable like any other body.
+                    stompPoints += (killed.kind === 'charger' ||
+                        killed.kind === 'bombardier')
                         ? CHARGER_STOMP_POINTS : STOMP_POINTS;
                 }
                 this.levelCombatPoints += stompPoints;
@@ -1021,6 +1032,23 @@ export class Game {
             if (contact.deadly) {
                 // Teach the spiked-back rule at the exact moment it bites.
                 this.handleGameOver(contact.deadlyBySpiny ? 'spiny' : 'enemy');
+                return;
+            }
+
+            // Bombardier cannonballs step AFTER the enemy bodies resolve
+            // (fixed death order: patrol contact, then shot, then spikes,
+            // then pit — one game over per tick). dt-driven only, so PAUSED
+            // freezes a ball mid-arc; impacts feed the shared particle
+            // system for dust (visual-only Math.random lives there, never
+            // in the simulation), and a hit ends the run with its own
+            // teachable cause.
+            const shots = this.projectiles.updateAll(dt, this.player);
+            if (shots.fired > 0) audio.playSfx('bombard_fire');
+            for (const impact of shots.impacts) {
+                spawnBurst(this.particles, impact.x, impact.y, '#b9a58a', 6);
+            }
+            if (shots.hitPlayer) {
+                this.handleGameOver('projectile');
                 return;
             }
 
@@ -1259,6 +1287,13 @@ export class Game {
             if (sprites) sprites.drawMoodTint(this.ctx, this.currentLevel,
                 this.camera.x, this.camera.y, effW, effH);
             this.level.draw(this.ctx, sprites);
+
+            // Cannonballs ride above the entity pass (they fly over decks
+            // and heads) but below the player, so the hero is never hidden
+            // by an incoming ball.
+            if (this.projectiles && this.projectiles.list.length) {
+                this.projectiles.drawAll(this.ctx);
+            }
 
             // Draw player (landing squash compresses height only)
             const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;

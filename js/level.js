@@ -4,6 +4,7 @@ import { EnemyManager, ENEMY_WIDTH } from './enemies.js';
 import { Hazards } from './hazards.js';
 import { Physics, aabbOverlap } from './physics.js';
 import { Player } from './player.js';
+import { ProjectileManager } from './projectiles.js';
 
 const DIFFICULTY = new Difficulty();
 
@@ -60,6 +61,30 @@ const SPINY_CHANCE_MAX = 0.25;   // ~1 in 4 deployed enemies at L30+
 const CHARGER_FIRST_LEVEL = 20;
 const CHARGER_RAMP_LEVELS = 21;  // L20..L40 inclusive reach the plateau
 const CHARGER_CHANCE_MAX = 0.20; // 1 in 5 deployed enemies at L40+
+// Bombardier (player request 2026-11-04: "enemies that charge and shoot :)",
+// gated deep like the charger's grandchild): arrives at L40 — past every
+// melee threat's ramp, because its ranged leg punishes the *standing still*
+// habits the earlier kinds teach, and ramps to ~15% by L60 (mirrors the
+// kindChance pattern; gentler plateau than spiny/charger because it is a
+// DUAL threat — every one of its rolls can open two attack lanes).
+const BOMBARDIER_FIRST_LEVEL = 40;
+const BOMBARDIER_RAMP_LEVELS = 21;   // L40..L60 inclusive reach the plateau
+const BOMBARDIER_CHANCE_MAX = 0.15;
+// Own density cap: max ceil(n/4) bombardiers per map (on top of counting as
+// HOSTILE for runW>=4, one-per-support-run and the approach-window bans).
+// WHY tighter than the spiny cap (ceil(n/3)): a gun extends its threat from
+// its own body to an 8-column lane, so four guns on one screen can cover
+// most of a shelf map simultaneously — the "wall not challenge" reasoning
+// behind SPINY_CAP_DIVISOR applies with extra force. ACCOUNTING ORDER (kept
+// consistent with the spiny cap, pinned by tests): caps count DEPLOYED
+// survivors, measured against legalSpawns.length sites; the roll bands are
+// checked BEFORE the demotion gates, and every demotion (narrow run, buried
+// firing lane, shared run) falls through to walker WITHOUT re-rolling and
+// WITHOUT consuming its cap slot — so a bombardier roll blocked by ANY gate
+// leaves both budgets exactly as if the roll had landed on walker. Gates
+// run narrow-run -> firing-lane -> shared-run so a site demoted by the
+// lane rule never claims the run key a later legal hostile could use.
+const BOMBARDIER_CAP_DIVISOR = 4;
 // A map of pure spinies is a wall, not a challenge (no stompable route
 // through a gauntlet you can only outrun): cap spinies at ceil(n/3) of the
 // deployed enemies per map.
@@ -1175,6 +1200,26 @@ export class Level {
         // the Phase 2 generator places at level >= 5; unreachable markers
         // are skipped by the spawn validation.
         this.enemyManager = new EnemyManager();
+        // Bombardier cannonballs live per-Level next to their gunners: one
+        // manager per rebuilt Level, so a retry starts with an empty air.
+        // The terrain adapter reads THIS level LIVE through closures (not
+        // a snapshot): test fixtures legitimately swap tiles/width after
+        // construction before re-running spawnEnemies, and map edges block
+        // shots while open sky above and the void below do not — spike
+        // teeth never stop a ball.
+        const terrainView = this;
+        this.projectileManager = new ProjectileManager({
+            get tileSize() { return terrainView.tileSize; },
+            get width() { return terrainView.width; },
+            get height() { return terrainView.height; },
+            isSolidPx(px, py) {
+                const c = Math.floor(px / terrainView.tileSize);
+                const r = Math.floor(py / terrainView.tileSize);
+                if (c < 0 || c >= terrainView.width) return true;
+                if (r < 0 || r >= terrainView.height) return false;
+                return terrainView.tiles[r][c] === 1;
+            }
+        });
         this.spawnEnemies();
         // Deck-bridge descriptors derive LAST: speed/phase rolls consume
         // this.rng only after every geometry, spike, marker, portal, coin and
@@ -2950,8 +2995,14 @@ export class Level {
         const chargerChance = kindChance(
             this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS,
             CHARGER_CHANCE_MAX);
+        const bombardierChance = kindChance(
+            this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS,
+            BOMBARDIER_CHANCE_MAX);
         const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
+        const bombardierCap = Math.ceil(
+            legalSpawns.length / BOMBARDIER_CAP_DIVISOR);
         let spinies = 0;
+        let bombardiers = 0;
         // Support-run keys that already hold a DEPLOYED hostile (see the
         // joint-hostile shelf rule at HOSTILE_MIN_RUN). Checked after the
         // roll like every other gate: no extra draw, demotion frees the
@@ -2966,6 +3017,10 @@ export class Level {
             } else if (roll >= spinyChance &&
                 roll < spinyChance + chargerChance) {
                 kind = 'charger';
+            } else if (roll >= spinyChance + chargerChance &&
+                roll < spinyChance + chargerChance + bombardierChance &&
+                bombardiers < bombardierCap) {
+                kind = 'bombardier';
             }
             // Shelf fairness gate (see HOSTILE_MIN_RUN): a hostile roll on a
             // narrow pillar demotes to walker — stomp-immune patrols on runs
@@ -2976,8 +3031,31 @@ export class Level {
             // kinds may still shift because the spiny cap counts
             // DEPLOYED spinies (the header's "of the deployed enemies")
             // — a demoted roll frees its budget slot for a later site.
+            // Bombardiers inherit this gate in full: they ARE hostile
+            // (stomp-immune contact death like a spiny's body threat, dash
+            // like a charger's) plus a gun on top.
             if (kind !== 'walker' && solidRunWidth(
                 this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+                kind = 'walker';
+            }
+            // Firing-lane gate (bombardier only): the site needs >= 2 open
+            // walk-row cells in FRONT of at least ONE heading so it can't
+            // be buried in a nook with no usable lane at all. Expressed via
+            // the FINAL span data (left/right are post-clamp walkable
+            // columns, every cell of which is open air by construction).
+            // WHY one side, not both (measured @this wave, L40..60 x 10
+            // seeds): markers overwhelmingly seat near span edges — the
+            // both-sided check passed only 57/579 legal sites (10%), which
+            // starved the kind to ~4 deployments across 210 maps (a dead
+            // feature); the at-least-one-heading check passes 418/579
+            // (72%). The runtime line-of-fire veto in enemies.js is what
+            // actually prevents a point-blank shot into a wall on EITHER
+            // heading; this placement rule only bans the fully-buried
+            // morphology. Honest gap: a gun facing its wall mid-patrol
+            // simply never gets a clear arc on that heading — it looks
+            // idle, never unfair.
+            if (kind === 'bombardier' &&
+                s.x - s.left < 2 && s.right - s.x < 2) {
                 kind = 'walker';
             }
             // Joint-hostile shelf gate (see the rule at HOSTILE_MIN_RUN):
@@ -2986,6 +3064,8 @@ export class Level {
             // leave no safe tile mid-crossing (screenshot ruling 2026-11-04:
             // twin spinies evenly spaced on one wide shelf; a spiny/charger
             // quad packed into five tiles). Same no-re-roll discipline.
+            // Runs LAST (after the firing-lane demotion above) so a
+            // bombardier stand-down never claims the run key.
             if (kind !== 'walker') {
                 const runKey = solidRunKey(
                     this.tiles, this.width, s.x, s.y + 1);
@@ -2993,6 +3073,7 @@ export class Level {
                 else hostileRuns.add(runKey);
             }
             if (kind === 'spiny') spinies++;
+            if (kind === 'bombardier') bombardiers++;
             // Cap overflow falls through to walker: the roll that wanted a
             // fourth spiny on a three-site map buys nothing, never a
             // re-roll (one consumed draw per enemy keeps sequences stable).
@@ -3004,7 +3085,12 @@ export class Level {
                 s.y * this.tileSize,
                 s.left * this.tileSize,
                 (s.right + 1) * this.tileSize,
-                kind
+                kind,
+                // Combat context: only bombardiers read it (their cannon
+                // pushes into this Level's projectile manager and raycasts
+                // this grid); every other kind ignores the argument.
+                { projectiles: this.projectileManager,
+                    terrain: this.projectileManager.terrain }
             );
         }
     }
@@ -3298,6 +3384,12 @@ export class Level {
 
     getEnemyManager() {
         return this.enemyManager;
+    }
+
+    // Bombardier cannonballs for this Level instance (empty until a gun
+    // fires; fresh with every rebuilt Level, so retries start clean).
+    getProjectileManager() {
+        return this.projectileManager;
     }
 
     getPortal() {

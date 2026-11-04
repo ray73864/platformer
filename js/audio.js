@@ -378,6 +378,12 @@ const SFX = {
     stomp() {
         tone({ wave: 'triangle', freq: 300, endFreq: 60, dur: 0.18, peak: 0.4, filterHz: 900 });
     },
+    // Bombardier FIRE: low thump + short plosive noise — a cannon, not a
+    // laser. Same helpers as every other one-shot; stays under 0.4 s.
+    bombard_fire() {
+        tone({ wave: 'triangle', freq: 110, endFreq: 45, dur: 0.22, peak: 0.4, filterHz: 320 });
+        noiseBurst({ dur: 0.12, peak: 0.18, bandHz: 240 });
+    },
     // Falling saw plus a short noise burst: unmistakable bad news.
     death() {
         tone({ wave: 'sawtooth', freq: 380, endFreq: 50, dur: 0.35, peak: 0.32, attack: 0.01 });
