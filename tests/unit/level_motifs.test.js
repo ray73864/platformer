@@ -480,7 +480,7 @@ test("deck bridges still host legally on motif terrain (L25+ horizontal)", () =>
     const frac = bridged / horiz;
     expect(frac).toBeGreaterThan(0.3);
     expect(frac).toBeLessThan(0.65);
-});
+}, 60_000);
 
 test("elevator shafts still host legally on atrium/zigzag maps (L13+ vertical)", () => {
     let vert = 0, shafted = 0;

@@ -148,6 +148,189 @@ const HOSTILE_MIN_RUN = 4;
 // before any kind roll (see spawnEnemies' stream note).
 const ENEMY_MIN_RUN = 2;
 
+// --- Stacked-patrol gauntlets: individually-legal placements that jointly
+// wall a mandatory traverse -----------------------------------------------
+// Player report 2026-11-05: L30 seed 4104669369 stuck "because of where the
+// purple enemy is positioned". Machine proof: the kind-aware autopilot died
+// attempts there (~25 patrol deaths per run) — every rule passed PER SITE
+// (ENEMY_MIN_RUN ✓, HOSTILE_MIN_RUN ✓ spiny's run is 4-wide, one hostile
+// per run ✓, firing-lane n/a), but JOINTLY three stacked shelves (staging
+// walkers above, walker+SPINY+walker on the mandatory middle shelf, walkers
+// on the landing below) left ZERO uncovered standable cells near the route:
+// every pause point patrolled, every landing hot.
+// WHY 3 (GAUNTLET_MIN_BODIES): two bodies sweeping one walk-row always
+// leave a timing gap a waiting player can exploit on runs >= 2 (the pass-by
+// ruling at HOSTILE_MIN_RUN); the third body removes the last wait-in-the-
+// open option when the neighborhood has no uncovered pocket. Measured
+// attribution sweep (this wave, L5..100 x 10 seeds, shipped metric below):
+// 101/960 maps (10.5%; 101/640 = 15.8% of routed horizontal maps) host
+// >=1 gauntlet configuration — canyon 31.1%, hills 28.5%, archipelago
+// 14.6%, standard 6.3%, pillars 3.3% (the staggered-shelf hypothesis did
+// NOT hold: pillars is LOW; wide-stair motifs are the manufacturers),
+// atrium/terraces/zigzag 0%. Bot validation (20 flagged + 20 motif-matched
+// controls, deterministic single attempt each): flagged-with-hostile cleared
+// 1/17 vs control 3/20, and 8 of 13 patrol deaths on flagged maps landed
+// INSIDE a flagged box averaging only 2.4% of map area — the geometry
+// predicts the pain site, not just density. Walkers-only flags (1/3 cleared)
+// sit in noise, but the pre-roll check cannot see kinds (it runs BEFORE the
+// rolls by design), so the gate is kind-blind: any >=3-body zero-pocket
+// stack on a must-pass neighborhood drops its last-completing site. Density
+// cost measured in the wave report; do NOT loosen to protect density.
+// SUPERSESSION of the 3348d60 Rule-2 deferral: that note (see
+// HOSTILE_MIN_RUN above) deferred adjacent-run separation because
+// hostile+hostile joint-mandatory chains measured 0/960. That measurement
+// scoped TWO HOSTILES only; this MIXED-kind, stacked-row class measures
+// 101/960 with bot-depressed clears — the deferral rationale no longer
+// holds for this class, and this rule closes exactly it (cross-run
+// neighborhoods rows ±1, spans overlapping ±1), while pure hostile+hostile
+// pairs remain covered by the one-hostile-per-run rule.
+// The metric (exported below, unit-tested on hand-built fixtures):
+//   A support run R hosting deployed bodies is a GAUNTLET when
+//   (a) the neighborhood box (enemy stand rows ±1, R's span columns ±2)
+//       contains a MUST-PASS cell — a cell whose removal disconnects
+//       spawn->portal in the movement-model graph (routeModelEdges), i.e.
+//       the traverse under threat is genuinely mandatory;
+//   (b) UNCOVERED standable reachable cells inside the box number ZERO —
+//       coverage is row-exact: cell (c,r) is covered iff a group enemy
+//       standing on row r sweeps column c (a patrol on another row does not
+//       make this cell lethal); the group is R's own bodies plus bodies on
+//       runs in rows ±1 whose patrol intervals overlap R's span ±1; and
+//   (c) the group totals >= GAUNTLET_MIN_BODIES.
+// Known approximation (honest): static spans, no phase/timing-gap modeling
+// (a cell is treated as unsafe for the whole patrol period). This mirrors
+// the house style of the shelf rulings (patrolSpan bounds every body;
+// HOSTILE_MIN_RUN sizes ONE body's pass-by arc statically) and errs toward
+// flagging. Vertical maps are exempt here: the model graph cannot see shaft
+// rides (their virtual corridor is invisible to routeModelEdges), and their
+// one-marker-per-shelf economy (placeEnemyMarkers) already caps stacks.
+const GAUNTLET_MIN_BODIES = 3;
+
+// Spawn->portal articulation cells in the movement-model graph: cells on
+// one shortest path whose REMOVAL disconnects goal from spawn (any cell on
+// ALL paths is on every shortest path, so candidates are exactly the cells
+// of one found path). Returns null when no route exists (nothing is then
+// provably mandatory — conservative no-flag). Deck corridors are modeled
+// cells of routeModelEdges and count like any other node; enemies can never
+// stand on them anyway (no solid support), so they only ever satisfy the
+// crossing condition, never the pocket count.
+export function computeMustPassCells(tiles, width, height, spawnTile,
+    portalTile, bridgeGap = null) {
+    const key = (x, y) => y * width + x;
+    const view = { tiles, width, height, spawnTile, bridgeGap };
+    const startK = key(spawnTile.x, spawnTile.y);
+    const goalK = key(portalTile.x, portalTile.y);
+    const reach = (blocked) => {
+        const adj = new Map();
+        for (const e of routeModelEdges(view, blocked)) {
+            const a = key(e.ax, e.ay);
+            const b = key(e.bx, e.by);
+            if (!adj.has(a)) adj.set(a, new Set());
+            adj.get(a).add(b);
+        }
+        const prev = new Map([[startK, null]]);
+        const q = [startK];
+        while (q.length) {
+            const k = q.shift();
+            if (k === goalK) break;
+            for (const n of adj.get(k) || []) {
+                if (!prev.has(n)) { prev.set(n, k); q.push(n); }
+            }
+        }
+        return prev.has(goalK) ? prev : null;
+    };
+    const first = reach(null);
+    if (!first) return null;
+    const path = [];
+    for (let k = goalK; k !== null; k = first.get(k)) path.push(k);
+    const mustPass = new Set();
+    for (const k of path) {
+        if (k === startK || k === goalK) continue;
+        if (!reach(new Set([k]))) mustPass.add(k);
+    }
+    return mustPass;
+}
+
+// The shipped gauntlet metric. `bodies`: [{col, row, left, right}] — final
+// patrol bounds in tile columns (row-exact coverage uses `row`), col the
+// spawn column (identifies the support run). `mustPass`: Set from
+// computeMustPassCells (null/empty -> nothing mandatory -> no violations).
+// `reachable` (optional Set of keys): when given, only reachable standable
+// cells count as safe pockets — an unreachable ledge is not a waiting spot.
+// Returns [{runKey, row, lo, hi, members}] for every violating run.
+export function gauntletViolations(tiles, width, height, bodies, mustPass,
+    reachable = null) {
+    if (!mustPass || mustPass.size === 0 || bodies.length < GAUNTLET_MIN_BODIES) {
+        return [];
+    }
+    const key = (x, y) => y * width + x;
+    const solid = (x, y) => {
+        if (x < 0 || x >= width) return true;
+        if (y < 0 || y >= height) return false;
+        return tiles[y][x] === 1;
+    };
+    const hazard = (x, y) => (x < 0 || x >= width || y < 0 || y >= height)
+        ? false : tiles[y][x] === 2;
+    const standable = (x, y) => !solid(x, y) && !hazard(x, y) && solid(x, y + 1);
+    // Group bodies by support run (support row + run's left edge), same
+    // identity convention as solidRunKey.
+    const runs = new Map();
+    for (const b of bodies) {
+        const supRow = b.row + 1;
+        const row = tiles[supRow];
+        if (!row || row[b.col] !== 1) continue;
+        let l = b.col;
+        while (l > 0 && row[l - 1] === 1) l--;
+        const rk = `${supRow}:${l}`;
+        if (!runs.has(rk)) runs.set(rk, []);
+        runs.get(rk).push(b);
+    }
+    const spanOf = (list) => {
+        let lo = Infinity, hi = -Infinity;
+        for (const b of list) { lo = Math.min(lo, b.left); hi = Math.max(hi, b.right); }
+        return { lo, hi };
+    };
+    const violations = [];
+    for (const [rk, base] of runs) {
+        const s = spanOf(base);
+        const group = [...base];
+        for (const [k2, list2] of runs) {
+            if (k2 === rk) continue;
+            const s2 = spanOf(list2);
+            if (Math.abs(list2[0].row - base[0].row) !== 1) continue;
+            if (s2.hi < s.lo - 1 || s2.lo > s.hi + 1) continue;
+            group.push(...list2);
+        }
+        if (group.length < GAUNTLET_MIN_BODIES) continue;
+        const boxRowLo = base[0].row - 1, boxRowHi = base[0].row + 1;
+        const boxColLo = s.lo - 2, boxColHi = s.hi + 2;
+        let pockets = 0;
+        let crosses = false;
+        for (let r = boxRowLo; r <= boxRowHi; r++) {
+            if (r < 0 || r >= height) continue;
+            for (let c = boxColLo; c <= boxColHi; c++) {
+                if (c < 0 || c >= width) continue;
+                if (mustPass.has(key(c, r))) crosses = true;
+                if (!standable(c, r)) continue;
+                if (reachable && !reachable.has(key(c, r))) continue;
+                let covered = false;
+                for (const e of group) {
+                    if (e.row === r && c >= e.left && c <= e.right) {
+                        covered = true;
+                        break;
+                    }
+                }
+                if (!covered) pockets++;
+            }
+        }
+        if (crosses && pockets === 0) {
+            violations.push({
+                runKey: rk, row: base[0].row, lo: s.lo, hi: s.hi, members: group
+            });
+        }
+    }
+    return violations;
+}
+
 // --- Deck bridges: REQUIRED crossings over unjumpable gaps ------------------
 // Player ruling 2026-11-04: "moving platforms should only appear when the gap
 // is too large to jump over." This replaces the old optional-aids placement
@@ -348,9 +531,13 @@ const SHAFT_BOTTOM_MAX_ROW = 18;
 // reachability bookkeeping: enumerates consecutive-cell edges so the route's
 // shortest path can be reconstructed and each hop simulated. Deck corridors
 // emit trusted 'deck' edges (rider suites validate the ride itself).
-function routeModelEdges(level) {
+// `blocked` (optional Set of y*width+x keys) removes cells from the graph —
+// used by computeMustPassCells' articulation test; every shipped caller
+// passes nothing and gets byte-identical behavior.
+function routeModelEdges(level, blocked = null) {
     const tiles = level.tiles;
     const w = level.width, h = level.height;
+    const blk = (x, y) => blocked !== null && blocked.has(y * w + x);
     const solid = (x, y) => {
         if (x < 0 || x >= w) return true;
         if (y < 0 || y >= h) return false;
@@ -361,10 +548,10 @@ function routeModelEdges(level) {
         return tiles[y][x] === 2;
     };
     const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
-    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
+    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1) && !blk(x, y);
     const corr = level.bridgeGap;
     const isCorr = (x, y) => corr !== null && corr !== undefined &&
-        y === corr.S - 1 && x >= corr.a && x <= corr.b;
+        y === corr.S - 1 && x >= corr.a && x <= corr.b && !blk(x, y);
     const key = (x, y) => y * w + x;
     const edges = [];
     if (!standable(level.spawnTile.x, level.spawnTile.y)) return edges;
@@ -400,7 +587,7 @@ function routeModelEdges(level) {
                 let blocked = false, hazardRun = 0;
                 for (let m = 1; m < dist; m++) {
                     const midX = x + dir * m;
-                    if (solid(midX, y)) { blocked = true; break; }
+                    if (solid(midX, y) || blk(midX, y)) { blocked = true; break; }
                     if (hazard(midX, y)) {
                         hazardRun++;
                         if (hazardRun >= 3) { blocked = true; break; }
@@ -427,7 +614,9 @@ function routeModelEdges(level) {
                 let clear = true;
                 if (dist === 2) {
                     const midX = x + dir;
-                    if (solid(midX, ty) || hazard(midX, ty)) clear = false;
+                    if (solid(midX, ty) || hazard(midX, ty) || blk(midX, ty)) {
+                        clear = false;
+                    }
                 }
                 if (clear) {
                     edges.push({ ax: x, ay: y, bx: c, by: ty,
@@ -3244,6 +3433,39 @@ export class Level {
             solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN &&
             (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
 
+        // Stacked-patrol gauntlet gate (see GAUNTLET_MIN_BODIES): drop sites
+        // BEFORE any kind roll so terrain stays byte-identical and kinds are
+        // never re-rolled — same stream discipline as the narrow-shelf filter
+        // above (enemy COUNT may drop on affected maps; later rng consumers
+        // shift with it, deterministic per seed). Greedy in derive order: a
+        // site is kept unless its deployment COMPLETES a gauntlet config
+        // (must-pass neighborhood with zero uncovered pockets and >=3
+        // sweeping bodies); the last body that walls the traverse goes, the
+        // earlier ones keep their patrol. Vertical maps skip the pass (the
+        // model graph cannot see shaft rides; one-marker-per-shelf already
+        // caps their stacks — see the constant header).
+        let deploySpawns = legalSpawns;
+        if (this.direction !== 'vertical' && this.portalTile &&
+            legalSpawns.length >= GAUNTLET_MIN_BODIES) {
+            const mustPass = computeMustPassCells(
+                this.tiles, this.width, this.height,
+                this.spawnTile, this.portalTile, this.bridgeGap);
+            if (mustPass && mustPass.size > 0) {
+                const kept = [];
+                for (const s of legalSpawns) {
+                    kept.push(s);
+                    const probe = kept.map(k => ({
+                        col: k.x, row: k.y, left: k.left, right: k.right
+                    }));
+                    if (gauntletViolations(this.tiles, this.width, this.height,
+                        probe, mustPass, this.reachableTiles).length > 0) {
+                        kept.pop();
+                    }
+                }
+                deploySpawns = kept;
+            }
+        }
+
         // Kind assignment rides the SAME marker sites/spans as walkers —
         // placement fairness rules are untouched, only what stands on a site
         // varies. Rolls consume this.rng here, AFTER every geometry, spike,
@@ -3260,9 +3482,9 @@ export class Level {
         const bombardierChance = kindChance(
             this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS,
             BOMBARDIER_CHANCE_MAX);
-        const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
+        const spinyCap = Math.ceil(deploySpawns.length / SPINY_CAP_DIVISOR);
         const bombardierCap = Math.ceil(
-            legalSpawns.length / BOMBARDIER_CAP_DIVISOR);
+            deploySpawns.length / BOMBARDIER_CAP_DIVISOR);
         let spinies = 0;
         let bombardiers = 0;
         // Support-run keys that already hold a DEPLOYED hostile (see the
@@ -3271,7 +3493,7 @@ export class Level {
         // spiny-cap slot exactly as the narrow-shelf demotion does.
         const hostileRuns = new Set();
 
-        for (const s of legalSpawns) {
+        for (const s of deploySpawns) {
             let kind = 'walker';
             const roll = this.rng();
             if (roll < spinyChance && spinies < spinyCap) {

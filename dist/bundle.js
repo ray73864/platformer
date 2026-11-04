@@ -1048,6 +1048,142 @@
   var SPINY_CAP_DIVISOR = 3;
   var HOSTILE_MIN_RUN = 4;
   var ENEMY_MIN_RUN = 2;
+  var GAUNTLET_MIN_BODIES = 3;
+  function computeMustPassCells(tiles, width, height, spawnTile, portalTile, bridgeGap = null) {
+    const key = (x, y) => y * width + x;
+    const view = { tiles, width, height, spawnTile, bridgeGap };
+    const startK = key(spawnTile.x, spawnTile.y);
+    const goalK = key(portalTile.x, portalTile.y);
+    const reach = (blocked) => {
+      const adj = new Map;
+      for (const e of routeModelEdges(view, blocked)) {
+        const a = key(e.ax, e.ay);
+        const b = key(e.bx, e.by);
+        if (!adj.has(a))
+          adj.set(a, new Set);
+        adj.get(a).add(b);
+      }
+      const prev = new Map([[startK, null]]);
+      const q = [startK];
+      while (q.length) {
+        const k = q.shift();
+        if (k === goalK)
+          break;
+        for (const n of adj.get(k) || []) {
+          if (!prev.has(n)) {
+            prev.set(n, k);
+            q.push(n);
+          }
+        }
+      }
+      return prev.has(goalK) ? prev : null;
+    };
+    const first = reach(null);
+    if (!first)
+      return null;
+    const path = [];
+    for (let k = goalK;k !== null; k = first.get(k))
+      path.push(k);
+    const mustPass = new Set;
+    for (const k of path) {
+      if (k === startK || k === goalK)
+        continue;
+      if (!reach(new Set([k])))
+        mustPass.add(k);
+    }
+    return mustPass;
+  }
+  function gauntletViolations(tiles, width, height, bodies, mustPass, reachable = null) {
+    if (!mustPass || mustPass.size === 0 || bodies.length < GAUNTLET_MIN_BODIES) {
+      return [];
+    }
+    const key = (x, y) => y * width + x;
+    const solid = (x, y) => {
+      if (x < 0 || x >= width)
+        return true;
+      if (y < 0 || y >= height)
+        return false;
+      return tiles[y][x] === 1;
+    };
+    const hazard = (x, y) => x < 0 || x >= width || y < 0 || y >= height ? false : tiles[y][x] === 2;
+    const standable = (x, y) => !solid(x, y) && !hazard(x, y) && solid(x, y + 1);
+    const runs = new Map;
+    for (const b of bodies) {
+      const supRow = b.row + 1;
+      const row = tiles[supRow];
+      if (!row || row[b.col] !== 1)
+        continue;
+      let l = b.col;
+      while (l > 0 && row[l - 1] === 1)
+        l--;
+      const rk = `${supRow}:${l}`;
+      if (!runs.has(rk))
+        runs.set(rk, []);
+      runs.get(rk).push(b);
+    }
+    const spanOf = (list) => {
+      let lo = Infinity, hi = -Infinity;
+      for (const b of list) {
+        lo = Math.min(lo, b.left);
+        hi = Math.max(hi, b.right);
+      }
+      return { lo, hi };
+    };
+    const violations = [];
+    for (const [rk, base] of runs) {
+      const s = spanOf(base);
+      const group = [...base];
+      for (const [k2, list2] of runs) {
+        if (k2 === rk)
+          continue;
+        const s2 = spanOf(list2);
+        if (Math.abs(list2[0].row - base[0].row) !== 1)
+          continue;
+        if (s2.hi < s.lo - 1 || s2.lo > s.hi + 1)
+          continue;
+        group.push(...list2);
+      }
+      if (group.length < GAUNTLET_MIN_BODIES)
+        continue;
+      const boxRowLo = base[0].row - 1, boxRowHi = base[0].row + 1;
+      const boxColLo = s.lo - 2, boxColHi = s.hi + 2;
+      let pockets = 0;
+      let crosses = false;
+      for (let r = boxRowLo;r <= boxRowHi; r++) {
+        if (r < 0 || r >= height)
+          continue;
+        for (let c = boxColLo;c <= boxColHi; c++) {
+          if (c < 0 || c >= width)
+            continue;
+          if (mustPass.has(key(c, r)))
+            crosses = true;
+          if (!standable(c, r))
+            continue;
+          if (reachable && !reachable.has(key(c, r)))
+            continue;
+          let covered = false;
+          for (const e of group) {
+            if (e.row === r && c >= e.left && c <= e.right) {
+              covered = true;
+              break;
+            }
+          }
+          if (!covered)
+            pockets++;
+        }
+      }
+      if (crosses && pockets === 0) {
+        violations.push({
+          runKey: rk,
+          row: base[0].row,
+          lo: s.lo,
+          hi: s.hi,
+          members: group
+        });
+      }
+    }
+    return violations;
+  }
   var DECK_BRIDGE_FIRST_LEVEL = 8;
   var MAX_DECK_BRIDGES = 1;
   var BRIDGE_CHANCE = 0.6;
@@ -1072,9 +1208,10 @@
   var V_DECK_SPEED_RANGE = 5;
   var SHAFT_BOTTOM_MIN_ROW = 16;
   var SHAFT_BOTTOM_MAX_ROW = 18;
-  function routeModelEdges(level) {
+  function routeModelEdges(level, blocked = null) {
     const tiles = level.tiles;
     const { width: w, height: h } = level;
+    const blk = (x, y) => blocked !== null && blocked.has(y * w + x);
     const solid = (x, y) => {
       if (x < 0 || x >= w)
         return true;
@@ -1088,9 +1225,9 @@
       return tiles[y][x] === 2;
     };
     const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
-    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
+    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1) && !blk(x, y);
     const corr = level.bridgeGap;
-    const isCorr = (x, y) => corr !== null && corr !== undefined && y === corr.S - 1 && x >= corr.a && x <= corr.b;
+    const isCorr = (x, y) => corr !== null && corr !== undefined && y === corr.S - 1 && x >= corr.a && x <= corr.b && !blk(x, y);
     const key = (x, y) => y * w + x;
     const edges = [];
     if (!standable(level.spawnTile.x, level.spawnTile.y))
@@ -1143,7 +1280,7 @@
           let blocked = false, hazardRun = 0;
           for (let m = 1;m < dist; m++) {
             const midX = x + dir * m;
-            if (solid(midX, y)) {
+            if (solid(midX, y) || blk(midX, y)) {
               blocked = true;
               break;
             }
@@ -1189,8 +1326,9 @@
           let clear = true;
           if (dist === 2) {
             const midX = x + dir;
-            if (solid(midX, ty) || hazard(midX, ty))
+            if (solid(midX, ty) || hazard(midX, ty) || blk(midX, ty)) {
               clear = false;
+            }
           }
           if (clear) {
             edges.push({
@@ -2756,15 +2894,35 @@
       this.enemyManager.clear();
       const spawns = this.deriveEnemySpawns();
       const legalSpawns = spawns.filter((s) => solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN && (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
+      let deploySpawns = legalSpawns;
+      if (this.direction !== "vertical" && this.portalTile && legalSpawns.length >= GAUNTLET_MIN_BODIES) {
+        const mustPass = computeMustPassCells(this.tiles, this.width, this.height, this.spawnTile, this.portalTile, this.bridgeGap);
+        if (mustPass && mustPass.size > 0) {
+          const kept = [];
+          for (const s of legalSpawns) {
+            kept.push(s);
+            const probe = kept.map((k) => ({
+              col: k.x,
+              row: k.y,
+              left: k.left,
+              right: k.right
+            }));
+            if (gauntletViolations(this.tiles, this.width, this.height, probe, mustPass, this.reachableTiles).length > 0) {
+              kept.pop();
+            }
+          }
+          deploySpawns = kept;
+        }
+      }
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
       const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX);
-      const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
-      const bombardierCap = Math.ceil(legalSpawns.length / BOMBARDIER_CAP_DIVISOR);
+      const spinyCap = Math.ceil(deploySpawns.length / SPINY_CAP_DIVISOR);
+      const bombardierCap = Math.ceil(deploySpawns.length / BOMBARDIER_CAP_DIVISOR);
       let spinies = 0;
       let bombardiers = 0;
       const hostileRuns = new Set;
-      for (const s of legalSpawns) {
+      for (const s of deploySpawns) {
         let kind = "walker";
         const roll = this.rng();
         if (roll < spinyChance && spinies < spinyCap) {
