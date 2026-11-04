@@ -488,8 +488,9 @@ test("a single exhausted construction self-heals via the inline re-attempt", () 
     const game = new Game();
     // Fail exactly one full construction: pickPortalTile is called once per
     // generation attempt, so nulling the first 200 calls (MAX_GENERATION_
-    // ATTEMPTS in level.js) exhausts the first `new Level`, and the next call
-    // — from tryConstructLevel's inline re-attempt — succeeds.
+    // ATTEMPTS in level.js) exhausts the first candidate of seedFor's chain,
+    // and the next candidate succeeds (randomness wave 2026-11-05; before
+    // the chain this slot was tryConstructLevel's inline XOR re-attempt).
     let calls = 0;
     const originalConsole = console.error;
     console.error = () => {};
@@ -500,7 +501,14 @@ test("a single exhausted construction self-heals via the inline re-attempt", () 
     };
     try {
         expect(game.startGame()).toBe(true);
-        expect(calls).toBe(201);
+        // 2026-11-05 randomness wave: seedFor now walks the anti-repeat
+        // candidate chain, so the exhausted first construction (200 calls) is
+        // followed by CHAIN CANDIDATE 1 succeeding on its first attempt
+        // (call 201) and the caller rebuilding that stored seed for
+        // publication (call 202). Same self-heal contract as the old inline
+        // re-attempt — one failure absorbed silently, no message — just one
+        // extra pickPortalTile through the stored-seed path.
+        expect(calls).toBe(202);
         expect(game.state).toBe(STATE.PLAYING);
         // Self-healed: no error message reaches the player.
         expect(document.getElementById('error-message').classList.contains('hidden')).toBe(true);

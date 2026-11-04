@@ -33,12 +33,14 @@ function findDeckMap() {
     throw new Error("no deck-bearing map found in scan range");
 }
 
-// A Game published onto the given map: runSeed back-solved from
-// main.js's seedFor (runSeed + imul(level, 0x9E3779B1)).
+// A Game published onto the given map: the seed is pinned directly into the
+// run's chosen-seed ledger (main.js levelSeeds) — the same stored-seed path
+// retries take — so restartCurrentLevel rebuilds EXACTLY this map regardless
+// of how seedFor derives fresh candidates.
 function bootOnMap(lvl, seed) {
     mountFixture();
     const game = new Game();
-    game.runSeed = (seed - Math.imul(lvl, 0x9E3779B1)) >>> 0;
+    game.levelSeeds.set(lvl, seed);
     game.currentLevel = lvl;
     game.restartCurrentLevel('menu-screen');
     return game;

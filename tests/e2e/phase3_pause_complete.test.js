@@ -190,6 +190,10 @@ test("Winning the final level shows GAME_COMPLETE with high score; Play Again re
         `(() => { const g = window.game;
                   localStorage.removeItem('platformerHighScore');
                   g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+                  // Fresh generation run: clear the anti-repeat ledger the
+                  // way startGame() does, so startLevel() selects anew.
+                  if (g.levelSeeds) g.levelSeeds.clear();
+                  if (g.recentLayouts) g.recentLayouts.length = 0;
                   // FINAL_LEVEL from js/main.js (100): kept as a literal here
                   // because this runs in the page; if the constant moves, the
                   // GAME_COMPLETE wait below fails loudly.
@@ -235,6 +239,10 @@ test("Winning the final level shows GAME_COMPLETE with high score; Play Again re
         if (!dropped) {
             abEvalJSON(SESSION, `(() => { const g = window.game;
                 g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+                // Clear the anti-repeat ledger (startGame()'s reset) so the
+                // next startLevel() can produce a different candidate map.
+                if (g.levelSeeds) g.levelSeeds.clear();
+                if (g.recentLayouts) g.recentLayouts.length = 0;
                 g.startLevel(); return true; })()`);
             continue;
         }

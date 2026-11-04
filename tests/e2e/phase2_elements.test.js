@@ -47,8 +47,12 @@ const phase2Summary = (levelNumber) => `(() => {
     const g = window.game;
     // Levels are deterministic per run seed (retry replays the same map);
     // the harness regenerates until a layout meets its requirement, so each
-    // attempt re-rolls the run seed first.
+    // attempt re-rolls the run seed first. The anti-repeat ledger is a
+    // per-run choice memory: a bare runSeed poke must clear it the way
+    // startGame() does, or seedFor replays the stored seed forever.
     g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+    if (g.levelSeeds) g.levelSeeds.clear();
+    if (g.recentLayouts) g.recentLayouts.length = 0;
     g.currentLevel = ${levelNumber};
     g.startLevel();
     let safeTileX = null;
@@ -97,8 +101,12 @@ function openAtLevel(levelNumber, requirement) {
 // In-seam regeneration used by the action-time pick loops below.
 function regenerate() {
     // Re-roll the run seed: startLevel() is deterministic per seed now.
+    // Clear the anti-repeat ledger too (same reset startGame() does), or
+    // seedFor would keep replaying the stored seed for this level.
     abEvalJSON(SESSION, `(() => { const g = window.game;
         g.runSeed = (Math.random() * 0xffffffff) >>> 0;
+        if (g.levelSeeds) g.levelSeeds.clear();
+        if (g.recentLayouts) g.recentLayouts.length = 0;
         g.startLevel(); return true; })()`);
 }
 

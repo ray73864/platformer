@@ -50,8 +50,12 @@ export function installGameTestScaffolding() {
             lineTo: () => {},
             fill: () => {},
             // Seed readout text (main.js draw pass); the stub only needs the
-            // call to exist — assertions never inspect rendered pixels.
-            fillText: () => {}
+            // call to exist — assertions never inspect pixels. The shadow-
+            // plate watermark (legibility ruling 2026-11-05) measures the
+            // label first, so measureText joins the stub with a monospace
+            // approximation of a width.
+            fillText: () => {},
+            measureText: (text) => ({ width: String(text).length * 7 })
         };
     };
 

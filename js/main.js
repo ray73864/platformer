@@ -27,6 +27,89 @@ export function computeZoom(viewportHeight) {
     return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
 }
 
+// --- Per-run seed derivation (randomness wave 2026-11-05) --------------------
+// Player report 2026-11-04: levels felt "partially repeated". Attribution
+// (scratch sweep, 20 runs x 100 levels, /tmp/opencode/randomness): the OLD
+// additive mix (runSeed + imul(L, K)) already produced decorrelated mulberry32
+// streams (mean |draw correlation| between adjacent levels 0.040 — identical
+// to fully independent seeds), BUT it is structurally fragile: addition only
+// carries upward, so flipping bit 31 of runSeed flips ONLY bit 31 of the
+// level seed, and any future mixing constant that landed near a small
+// multiple of mulberry32's 0x6D2B79F5 step would turn adjacent-level streams
+// into literal shifted copies of each other. A bijective avalanche finalizer
+// (lowbias32, Chris Wellons) removes that whole class: every input bit reaches
+// every output bit, and the (runSeed, level, candidate) triple still maps to
+// exactly one seed forever — the retry contract is untouched.
+function avalanche32(x) {
+    x ^= x >>> 16; x = Math.imul(x, 0x7feb352d);
+    x ^= x >>> 15; x = Math.imul(x, 0x846ca68b);
+    return (x ^ (x >>> 16)) >>> 0;
+}
+
+// Candidate chain for one level: index 0 is the primary seed, indices 1.. give
+// deterministic ALTERNATIVES for the anti-repeat guard below. Pure function of
+// (runSeed, levelNumber, index) — same triple, same seed, always.
+export function seedCandidate(runSeed, levelNumber, index) {
+    const base = avalanche32((runSeed + Math.imul(levelNumber, 0x9E3779B1)) >>> 0);
+    return index === 0 ? base : avalanche32((base + Math.imul(index, 0x85EBCA6B)) >>> 0);
+}
+
+// Terrain silhouette fingerprint for the in-run anti-repeat guard: the EXPOSED
+// surface cells (solid with air above) of the shipped grid. The full bitmap
+// inflates every pair (heightmaps fill to the bottom); the surface is what the
+// eye reads as "that level again". Spikes/markers/coins ride fairness passes
+// on top and deliberately stay out of the signature.
+export function layoutSignature(level) {
+    const w = level.width, h = level.height;
+    const surface = new Uint8Array(w * h);
+    for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) {
+            if (level.tiles[y][x] === 1 && (y === 0 || level.tiles[y - 1][x] !== 1)) {
+                surface[y * w + x] = 1;
+            }
+        }
+    }
+    return { w, h, surface, dir: level.direction };
+}
+
+// Surface overlap between two signatures: IoU on matching dimensions (different
+// dims read as dissimilar — the player sees a differently-shaped arena). A
+// right-facing and a left-facing map are compared MIRRORED too and the worse
+// (higher) overlap wins: a mirrored twin IS the same silhouette to the eye.
+export function layoutSimilarity(a, b) {
+    if (a.w !== b.w || a.h !== b.h) return 0;
+    let inter = 0, uni = 0;
+    for (let i = 0; i < a.surface.length; i++) {
+        if (a.surface[i] | b.surface[i]) {
+            uni++;
+            if (a.surface[i] & b.surface[i]) inter++;
+        }
+    }
+    let best = uni ? inter / uni : 1;
+    if (a.dir !== b.dir && a.dir !== 'vertical' && b.dir !== 'vertical') {
+        let mInter = 0, mUni = 0;
+        for (let y = 0; y < a.h; y++) {
+            for (let x = 0; x < a.w; x++) {
+                const av = a.surface[y * a.w + x];
+                const bv = b.surface[y * b.w + (b.w - 1 - x)];
+                if (av | bv) { mUni++; if (av & bv) mInter++; }
+            }
+        }
+        best = Math.max(best, mUni ? mInter / mUni : 1);
+    }
+    return best;
+}
+
+// Guard tuning, measured on the scratch harness (20 runs x 100 levels):
+// worst-pair-per-run surface IoU fell 0.815 -> 0.496 mean (max 0.565) with
+// 1.27 level constructions per published level and a 0.25% accept-the-best
+// fallback rate. tau 0.6 leaves visible twins alive; 0.45 doubles the cost
+// for +0.03. Six candidates bound the worst-case extra generations (each a
+// few ms behind the LEVEL_COMPLETE transition screen).
+const SEED_CANDIDATES = 6;
+const LAYOUT_SIMILARITY_MAX = 0.5;
+
+
 const GRAVITY = 980;
 const PLAYER_SPEED = 200;
 const JUMP_FORCE = 350;
@@ -245,6 +328,14 @@ export class Game {
         // Fresh per-run seed for deterministic level layouts (see seedFor);
         // startGame re-rolls it for each new run.
         this.runSeed = 1;
+        // Per-run anti-repeat state (randomness wave 2026-11-05): the seed
+        // actually chosen for each level of THIS run (retry and loop recovery
+        // read these instead of re-selecting, so the retry contract replays
+        // the exact died-on map), and the terrain signatures of every level
+        // accepted so far, newest last. Both reset in startGame — a new run
+        // has no memory of the last one.
+        this.levelSeeds = new Map();
+        this.recentLayouts = [];
         this.player = null;
         // Per-level element systems: assigned from the Level's getters in
         // startLevel(), null until a level exists (MENU stays safe because
@@ -579,6 +670,10 @@ export class Game {
         // Fresh layout seed for this run: retries replay its levels, Play
         // Again does not. Rolled before construction so level 1 uses it.
         this.runSeed = (Math.random() * 0xffffffff) >>> 0;
+        // A new run has no anti-repeat memory of the last one: clear the
+        // chosen-seed ledger and the recent-layout ring BEFORE building L1.
+        this.levelSeeds = new Map();
+        this.recentLayouts = [];
         const level = this.tryConstructLevel(1);
         if (!level) return false;
         this.score = 0;
@@ -604,13 +699,64 @@ export class Game {
     // Deterministic per-level seed: retrying or error-recovering a level
     // rebuilds the exact map you died on (dying to reroll for a friendier
     // layout is not a strategy). New runs roll a fresh runSeed in startGame.
+    //
+    // Randomness wave 2026-11-05 (player report: levels "partially repeated"):
+    // the first construction of a level walks the deterministic candidate
+    // chain seedCandidate(runSeed, L, i) and accepts the FIRST candidate whose
+    // terrain silhouette (layoutSignature above) overlaps nothing accepted
+    // earlier in THIS run by >= LAYOUT_SIMILARITY_MAX. Attribution sweep: the
+    // old additive mix was NOT producing correlated rng streams (|corr| 0.04,
+    // same as independent seeds) — the repetition is generator machinery
+    // convergence onto similar silhouettes, which no seed hash alone fixes;
+    // with the guard, worst-pair-per-run surface IoU drops 0.815 -> 0.496
+    // mean and zero pairs reach 0.7 within a 100-level run.
+    // The contract holds because selection happens ONCE per level: the chosen
+    // seed is stored in levelSeeds, and every later path (retry, pause-menu
+    // restart, loop recovery) reads the stored value WITHOUT re-selecting or
+    // touching recentLayouts. Same runSeed replays the identical sequence
+    // including every guard decision (all inputs are pure functions of prior
+    // accepted levels). When all candidates throw, the primary seed is handed
+    // back unstored so the caller's own construction reproduces the throw —
+    // startLevel's documented throw-through behaviour is unchanged.
     seedFor(levelNumber) {
-        return (this.runSeed + Math.imul(levelNumber, 0x9E3779B1)) >>> 0;
+        const stored = this.levelSeeds.get(levelNumber);
+        if (stored !== undefined) return stored;
+        let bestSeed = null, bestSig = null, bestScore = Infinity;
+        for (let i = 0; i < SEED_CANDIDATES; i++) {
+            const seed = seedCandidate(this.runSeed, levelNumber, i);
+            let candidate; // assigned in try; throw path continues below
+            try {
+                candidate = new Level(levelNumber, TILE_SIZE, seed);
+            } catch {
+                continue; // exhausted construction: next chain link
+            }
+            const sig = layoutSignature(candidate);
+            let worst = 0;
+            for (const past of this.recentLayouts) {
+                worst = Math.max(worst, layoutSimilarity(sig, past));
+                if (worst >= LAYOUT_SIMILARITY_MAX) break;
+            }
+            if (worst < LAYOUT_SIMILARITY_MAX) {
+                this.levelSeeds.set(levelNumber, seed);
+                this.recentLayouts.push(sig);
+                return seed;
+            }
+            if (worst < bestScore) { bestScore = worst; bestSeed = seed; bestSig = sig; }
+        }
+        if (bestSeed !== null) {
+            // Cap exhausted: accept the least-similar candidate seen rather
+            // than stall the transition (repetition beats a frozen tab).
+            this.levelSeeds.set(levelNumber, bestSeed);
+            this.recentLayouts.push(bestSig);
+            return bestSeed;
+        }
+        return seedCandidate(this.runSeed, levelNumber, 0);
     }
 
     tryConstructLevel(levelNumber) {
+        const seed = this.seedFor(levelNumber);
         try {
-            return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
+            return new Level(levelNumber, TILE_SIZE, seed);
         } catch (first) {
             console.error('Level generation failed; re-attempting once:', first);
         }
@@ -618,8 +764,14 @@ export class Game {
             // Seeded generation is deterministic: re-using the same seed
             // would replay the exact 200-attempt sequence that just failed.
             // Nudge into neighbouring seed space so the rescue can succeed.
-            return new Level(levelNumber, TILE_SIZE,
-                (this.seedFor(levelNumber) ^ 0x5bf03635) >>> 0);
+            // The rescued map becomes THIS level's map for the rest of the
+            // run (stored like a selected seed), so the retry contract still
+            // replays exactly what the player is now looking at.
+            const rescue = (seed ^ 0x5bf03635) >>> 0;
+            const level = new Level(levelNumber, TILE_SIZE, rescue);
+            this.levelSeeds.set(levelNumber, rescue);
+            this.recentLayouts.push(layoutSignature(level));
+            return level;
         } catch (second) {
             console.error('Level generation failed again:', second);
             this.ui.showErrorMessage('Could not prepare that level — try again.');
@@ -1329,12 +1481,23 @@ export class Game {
             // Map identity readout: pins the exact generated layout from a
             // screenshot alone (retry replays the same seed, so what the
             // player sees is what `new Level(level, 32, seed)` reproduces).
+            // Legibility ruling 2026-11-05 (player report: "The seed can
+            // barely be seen in the bottom right"): the old 10px black-at-
+            // 45%-alpha text vanished against dark terrain. A soft shadow
+            // plate plus bright bold text keeps it readable on ANY backdrop —
+            // sky, rock or night band — while staying quiet enough to ignore.
             if (this.level && this.level.seed !== null) {
-                this.ctx.font = '10px monospace';
+                const label = `L${this.currentLevel} seed ${this.level.seed}`;
+                this.ctx.font = 'bold 12px monospace';
                 this.ctx.textAlign = 'right';
-                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-                this.ctx.fillText(`L${this.currentLevel} seed ${this.level.seed}`,
-                    viewW - 8, viewH - 8);
+                const tw = this.ctx.measureText(label).width;
+                const padX = 6, padY = 4;
+                const x1 = viewW - 8, baseline = viewH - 8;
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                this.ctx.fillRect(x1 - tw - padX, baseline - 10,
+                    tw + padX * 2, 10 + padY);
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+                this.ctx.fillText(label, x1, baseline);
                 this.ctx.textAlign = 'left';
             }
         }

@@ -55,7 +55,10 @@
     computeZoom: () => computeZoom,
     deathScorePenalty: () => deathScorePenalty,
     destroyAllGames: () => destroyAllGames,
-    init: () => init2
+    init: () => init2,
+    layoutSignature: () => layoutSignature,
+    layoutSimilarity: () => layoutSimilarity,
+    seedCandidate: () => seedCandidate
   });
 
   // js/input.js
@@ -5811,6 +5814,60 @@
   function computeZoom(viewportHeight) {
     return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
   }
+  function avalanche32(x) {
+    x ^= x >>> 16;
+    x = Math.imul(x, 2146121005);
+    x ^= x >>> 15;
+    x = Math.imul(x, 2221713035);
+    return (x ^ x >>> 16) >>> 0;
+  }
+  function seedCandidate(runSeed, levelNumber, index) {
+    const base = avalanche32(runSeed + Math.imul(levelNumber, 2654435761) >>> 0);
+    return index === 0 ? base : avalanche32(base + Math.imul(index, 2246822507) >>> 0);
+  }
+  function layoutSignature(level) {
+    const { width: w, height: h } = level;
+    const surface = new Uint8Array(w * h);
+    for (let x = 0;x < w; x++) {
+      for (let y = 0;y < h; y++) {
+        if (level.tiles[y][x] === 1 && (y === 0 || level.tiles[y - 1][x] !== 1)) {
+          surface[y * w + x] = 1;
+        }
+      }
+    }
+    return { w, h, surface, dir: level.direction };
+  }
+  function layoutSimilarity(a, b) {
+    if (a.w !== b.w || a.h !== b.h)
+      return 0;
+    let inter = 0, uni = 0;
+    for (let i = 0;i < a.surface.length; i++) {
+      if (a.surface[i] | b.surface[i]) {
+        uni++;
+        if (a.surface[i] & b.surface[i])
+          inter++;
+      }
+    }
+    let best = uni ? inter / uni : 1;
+    if (a.dir !== b.dir && a.dir !== "vertical" && b.dir !== "vertical") {
+      let mInter = 0, mUni = 0;
+      for (let y = 0;y < a.h; y++) {
+        for (let x = 0;x < a.w; x++) {
+          const av = a.surface[y * a.w + x];
+          const bv = b.surface[y * b.w + (b.w - 1 - x)];
+          if (av | bv) {
+            mUni++;
+            if (av & bv)
+              mInter++;
+          }
+        }
+      }
+      best = Math.max(best, mUni ? mInter / mUni : 1);
+    }
+    return best;
+  }
+  var SEED_CANDIDATES = 6;
+  var LAYOUT_SIMILARITY_MAX = 0.5;
   var GRAVITY = 980;
   var PLAYER_SPEED = 200;
   var JUMP_FORCE = 350;
@@ -5890,6 +5947,8 @@
       this.state = STATE.MENU;
       this.level = null;
       this.runSeed = 1;
+      this.levelSeeds = new Map;
+      this.recentLayouts = [];
       this.player = null;
       this.enemyManager = null;
       this.collectibles = null;
@@ -6063,6 +6122,8 @@
     }
     startGame() {
       this.runSeed = Math.random() * 4294967295 >>> 0;
+      this.levelSeeds = new Map;
+      this.recentLayouts = [];
       const level = this.tryConstructLevel(1);
       if (!level)
         return false;
@@ -6076,16 +6137,56 @@
       return true;
     }
     seedFor(levelNumber) {
-      return this.runSeed + Math.imul(levelNumber, 2654435761) >>> 0;
+      const stored = this.levelSeeds.get(levelNumber);
+      if (stored !== undefined)
+        return stored;
+      let bestSeed = null, bestSig = null, bestScore = Infinity;
+      for (let i = 0;i < SEED_CANDIDATES; i++) {
+        const seed = seedCandidate(this.runSeed, levelNumber, i);
+        let candidate;
+        try {
+          candidate = new Level(levelNumber, TILE_SIZE, seed);
+        } catch {
+          continue;
+        }
+        const sig = layoutSignature(candidate);
+        let worst = 0;
+        for (const past of this.recentLayouts) {
+          worst = Math.max(worst, layoutSimilarity(sig, past));
+          if (worst >= LAYOUT_SIMILARITY_MAX)
+            break;
+        }
+        if (worst < LAYOUT_SIMILARITY_MAX) {
+          this.levelSeeds.set(levelNumber, seed);
+          this.recentLayouts.push(sig);
+          return seed;
+        }
+        if (worst < bestScore) {
+          bestScore = worst;
+          bestSeed = seed;
+          bestSig = sig;
+        }
+      }
+      if (bestSeed !== null) {
+        this.levelSeeds.set(levelNumber, bestSeed);
+        this.recentLayouts.push(bestSig);
+        return bestSeed;
+      }
+      return seedCandidate(this.runSeed, levelNumber, 0);
     }
     tryConstructLevel(levelNumber) {
+      const seed = this.seedFor(levelNumber);
       try {
-        return new Level(levelNumber, TILE_SIZE, this.seedFor(levelNumber));
+        return new Level(levelNumber, TILE_SIZE, seed);
       } catch (first) {
         console.error("Level generation failed; re-attempting once:", first);
       }
       try {
-        return new Level(levelNumber, TILE_SIZE, (this.seedFor(levelNumber) ^ 1542469173) >>> 0);
+        const rescue = (seed ^ 1542469173) >>> 0;
+        const level = new Level(levelNumber, TILE_SIZE, rescue);
+        this.levelSeeds.set(levelNumber, rescue);
+        this.recentLayouts.push(layoutSignature(level));
+        return level;
       } catch (second) {
         console.error("Level generation failed again:", second);
         this.ui.showErrorMessage("Could not prepare that level — try again.");
@@ -6434,10 +6535,16 @@
           sprites.drawVignette(this.ctx, this.currentLevel, viewW, viewH);
         }
         if (this.level && this.level.seed !== null) {
-          this.ctx.font = "10px monospace";
+          const label = `L${this.currentLevel} seed ${this.level.seed}`;
+          this.ctx.font = "bold 12px monospace";
           this.ctx.textAlign = "right";
-          this.ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-          this.ctx.fillText(`L${this.currentLevel} seed ${this.level.seed}`, viewW - 8, viewH - 8);
+          const tw = this.ctx.measureText(label).width;
+          const padX = 6, padY = 4;
+          const x1 = viewW - 8, baseline = viewH - 8;
+          this.ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+          this.ctx.fillRect(x1 - tw - padX, baseline - 10, tw + padX * 2, 10 + padY);
+          this.ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+          this.ctx.fillText(label, x1, baseline);
           this.ctx.textAlign = "left";
         }
       }
