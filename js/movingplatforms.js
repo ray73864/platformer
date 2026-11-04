@@ -150,6 +150,11 @@ export class MovingPlatform {
 
     // True while a player's feet rest on this deck (within the resting-
     // contact slack) and their body overlaps it horizontally.
+    // TOLERANCE COUPLING (review M1): 1.5 px must stay > max deck speed x
+    // MAX_DT — descent presents exactly one frame's dy as feet-to-deck gap
+    // at check time (updateAll runs before carry). Current worst case:
+    // V_DECK_SPEED max 25 px/s x dt cap 0.05 s = 1.25 px. Retuning either
+    // constant without raising this slack silently drops riders mid-descent.
     isUnder(player) {
         return Math.abs((player.y + player.height) - this.y) < 1.5 &&
             player.x < this.x + this.width &&
@@ -171,6 +176,13 @@ export class MovingPlatform {
 export class MovingPlatformManager {
     constructor(descriptors = []) {
         this.platforms = descriptors.map(d => new MovingPlatform(d));
+        // Rider-stickiness single source of truth: the deck the player stood
+        // on at the end of the LAST resolved frame (updated by attachRider,
+        // never read from Player). Descending vertical elevators need it —
+        // see oneWayRects gate 2's exception comment. Horizontal decks have
+        // dy ≡ 0, so the exception can never fire for them and their
+        // behavior is provably unchanged.
+        this.riding = null;
     }
 
     updateAll(dt) {
@@ -199,12 +211,28 @@ export class MovingPlatformManager {
      *     jumping up through any deck (vy < deck vy) passes through freely.
      * Callers feed the result to Physics.resolveYCollision ONLY — never to
      * resolveXCollision — which is what keeps decks pure-help.
+     *
+     * Descent stickiness (vertical elevators, required rides): a rider on a
+     * DOWNWARD-moving deck would otherwise be vetoed by gate 2 every frame —
+     * carry re-seats them at the deck top, gravity then leaves player.vy at
+     * only ~g·dt (16 px/s at 60 Hz), which is below the deck's descent speed,
+     * so the "deck must not overtake the player" rule misfires on its own
+     * rider. Measured on shipped kinematics (descent probe, 2026-11-04):
+     * grounded flickers every other frame at 60 Hz and the rider is airborne
+     * 91% of frames at 240 Hz with carry dropping out between catches. The
+     * exception: gate 2 is skipped for THE deck the player rode last frame
+     * (manager.riding, single source of truth) while that deck moves down
+     * (dy > 0) AND the player is not moving up in world space (vy >= 0). A
+     * rider who jumps off has vy < 0 → gate stays armed → they pass through
+     * the rising gap cleanly; a stranger falling onto the cabin satisfies
+     * gate 2 outright. Horizontal decks keep dy ≡ 0: exception unreachable.
      */
     oneWayRects(player) {
         const out = [];
         for (const p of this.platforms) {
             if (!aabbOverlap(player, p)) continue;
-            if (player.vy < p.vy - VY_EPSILON) continue;
+            const stickyDescent = p === this.riding && p.dy > 0 && player.vy >= 0;
+            if (player.vy < p.vy - VY_EPSILON && !stickyDescent) continue;
             const topRef = p.dy < 0 ? p.prevY : p.y;
             if (player.prevY !== undefined &&
                 player.prevY + player.height > topRef + LAND_TOLERANCE) {
@@ -224,5 +252,15 @@ export class MovingPlatformManager {
             if (p.isUnder(player)) return p;
         }
         return null;
+    }
+
+    // Resolve-frame entry point: re-derive the ride attachment and record it
+    // on the manager (this.riding) so next frame's oneWayRects can apply the
+    // descent-stickiness exception to the RIGHT deck only. Returns the deck
+    // for callers that need it (main.js keeps it for jump-boost inheritance;
+    // both references are always the same object).
+    attachRider(player) {
+        this.riding = this.supportUnder(player);
+        return this.riding;
     }
 }

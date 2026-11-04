@@ -14,14 +14,20 @@ import { Level } from "../../js/level.js";
 const T = 32;
 const DT = 1 / 60;
 
-// Deterministic scan for a (level, seed) whose map hosts at least one deck.
-// Roughly half of host-capable maps do, so this lands within a few probes.
+// Deterministic scan for a (level, seed) whose map hosts at least one
+// HORIZONTAL deck. Vertical maps from L13 can host elevator cabins (axis
+// 'v'), which these gap-ride fixtures do not model — filter by axis so the
+// probe stays on bridge maps. Roughly half of host-capable maps do, so this
+// lands within a few probes.
 function findDeckMap() {
     for (let lvl = 8; lvl <= 30; lvl++) {
         for (let s = 0; s < 200; s++) {
             const seed = (lvl * 7919 + s * 131 + 7) >>> 0;
             const level = new Level(lvl, T, seed);
-            if (level.getMovingPlatforms().length > 0) return { lvl, seed };
+            const decks = level.getMovingPlatforms();
+            if (decks.length > 0 && decks.every(d => d.axis === 'h')) {
+                return { lvl, seed };
+            }
         }
     }
     throw new Error("no deck-bearing map found in scan range");

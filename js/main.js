@@ -929,7 +929,10 @@ export class Game {
             if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
                 const decks = this.movingPlatforms.oneWayRects(this.player);
                 if (decks.length) this.physics.resolveYCollision(this.player, decks);
-                this._riding = this.movingPlatforms.supportUnder(this.player);
+                // attachRider records the attachment on the manager too — the
+                // descent-stickiness exception in oneWayRects reads it next
+                // frame (single source of truth lives in the manager).
+                this._riding = this.movingPlatforms.attachRider(this.player);
             }
 
             // Grounded-state edges (visual-tuning hooks, physics-safe):

@@ -131,6 +131,57 @@ const MP_SPEED_RANGE = 18;           // riders always out-move the ride
 // host a site (no solid support beneath any corridor cell).
 const BRIDGE_LIP_BAN_COLS = 3;
 
+// --- Elevator shafts: REQUIRED vertical climbs on vertical maps ------------
+// Player ruling 2026-11-04: "Vertical platforms seem like a nice idea, maybe
+// having to use them to go side to side on the game to get up to a higher
+// point in the level?" The deck-bridge pattern rotated 90°: the generator
+// carves a 2-column chimney through the climb with a flush stand ledge at
+// each stop, and the route THROUGH it validates over the cabin's virtual
+// corridor (see computeReachable's shaft parameter). Horizontal maps and
+// vertical maps below the gate never roll the shaft, so their rng streams —
+// and byte-identical generation — are untouched.
+// Gate rationale: L13 is the first vertical level AFTER every player has
+// seen at least one horizontal deck bridge (bridges start L8; L8/L9 are
+// horizontal, L11 horizontal, L13 vertical) — the ride verb is introduced
+// where it is optional-danger-free horizontally first, then made load-bearing.
+const ELEVATOR_FIRST_LEVEL = 13;
+const MAX_SHAFTS = 1;                // per map (structural gate)
+// Raw per-attempt roll. Realized coverage lands lower (attempt rerolls on
+// burned constructions); measured against the 40-60% target below.
+const SHAFT_CHANCE = 0.7;
+// WHY 4: Step-0 measurement (scratch sim on the shipped Player/Physics,
+// brute-forced press frames incl. run-ups/coyote/buffer, maxrise.mjs): the
+// movement MODEL climbs exactly 1 row per jump (computeReachable steps up to
+// ty = y-1 only), and the PHYSICAL envelope agrees — measured apex 59.62px =
+// 1.86 rows (theory 62.5px continuous), 0/1110 policies landed a 2-row rise.
+// A lift of 2 is therefore already unjumpable; 4 (= modeled 1 + 3) keeps a
+// >= 2-row margin over the physical apex AND gives the ride substance, 6 is
+// the variety cap (worst-case ride ~9.6 s at the slowest speed).
+const MIN_SHAFT_LIFT = 4;            // rows between stop surfaces
+const MAX_SHAFT_LIFT = 6;
+const SHAFT_COLS = 2;                // chimney width == cabin width
+// Stand-shelf columns each side per stop. Width 2 is load-bearing for the
+// deterministic delivery tail (see generateVertical): the lower climb lands
+// OUTSIDE the shelf edge and steps up through a one-tile stair beside it, so
+// no jump-off stand ever needs headroom under the shelf row itself. Boarding
+// stays forgiving — the rider walks the shelf top to the flush mouth.
+const SHAFT_LEDGE_W = 2;
+// Approach fairness window: the ledge spans plus 2 columns beyond each outer
+// edge, at both stops' stand rows and the row above (markers/spikes banned,
+// deployed patrols clamped out — reuse of the bridge lip-ban machinery).
+const SHAFT_WINDOW_PAD = 2;
+// Vertical cabin speed: STRICTLY SLOWER than horizontal decks (26-44 px/s) —
+// riders board from a standstill at a flush ledge, and a modest ride keeps
+// reaction room on the hop-off. Dwell reuses DECK_DWELL_S at BOTH stops.
+const V_DECK_SPEED_MIN = 20;
+const V_DECK_SPEED_RANGE = 5;
+// Stop rows for the bottom stop: at least 3 rows above the ground band's
+// standing row (a lower-section climb precedes the ride) and at most row 18
+// so the top stop (B - lift >= 12 - 6 = 6) stays clear of the portal band
+// (y <= VERTICAL_PORTAL_MAX_Y) with a buffer row.
+const SHAFT_BOTTOM_MIN_ROW = 12;
+const SHAFT_BOTTOM_MAX_ROW = 18;
+
 // Contiguous type-1 tiles on a support row through a column: the solid-run
 // width of the shelf a spawn cell stands on (same measurement as the
 // fairness probe — support row y+1 only; rock/spikes on the walk row do not
@@ -143,6 +194,21 @@ function solidRunWidth(tiles, width, x, supportY) {
     let right = x;
     while (right < width - 1 && row[right + 1] === 1) right++;
     return right - left + 1;
+}
+
+// Shelf columns flanking a shaft at its two stop ledges: SHAFT_LEDGE_W wide
+// on each side; the shaft columns themselves stay void by construction.
+function shaftLedgeCols(sx, ex) {
+    const cols = [];
+    for (let k = 1; k <= SHAFT_LEDGE_W; k++) cols.push(sx - k, ex + k);
+    return cols;
+}
+
+// Deterministic boarding side of a shaft (no rng): whichever flank points
+// away from the map center. Shared by generateVertical (chain seam) and
+// shaftIntact (egress-cell assertion) so the two cannot drift.
+function shaftBoardSide(sx, width) {
+    return sx >= Math.floor(width / 2) ? -1 : 1;
 }
 
 // Linear 0->max ramp over [firstLevel, firstLevel + rampLevels - 1], flat
@@ -257,13 +323,34 @@ function shuffle(items, rng = Math.random) {
 //     lip), and coins may sit on them (collectible exactly once while
 //     riding across — the crossing is mandatory anyway).
 // Callers without a bridge pass null: behavior is byte-identical.
+//
+// Optional `shaft` (elevator shafts, vertical maps): the cabin's virtual
+// corridor on a 2-column chimney { sx, ex, A, B } — cabin top row sweeps
+// A..B pixels/32, rider body rows A-1..B-1. The generator declares one per
+// carved shaft so the BFS can validate the climb THROUGH the elevator; the
+// rules mirror the deck corridor exactly, rotated 90°:
+//   - Shaft cells connect bidirectionally along the ride (both columns at
+//     every rider row, and up/down within the shaft) and ONTO stop ledges at
+//     the two stop rows only (A-1 and B-1): flush across, or one step up
+//     onto a higher flank. Left/right flow symmetry is inherited — vertical
+//     maps never mirror.
+//   - Zero launch authority, same as the corridor: no fall scans, no dist-2
+//     overhang climbs, no upward jumps beyond the stops. A cell reached only
+//     via the shaft cannot become a launchpad for strict-rule derivation.
+//   - Boarding from terrain: adjacent column into a STOP-ROW shaft cell,
+//     flush or one step down (mirrors the lip rule). Mid-shaft boarding is
+//     not modelled even though the physics permits it — conservative.
+//   - Shaft cells join reachableTiles (ROUTE cells): coins may sit on them
+//     (collectible while riding); hazard/marker windows are banned upstream.
+// Callers without a shaft pass null: behavior is byte-identical.
 export function computeReachable(
     tiles,
     width,
     height,
     startTile,
     requireOpenHead = false,
-    corridor = null
+    corridor = null,
+    shaft = null
 ) {
     const solid = (x, y) => {
         if (x < 0 || x >= width) return true;
@@ -285,6 +372,16 @@ export function computeReachable(
     const isCorr = (x, y) =>
         corridor !== null && y === corridor.S - 1 &&
         x >= corridor.a && x <= corridor.b;
+
+    // Virtual elevator-cabin cells (shaft): rider body rows A-1..B-1 across
+    // the chimney columns sx..ex. See the header for the rule set.
+    const isShaft = (x, y) =>
+        shaft !== null && x >= shaft.sx && x <= shaft.ex &&
+        y >= shaft.A - 1 && y <= shaft.B - 1;
+    // Boarding/egress exists only at the two stop rows (flush walk-on onto
+    // the pixel-exact ledges); mid-shaft cells connect nothing outside.
+    const isShaftStopRow = (y) =>
+        shaft !== null && (y === shaft.A - 1 || y === shaft.B - 1);
 
     const key = (x, y) => y * width + x;
     const reachable = new Set();
@@ -318,6 +415,26 @@ export function computeReachable(
                         reachable.add(key(nx, ny));
                         queue.push([nx, ny]);
                     }
+                }
+            }
+            continue;
+        }
+
+        // Shaft cells expand ONLY along the cabin (both columns at every
+        // rider row, up/down the chimney) and FLUSH onto stop ledges at the
+        // two stop rows. Standard scans are skipped entirely — zero launch
+        // authority, mirroring the corridor rules rotated 90° (see header).
+        if (isShaft(x, y)) {
+            for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+                if (isShaft(nx, ny)) {
+                    if (!reachable.has(key(nx, ny))) {
+                        reachable.add(key(nx, ny));
+                        queue.push([nx, ny]);
+                    }
+                } else if (isShaftStopRow(y) && ny === y &&
+                    standable(nx, ny) && !reachable.has(key(nx, ny))) {
+                    reachable.add(key(nx, ny));
+                    queue.push([nx, ny]);
                 }
             }
             continue;
@@ -438,6 +555,19 @@ export function computeReachable(
                 }
             }
         }
+
+        // Boarding edge (shaft): stepping off an adjacent ledge column onto
+        // the dwelling cabin AT A STOP ROW — flush only (the generator forces
+        // pixel-exact ledges, so the corridor's one-row-down variant has no
+        // analogue here). Every other cell treats the shaft as air.
+        if (shaft !== null && isShaftStopRow(y)) {
+            for (const nx of [x - 1, x + 1]) {
+                if (isShaft(nx, y) && !reachable.has(key(nx, y))) {
+                    reachable.add(key(nx, y));
+                    queue.push([nx, y]);
+                }
+            }
+        }
     }
 
     return reachable;
@@ -506,13 +636,15 @@ export class Level {
                 // Vertical ledges create overhangs a 32px body cannot jump
                 // out of; validate those maps headroom-aware (see
                 // computeReachable). Horizontal heightmaps keep the default.
-                // bridgeGap is null on vertical maps, so one argument
-                // spelling covers both directions.
+                // bridgeGap is null on vertical maps and shaftGap is null on
+                // horizontal ones, so one argument spelling covers both.
                 this.direction === 'vertical',
-                this.bridgeGap
+                this.bridgeGap,
+                this.shaftGap
             );
             this.portalTile = this.pickPortalTile();
-            valid = this.portalTile !== null && this.bridgeIntact();
+            valid = this.portalTile !== null && this.bridgeIntact() &&
+                this.shaftIntact();
             // Patrol AI from level 5 onward is a product contract (README).
             // Jagged Phase-2 terrain can leave no legal marker site inside
             // the band, so a zero-marker construction is rejected here —
@@ -634,6 +766,9 @@ export class Level {
         // Deck-bridge corridor (canonical space until the 'left' flip below;
         // generatePlatforms sets it, everything else keeps it null).
         this.bridgeGap = null;
+        // Elevator shaft descriptor (vertical maps only — never mirrored,
+        // because the 'left' flip below cannot co-occur with a shaft).
+        this.shaftGap = null;
 
         if (this.direction === 'vertical') {
             this.generateVertical(tiles);
@@ -657,7 +792,8 @@ export class Level {
             this.height,
             this.canonicalSpawnTile(),
             this.direction === 'vertical',
-            this.bridgeGap
+            this.bridgeGap,
+            this.shaftGap
         );
         this.placeEnemyMarkers(tiles);
 
@@ -692,6 +828,31 @@ export class Level {
             }
         }
 
+        // --- Elevator shaft slot (see ELEVATOR_* constants) -----------------
+        // ONE roll per eligible construction attempt, drawn BEFORE the chain
+        // so a hit reshapes the whole map around the chimney. Levels below
+        // the gate never roll (their rng streams — and byte-identical
+        // generation — are untouched); every eligible vertical attempt
+        // consumes exactly one draw here whether it hits or not, which is an
+        // ACCEPTED design change reshuffling vertical maps from the gate up.
+        if (this.levelNumber >= ELEVATOR_FIRST_LEVEL &&
+            this.rng() < SHAFT_CHANCE) {
+            const lift = MIN_SHAFT_LIFT +
+                Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
+            // Ledges need SHAFT_LEDGE_W columns each side plus the 2 shaft
+            // columns plus 2 more for the delivery tail's stair (tOut/tOut2
+            // stay off the walls on either flank); bottom stop keeps >= 3
+            // rows of climb beneath it and the top stop stays clear of the
+            // portal band (see constants).
+            const sxMin = SHAFT_LEDGE_W + 3;                 // 5
+            const sxMax = w - 3 - SHAFT_LEDGE_W - SHAFT_COLS; // 8 on w=15
+            const sx = sxMin +
+                Math.floor(this.rng() * (sxMax - sxMin + 1));
+            const B = SHAFT_BOTTOM_MIN_ROW + Math.floor(
+                this.rng() * (SHAFT_BOTTOM_MAX_ROW - SHAFT_BOTTOM_MIN_ROW + 1));
+            this.shaftGap = { sx, ex: sx + SHAFT_COLS - 1, A: B - lift, B };
+        }
+
         // Ascending chain of floating ledges, each exactly one row above the
         // last: rise <= 1 per jump is the only climb the movement model
         // allows (see computeReachable), so the chain steps up from the
@@ -703,20 +864,66 @@ export class Level {
         // previous ledge's standing row, so painting backwards would bury
         // the very cells the validated route stands on. Direction bounces
         // off the side walls; the constructor's BFS stays the safety net.
+        // With a shaft the sweep splits in TWO segments (see ELEVATOR_*):
+        // the LOWER climb is steered row by row toward the boarding flank so
+        // its final landing (row B-1) always stands on the bottom floor
+        // beside the chimney — free-snake landings missed the flush floor far
+        // too often (measured: ~94% of constructions burned on delivery);
+        // the elevator carries the route across rows B-1..A; the UPPER climb
+        // resumes on the barrier slab's egress stand (row A-1) walking away.
         this.pathCells = new Set();
         let x = Math.floor(w / 2); // current standing column
         let dir = this.rng() < 0.5 ? 1 : -1;
-        for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-            let step = this.rng() < 0.15 ? 2 : 1;
-            let c = x + dir * step;
-            if (c < 1 || c > w - 2) {
-                // Bounce off the wall; the flipped step always fits since
-                // every standing column stays inside [1, w-2]. A bounced
-                // hop is always dist-1, so it contributes no mid cell.
-                dir = -dir;
-                step = 1;
-                c = x + dir;
+        const g = this.shaftGap;
+        // Deterministic boarding side (see shaftBoardSide): the flank that
+        // points away from the map center, hence within <= 2 columns of the
+        // bottom-center spawn's climb entry.
+        const boardSide = g === null ? 0 : shaftBoardSide(g.sx, w);
+        const boardCol = g === null ? -1 :
+            (boardSide < 0 ? g.sx - 1 : g.ex + 1);
+        // Current steering target for steered links (set per segment below).
+        let steerCol = -1;
+
+        // One chain link: pick the landing column, paint the supporting
+        // ledge forward, record the route cells. steered=true replaces the
+        // snake with a deterministic approach onto the target column (unit
+        // steps, occasional dist-2 while still far, sidestep outward once
+        // arrived); it never enters the shaft columns and never outruns the
+        // walls. forceCol pins this link's landing exactly (used for the
+        // final steered hop into the delivery tail).
+        const chainLink = (row, steered, forceCol = 0) => {
+            let step;
+            if (steered) {
+                const delta = forceCol || steerCol - x;
+                if (delta === 0) step = boardSide; // park sideways, outward
+                else step = Math.sign(delta) *
+                    (Math.abs(delta) > 1 && this.rng() < 0.15 ? 2 : 1);
+                if (forceCol && Math.abs(forceCol - x) <= 2) step = forceCol - x;
+            } else {
+                step = dir * (this.rng() < 0.15 ? 2 : 1);
             }
+            let c = x + step;
+            if (!steered) {
+                // Wall bounce, extended to the chimney: landing columns must
+                // stay outside the shaft columns whenever the landing row
+                // sits at or below the bottom stop + 1 (a route cell inside
+                // the future void would be de-supported by the carve; the
+                // mouth pocket at row B+1 stays legal because its support
+                // row B+2 survives). The flipped step always fits: both
+                // neighbours of an outside column cannot sit inside a
+                // 2-wide shaft, and standing columns stay within [1, w-2].
+                const inShaftCols = (cx) => g !== null &&
+                    row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
+                if (c < 1 || c > w - 2 || inShaftCols(c)) {
+                    // Bounce off the wall; the flipped step always fits
+                    // since every standing column stays inside [1, w-2]. A
+                    // bounced hop is always dist-1, so it contributes no
+                    // mid cell.
+                    step = -Math.sign(step || 1);
+                    c = x + step;
+                }
+            }
+            dir = Math.sign(step) || dir;
             // Decorative forward run (>= 2 tiles): gives the ledge body a
             // contiguous top at least 3 columns wide for enemy patrols.
             const ext = 2 + Math.floor(this.rng() * 4);
@@ -740,7 +947,90 @@ export class Level {
             // makes the only validated climb periodically lethal, S10).
             this.pathCells.add(row * w + x);
             this.pathCells.add((row - 1) * w + c);
-            x = c;
+            return c;
+        };
+
+        if (g === null) {
+            for (let row = h - 4; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
+                x = chainLink(row, false);
+            }
+        } else {
+            // Deterministic delivery tail (see SHAFT_LEDGE_W): the lower
+            // climb is steered to the stair column just OUTSIDE the bottom
+            // shelf's edge, then three fixed cells carry the route up onto
+            // the shelf top and walk it to the flush cabin mouth:
+            //   (B+1, tOut) -> (B, tOut2) -> dist-2 hop -> (B-1, inner),
+            //   walk inner..flank, board at the stop row.
+            // Every jump-off stand sits clear of the shelf row, so no solid
+            // ever caps the route (measured with an in-shelf approach: every
+            // unpunched construction died with the BFS frozen below the
+            // floor line; punching the shelf instead broke boarding itself).
+            const { sx, ex } = g;
+            const flankCol = boardSide < 0 ? sx - 1 : ex + 1;
+            const tOut = flankCol + boardSide * SHAFT_LEDGE_W;
+            const tOut2 = tOut + boardSide;
+            const inner = flankCol + boardSide * (SHAFT_LEDGE_W - 1);
+            steerCol = tOut;
+            for (let row = h - 4; row >= g.B + 2; row--) {
+                x = chainLink(row, true, row === g.B + 2 ? tOut : 0);
+            }
+            // Tail supports + air shaft, painted after the chain so they win
+            // over any decorative run.
+            tiles[g.B + 2][tOut] = 1;   // launch stand support
+            tiles[g.B + 1][tOut2] = 1;  // mid-stand support
+            for (const [ty, tx] of [
+                [g.B + 1, tOut], [g.B, tOut], [g.B, tOut2], [g.B - 1, tOut2],
+                [g.B - 1, tOut], [g.B - 1, inner], [g.B - 2, inner]
+            ]) tiles[ty][tx] = 0;
+            // Protect the whole delivery corridor from spikes and markers.
+            for (const [ty, tx] of [
+                [g.B + 1, tOut], [g.B, tOut2], [g.B - 1, inner],
+                [g.B - 2, inner]
+            ]) this.pathCells.add(ty * w + tx);
+            for (let k = 0; k <= SHAFT_LEDGE_W - 1; k++) {
+                this.pathCells.add((g.B - 1) * w + (inner + boardSide * k));
+            }
+            // Segment seam: resume the climb on the slab egress stand.
+            x = boardCol;
+            dir = boardSide;
+            for (let row = g.A - 1; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
+                x = chainLink(row, false);
+            }
+        }
+
+        if (g !== null) {
+            const { sx, ex, A, B } = g;
+            // Barrier slab (row A, full width except the chimney): THE
+            // requirement enforcer. It seals the map horizontally — side
+            // walls included — leaving the foothold-free 2-column chimney
+            // as the ONLY breach between the lower and upper regions.
+            // Mounting the slab from below through the hole needs a 2-row
+            // rise (measured physical apex 1.86 rows, see MIN_SHAFT_LIFT),
+            // which nothing can do; shaftIntact re-proves portal
+            // unreachability WITHOUT the cabin against the final grid.
+            for (let cx = 0; cx < w; cx++) {
+                if (cx >= sx && cx <= ex) continue;
+                tiles[A][cx] = 1;
+            }
+            // Bottom floor (row B): the stop shelf SHAFT_LEDGE_W columns
+            // each side of the chimney. Its top surface is PIXEL-EXACT on
+            // the cabin's bottom stop (max = B*T), mirroring the bridge
+            // flush rule: boarding is a flush walk. The steered lower climb
+            // always lands within one column of boardCol, inside this span.
+            for (let cx = sx - SHAFT_LEDGE_W; cx <= ex + SHAFT_LEDGE_W; cx++) {
+                if (cx < 0 || cx >= w || (cx >= sx && cx <= ex)) continue;
+                tiles[B][cx] = 1;
+            }
+            // Chimney LAST: pure air rows 0..B+1 across both shaft columns
+            // (cabin sweep rows A..B, rider rows A-1..B-1, portal-band
+            // clearance above, and ONE pocket-free row under the parked
+            // cabin — a descending deck must never engulf a waiting
+            // player). Punches the slab cleanly at the shaft columns;
+            // everything below row B+1 stays untouched, so falling past
+            // the bottom floor costs the climb, exactly like a bridge pit.
+            for (let y = 0; y <= B + 1; y++) {
+                for (let cx = sx; cx <= ex; cx++) tiles[y][cx] = 0;
+            }
         }
     }
 
@@ -891,6 +1181,21 @@ export class Level {
             coord <= this.width - 6;
     }
 
+    // Fairness window around a shaft (vertical mirror of the bridge lip ban,
+    // see SHAFT_WINDOW_PAD): the stop ledges plus two columns beyond each
+    // outer edge, at both stops' stand rows and the row above. Markers and
+    // spikes never site here, and deployed patrols clamp out of these
+    // columns (deriveEnemySpawns), so the approach to a REQUIRED boarding
+    // point is never swept — same ruling lineage as the bridge lips.
+    inShaftWindow(x, y) {
+        const g = this.shaftGap;
+        if (!g) return false;
+        if (x < g.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD ||
+            x > g.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD) return false;
+        return y === g.A - 1 || y === g.A - 2 ||
+            y === g.B - 1 || y === g.B - 2;
+    }
+
     // Tile bounds of the band a patrol may sweep, per direction: mirrors
     // hazardPlacementAllowed's canonical band. Patrols are clamped here so
     // they can never sweep the spawn tile or the portal band (I3): support-
@@ -965,6 +1270,20 @@ export class Level {
                 if (this.bridgeGap) {
                     const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
                     const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+                    if (x < wLo) right = Math.min(right, wLo - 1);
+                    else if (x > wHi) left = Math.max(left, wHi + 1);
+                }
+                // Same clamp for shaft approach windows (elevator rides):
+                // a legal site just outside the window must not patrol INTO
+                // it. Support-break already stops any span at the chimney
+                // (the shaft columns are pure void), so this tightens the
+                // ledge-side approach — reuse of the bridge clamp machinery,
+                // column-scoped like the original.
+                if (this.shaftGap) {
+                    const wLo = this.shaftGap.sx - SHAFT_LEDGE_W -
+                        SHAFT_WINDOW_PAD;
+                    const wHi = this.shaftGap.ex + SHAFT_LEDGE_W +
+                        SHAFT_WINDOW_PAD;
                     if (x < wLo) right = Math.min(right, wLo - 1);
                     else if (x > wHi) left = Math.max(left, wHi + 1);
                 }
@@ -1046,6 +1365,10 @@ export class Level {
                     continue;
                 }
                 if (nearRouteCell(x, y)) continue;
+                // Shaft approach fairness: no teeth on or beside the stop
+                // ledges (see inShaftWindow). The chimney columns themselves
+                // are pure void, so a spike can never site inside them.
+                if (this.inShaftWindow(x, y)) continue;
                 if (this.direction === 'vertical') {
                     // Vertical ledges are ALL edge, so the horizontal
                     // rollout rule would veto every cell. Instead: teeth
@@ -1097,7 +1420,7 @@ export class Level {
         const placementSafe = () => {
             const reachable = computeReachable(
                 tiles, this.width, this.height, spawn, headroom,
-                this.bridgeGap);
+                this.bridgeGap, this.shaftGap);
             let portalBand = false;
             for (const key of reachable) {
                 const x = key % this.width;
@@ -1179,6 +1502,10 @@ export class Level {
             x <= this.bridgeGap.b + BRIDGE_LIP_BAN_COLS) {
             return false;
         }
+        // Forced-boarding fairness (elevator shafts): no enemy site in the
+        // stop-ledge approach windows — a hostile at a REQUIRED ride's
+        // boarding point is the same ambush the bridge lip ban exists for.
+        if (this.inShaftWindow(x, y)) return false;
         if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1) return false;
         if (this.pathCells && this.pathCells.has(y * this.width + x)) {
             return false;
@@ -1586,22 +1913,47 @@ export class Level {
     }
 
     /**
-     * Descriptor pass for deck bridges (see the DECK_BRIDGE_* constants
-     * header). Runs LAST so speed/phase draws consume rng only after every
-     * geometry/marker/portal/coin/kind stream — schedule-only noise, never
-     * terrain noise. Exactly one shuttle spans the declared corridor (cap
-     * MAX_DECK_BRIDGES), its full travel range inside the gap columns; the
-     * swept volume is re-checked like any deck candidate before shipping
-     * (defense-in-depth over bridgeIntact: patrols, spawn/portal cells).
+     * Descriptor pass for deck bridges AND elevator cabins (see the
+     * DECK_BRIDGE_* and ELEVATOR_* constant headers). Runs LAST so speed/
+     * phase draws consume rng only after every geometry/marker/portal/coin/
+     * kind stream — schedule-only noise, never terrain noise. Exactly one
+     * shuttle per map (caps MAX_DECK_BRIDGES / MAX_SHAFTS); the swept volume
+     * is re-checked like any deck candidate before shipping (defense-in-
+     * depth over bridgeIntact/shaftIntact: patrols, spawn/portal cells).
      * Collision height is a full tile while the drawn plank is ~half that:
      * at max fall speed 600 px/s against the 0.05 s dt cap a body sinks
      * ~30 px/frame, and a half-tile collider would risk tunnelling straight
-     * through a falling player.
+     * through a falling player. For axis 'v' the min/max bounds are pixel-
+     * exact flush with the stop ledges (min = top ledge surface, max =
+     * bottom ledge surface), and BOTH stops hold for DECK_DWELL_S.
      */
     deriveMovingPlatforms() {
         const out = [];
+        if (this.direction === 'vertical') {
+            const g = this.shaftGap;
+            if (!g) return out;
+            if (!this.shaftLegal(g.sx, g.A, g.B)) return out;
+            const T = this.tileSize;
+            const speed = V_DECK_SPEED_MIN + this.rng() * V_DECK_SPEED_RANGE;
+            const phase = this.rng();
+            out.push({
+                x: g.sx * T,
+                y: g.A * T,
+                width: SHAFT_COLS * T,
+                height: T,
+                axis: 'v',
+                min: g.A * T,
+                max: g.B * T,
+                speed,
+                phase,
+                dwell: DECK_DWELL_S,
+                vx: 0,
+                vy: 0
+            });
+            return out.slice(0, MAX_SHAFTS);
+        }
         const g = this.bridgeGap;
-        if (!g || this.direction === 'vertical') return out;
+        if (!g) return out;
         const T = this.tileSize;
         const S = Math.max(this.columnTopRow(g.a - 1), this.columnTopRow(g.b + 1));
         if (!this.movingDeckLegal(g.a, g.b, S)) return out;
@@ -1652,6 +2004,118 @@ export class Level {
         for (const cell of [this.spawnTile, this.portalTile]) {
             if (cell && cell.x >= a && cell.x <= b &&
                 (cell.y === S || cell.y === S + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Hard validation of the declared elevator shaft against the FINAL grid,
+     * run inside the constructor's validity loop so a broken shaft rejects
+     * the whole construction instead of shipping a soft-locked required
+     * climb (the vertical analogue of bridgeIntact):
+     *  - vertical maps only, never below ELEVATOR_FIRST_LEVEL, exactly one
+     *    shaft per map (single descriptor field), lift within
+     *    [MIN_SHAFT_LIFT, MAX_SHAFT_LIFT] (> the measured physical apex —
+     *    see the MIN_SHAFT_LIFT WHY-comment);
+     *  - chimney purity: rows 0..B+1 across both columns are pure air — no
+     *    solids, no spike support, no footholds (nothing to climb instead
+     *    of riding, and one pocket-free row under the parked cabin);
+     *  - barrier slab continuous at row A (only breach = the chimney),
+     *    bottom shelf full width at row B flush with the cabin extremes,
+     *    boarding/egress stands air with clear heads;
+     *  - approach windows marker/spike-free after every placement pass;
+     *  - spawn and portal outside the chimney columns;
+     *  - LOAD-BEARING: portal unreachable without the cabin corridor;
+     *  - swept-volume legality (patrol bands vs cabin rows) via shaftLegal.
+     * Maps without a shaft (roll missed, horizontal, or below-gate) pass
+     * trivially.
+     */
+    shaftIntact() {
+        const g = this.shaftGap;
+        if (!g) return true;
+        if (this.direction !== 'vertical') return false;
+        if (this.levelNumber < ELEVATOR_FIRST_LEVEL) return false;
+        const { sx, ex, A, B } = g;
+        if (B - A < MIN_SHAFT_LIFT || B - A > MAX_SHAFT_LIFT) return false;
+        if (sx < SHAFT_LEDGE_W || ex > this.width - 1 - SHAFT_LEDGE_W) {
+            return false;
+        }
+        if (A < VERTICAL_PORTAL_MAX_Y + 2 || B > SHAFT_BOTTOM_MAX_ROW) {
+            return false;
+        }
+        for (let y = 0; y <= B + 1; y++) {
+            for (let cx = sx; cx <= ex; cx++) {
+                if (this.tiles[y][cx] !== 0) return false;
+            }
+        }
+        // Barrier slab continuous across row A except at the chimney, and
+        // the bottom floor solid under both shaft flanks (flush stop
+        // surfaces: top face of row A == cabin min, top face of row B ==
+        // cabin max — pixel-exact by tile-row convention).
+        for (let cx = 0; cx < this.width; cx++) {
+            if (cx >= sx && cx <= ex) continue;
+            if (this.tiles[A][cx] !== 1) return false;
+        }
+        // Bottom floor carries the full stop shelf (>= SHAFT_LEDGE_W stand
+        // columns each side of the chimney — forgiving boarding), flush with
+        // the cabin's bottom stop.
+        for (const lx of shaftLedgeCols(sx, ex)) {
+            if (this.tiles[B][lx] !== 1) return false;
+        }
+        // Boarding stands air with clear heads at both bottom flanks, and
+        // at the egress flank on the slab top (the chain seam guarantees
+        // that one side; the other may legitimately carry terrain).
+        const side = shaftBoardSide(sx, this.width);
+        for (const [row, col] of [
+            [B - 1, sx - 1], [B - 2, sx - 1], [B - 1, ex + 1], [B - 2, ex + 1],
+            [A - 1, side < 0 ? sx - 1 : ex + 1],
+            [A - 2, side < 0 ? sx - 1 : ex + 1]
+        ]) {
+            if (this.tiles[row][col] !== 0) return false;
+        }
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const t = this.tiles[y][x];
+                if ((t === 2 || t === 4) && this.inShaftWindow(x, y)) return false;
+            }
+        }
+        for (const cell of [this.spawnTile, this.portalTile]) {
+            if (cell && cell.x >= sx && cell.x <= ex) return false;
+        }
+        // LOAD-BEARING requirement: without the cabin corridor the portal
+        // must be UNREACHABLE — the shaft carries the route, mirroring how
+        // MIN_DECK_GAP makes a bridge pit unjumpable. The barrier slab plus
+        // foothold-free chimney is the structural guarantee; this plain BFS
+        // proves it against the final grid (same headroom rule as the
+        // constructor's pass). A terrain bypass rejects the construction.
+        const plain = computeReachable(
+            this.tiles, this.width, this.height, this.spawnTile, true,
+            null, null);
+        if (this.portalTile &&
+            plain.has(this.portalTile.y * this.width + this.portalTile.x)) {
+            return false;
+        }
+        return this.shaftLegal(sx, A, B);
+    }
+
+    // Cabin swept-volume legality for the shaft spanning columns sx..sx+1
+    // with rider/cabin rows A-1..B: no patrol may cross the chimney at those
+    // rows, and spawn/portal cells stay clear of the swept band. Decided
+    // inside the retry loop (via shaftIntact) and re-checked defensively by
+    // deriveMovingPlatforms, mirroring movingDeckLegal.
+    shaftLegal(sx, A, B) {
+        const overlapsX = (l, r, l2, r2) => l < r2 && l2 < r;
+        for (const s of this.deriveEnemySpawns()) {
+            if (s.y >= A - 1 && s.y <= B &&
+                overlapsX(s.left, s.right + 1, sx, sx + SHAFT_COLS)) {
+                return false;
+            }
+        }
+        for (const cell of [this.spawnTile, this.portalTile]) {
+            if (cell && cell.x >= sx && cell.x <= sx + SHAFT_COLS - 1 &&
+                cell.y >= A - 1 && cell.y <= B) {
                 return false;
             }
         }

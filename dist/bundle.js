@@ -798,6 +798,18 @@
   var MP_SPEED_MIN = 26;
   var MP_SPEED_RANGE = 18;
   var BRIDGE_LIP_BAN_COLS = 3;
+  var ELEVATOR_FIRST_LEVEL = 13;
+  var MAX_SHAFTS = 1;
+  var SHAFT_CHANCE = 0.7;
+  var MIN_SHAFT_LIFT = 4;
+  var MAX_SHAFT_LIFT = 6;
+  var SHAFT_COLS = 2;
+  var SHAFT_LEDGE_W = 2;
+  var SHAFT_WINDOW_PAD = 2;
+  var V_DECK_SPEED_MIN = 20;
+  var V_DECK_SPEED_RANGE = 5;
+  var SHAFT_BOTTOM_MIN_ROW = 12;
+  var SHAFT_BOTTOM_MAX_ROW = 18;
   function solidRunWidth(tiles, width, x, supportY) {
     const row = tiles[supportY];
     if (!row || row[x] !== 1)
@@ -809,6 +821,15 @@
     while (right < width - 1 && row[right + 1] === 1)
       right++;
     return right - left + 1;
+  }
+  function shaftLedgeCols(sx, ex) {
+    const cols = [];
+    for (let k = 1;k <= SHAFT_LEDGE_W; k++)
+      cols.push(sx - k, ex + k);
+    return cols;
+  }
+  function shaftBoardSide(sx, width) {
+    return sx >= Math.floor(width / 2) ? -1 : 1;
   }
   function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
     if (!Number.isInteger(levelNumber) || levelNumber < firstLevel)
@@ -838,7 +859,7 @@
     }
     return items;
   }
-  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null) {
+  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null, shaft = null) {
     const solid = (x, y) => {
       if (x < 0 || x >= width)
         return true;
@@ -854,6 +875,8 @@
     const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
     const standable = (x, y) => freeCell(x, y) && solid(x, y + 1) && (!requireOpenHead || !solid(x, y - 1));
     const isCorr = (x, y) => corridor !== null && y === corridor.S - 1 && x >= corridor.a && x <= corridor.b;
+    const isShaft = (x, y) => shaft !== null && x >= shaft.sx && x <= shaft.ex && y >= shaft.A - 1 && y <= shaft.B - 1;
+    const isShaftStopRow = (y) => shaft !== null && (y === shaft.A - 1 || y === shaft.B - 1);
     const key = (x, y) => y * width + x;
     const reachable = new Set;
     if (!standable(startTile.x, startTile.y)) {
@@ -878,6 +901,20 @@
               reachable.add(key(nx, ny));
               queue.push([nx, ny]);
             }
+          }
+        }
+        continue;
+      }
+      if (isShaft(x, y)) {
+        for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+          if (isShaft(nx, ny)) {
+            if (!reachable.has(key(nx, ny))) {
+              reachable.add(key(nx, ny));
+              queue.push([nx, ny]);
+            }
+          } else if (isShaftStopRow(y) && ny === y && standable(nx, ny) && !reachable.has(key(nx, ny))) {
+            reachable.add(key(nx, ny));
+            queue.push([nx, ny]);
           }
         }
         continue;
@@ -943,6 +980,14 @@
           }
         }
       }
+      if (shaft !== null && isShaftStopRow(y)) {
+        for (const nx of [x - 1, x + 1]) {
+          if (isShaft(nx, y) && !reachable.has(key(nx, y))) {
+            reachable.add(key(nx, y));
+            queue.push([nx, y]);
+          }
+        }
+      }
     }
     return reachable;
   }
@@ -966,9 +1011,9 @@
       while (attempt < MAX_GENERATION_ATTEMPTS && !valid) {
         this.tiles = this.generateLevel();
         this.spawnTile = this.getSpawnTile();
-        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap);
+        this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap, this.shaftGap);
         this.portalTile = this.pickPortalTile();
-        valid = this.portalTile !== null && this.bridgeIntact();
+        valid = this.portalTile !== null && this.bridgeIntact() && this.shaftIntact();
         if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
           valid = this.deriveEnemySpawns().length > 0 && (this.direction === "vertical" || this.countTilesOfType(2) > 0);
         }
@@ -1016,13 +1061,14 @@
       const tiles = Array(this.height).fill(null).map(() => Array(this.width).fill(0));
       this.pathCells = null;
       this.bridgeGap = null;
+      this.shaftGap = null;
       if (this.direction === "vertical") {
         this.generateVertical(tiles);
       } else {
         this.generatePlatforms(tiles);
       }
       this.placeSpikes(tiles);
-      this.generationReachable = computeReachable(tiles, this.width, this.height, this.canonicalSpawnTile(), this.direction === "vertical", this.bridgeGap);
+      this.generationReachable = computeReachable(tiles, this.width, this.height, this.canonicalSpawnTile(), this.direction === "vertical", this.bridgeGap, this.shaftGap);
       this.placeEnemyMarkers(tiles);
       if (this.direction === "left") {
         for (const row of tiles)
@@ -1042,17 +1088,43 @@
           tiles[y][x] = 1;
         }
       }
+      if (this.levelNumber >= ELEVATOR_FIRST_LEVEL && this.rng() < SHAFT_CHANCE) {
+        const lift = MIN_SHAFT_LIFT + Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
+        const sxMin = SHAFT_LEDGE_W + 3;
+        const sxMax = w - 3 - SHAFT_LEDGE_W - SHAFT_COLS;
+        const sx = sxMin + Math.floor(this.rng() * (sxMax - sxMin + 1));
+        const B = SHAFT_BOTTOM_MIN_ROW + Math.floor(this.rng() * (SHAFT_BOTTOM_MAX_ROW - SHAFT_BOTTOM_MIN_ROW + 1));
+        this.shaftGap = { sx, ex: sx + SHAFT_COLS - 1, A: B - lift, B };
+      }
       this.pathCells = new Set;
       let x = Math.floor(w / 2);
       let dir = this.rng() < 0.5 ? 1 : -1;
-      for (let row = h - 4;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
-        let step = this.rng() < 0.15 ? 2 : 1;
-        let c = x + dir * step;
-        if (c < 1 || c > w - 2) {
-          dir = -dir;
-          step = 1;
-          c = x + dir;
+      const g = this.shaftGap;
+      const boardSide = g === null ? 0 : shaftBoardSide(g.sx, w);
+      const boardCol = g === null ? -1 : boardSide < 0 ? g.sx - 1 : g.ex + 1;
+      let steerCol = -1;
+      const chainLink = (row, steered, forceCol = 0) => {
+        let step;
+        if (steered) {
+          const delta = forceCol || steerCol - x;
+          if (delta === 0)
+            step = boardSide;
+          else
+            step = Math.sign(delta) * (Math.abs(delta) > 1 && this.rng() < 0.15 ? 2 : 1);
+          if (forceCol && Math.abs(forceCol - x) <= 2)
+            step = forceCol - x;
+        } else {
+          step = dir * (this.rng() < 0.15 ? 2 : 1);
         }
+        let c = x + step;
+        if (!steered) {
+          const inShaftCols = (cx) => g !== null && row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
+          if (c < 1 || c > w - 2 || inShaftCols(c)) {
+            step = -Math.sign(step || 1);
+            c = x + step;
+          }
+        }
+        dir = Math.sign(step) || dir;
         const ext = 2 + Math.floor(this.rng() * 4);
         const lo = dir === 1 ? c : c - ext;
         const hi = dir === 1 ? c + ext : c;
@@ -1063,7 +1135,66 @@
         }
         this.pathCells.add(row * w + x);
         this.pathCells.add((row - 1) * w + c);
-        x = c;
+        return c;
+      };
+      if (g === null) {
+        for (let row = h - 4;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
+          x = chainLink(row, false);
+        }
+      } else {
+        const { sx, ex } = g;
+        const flankCol = boardSide < 0 ? sx - 1 : ex + 1;
+        const tOut = flankCol + boardSide * SHAFT_LEDGE_W;
+        const tOut2 = tOut + boardSide;
+        const inner = flankCol + boardSide * (SHAFT_LEDGE_W - 1);
+        steerCol = tOut;
+        for (let row = h - 4;row >= g.B + 2; row--) {
+          x = chainLink(row, true, row === g.B + 2 ? tOut : 0);
+        }
+        tiles[g.B + 2][tOut] = 1;
+        tiles[g.B + 1][tOut2] = 1;
+        for (const [ty, tx] of [
+          [g.B + 1, tOut],
+          [g.B, tOut],
+          [g.B, tOut2],
+          [g.B - 1, tOut2],
+          [g.B - 1, tOut],
+          [g.B - 1, inner],
+          [g.B - 2, inner]
+        ])
+          tiles[ty][tx] = 0;
+        for (const [ty, tx] of [
+          [g.B + 1, tOut],
+          [g.B, tOut2],
+          [g.B - 1, inner],
+          [g.B - 2, inner]
+        ])
+          this.pathCells.add(ty * w + tx);
+        for (let k = 0;k <= SHAFT_LEDGE_W - 1; k++) {
+          this.pathCells.add((g.B - 1) * w + (inner + boardSide * k));
+        }
+        x = boardCol;
+        dir = boardSide;
+        for (let row = g.A - 1;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
+          x = chainLink(row, false);
+        }
+      }
+      if (g !== null) {
+        const { sx, ex, A, B } = g;
+        for (let cx = 0;cx < w; cx++) {
+          if (cx >= sx && cx <= ex)
+            continue;
+          tiles[A][cx] = 1;
+        }
+        for (let cx = sx - SHAFT_LEDGE_W;cx <= ex + SHAFT_LEDGE_W; cx++) {
+          if (cx < 0 || cx >= w || cx >= sx && cx <= ex)
+            continue;
+          tiles[B][cx] = 1;
+        }
+        for (let y = 0;y <= B + 1; y++) {
+          for (let cx = sx;cx <= ex; cx++)
+            tiles[y][cx] = 0;
+        }
       }
     }
     generatePlatforms(tiles) {
@@ -1149,6 +1280,14 @@
       }
       return coord >= HAZARD_SPAWN_EXCLUDE_COLS && coord <= this.width - 6;
     }
+    inShaftWindow(x, y) {
+      const g = this.shaftGap;
+      if (!g)
+        return false;
+      if (x < g.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD || x > g.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD)
+        return false;
+      return y === g.A - 1 || y === g.A - 2 || y === g.B - 1 || y === g.B - 2;
+    }
     patrolBandBounds() {
       if (this.direction === "left") {
         return [5, this.width - 1 - HAZARD_SPAWN_EXCLUDE_COLS];
@@ -1191,6 +1330,14 @@
           if (this.bridgeGap) {
             const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
             const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+            if (x < wLo)
+              right = Math.min(right, wLo - 1);
+            else if (x > wHi)
+              left = Math.max(left, wHi + 1);
+          }
+          if (this.shaftGap) {
+            const wLo = this.shaftGap.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD;
+            const wHi = this.shaftGap.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD;
             if (x < wLo)
               right = Math.min(right, wLo - 1);
             else if (x > wHi)
@@ -1246,6 +1393,8 @@
           }
           if (nearRouteCell(x, y))
             continue;
+          if (this.inShaftWindow(x, y))
+            continue;
           if (this.direction === "vertical") {
             if (x < 1 || x > this.width - 2 || tiles[y + 1][x - 1] !== 1 || tiles[y + 1][x + 1] !== 1)
               continue;
@@ -1258,7 +1407,7 @@
       const headroom = this.direction === "vertical";
       const spawn = this.canonicalSpawnTile();
       const placementSafe = () => {
-        const reachable = computeReachable(tiles, this.width, this.height, spawn, headroom, this.bridgeGap);
+        const reachable = computeReachable(tiles, this.width, this.height, spawn, headroom, this.bridgeGap, this.shaftGap);
         let portalBand = false;
         for (const key of reachable) {
           const x = key % this.width;
@@ -1308,6 +1457,8 @@
       if (this.bridgeGap && x >= this.bridgeGap.a - BRIDGE_LIP_BAN_COLS && x <= this.bridgeGap.b + BRIDGE_LIP_BAN_COLS) {
         return false;
       }
+      if (this.inShaftWindow(x, y))
+        return false;
       if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1)
         return false;
       if (this.pathCells && this.pathCells.has(y * this.width + x)) {
@@ -1561,8 +1712,33 @@
     }
     deriveMovingPlatforms() {
       const out = [];
+      if (this.direction === "vertical") {
+        const g = this.shaftGap;
+        if (!g)
+          return out;
+        if (!this.shaftLegal(g.sx, g.A, g.B))
+          return out;
+        const T = this.tileSize;
+        const speed = V_DECK_SPEED_MIN + this.rng() * V_DECK_SPEED_RANGE;
+        const phase = this.rng();
+        out.push({
+          x: g.sx * T,
+          y: g.A * T,
+          width: SHAFT_COLS * T,
+          height: T,
+          axis: "v",
+          min: g.A * T,
+          max: g.B * T,
+          speed,
+          phase,
+          dwell: DECK_DWELL_S,
+          vx: 0,
+          vy: 0
+        });
+        return out.slice(0, MAX_SHAFTS);
+      }
       const g = this.bridgeGap;
-      if (!g || this.direction === "vertical")
+      if (!g)
         return out;
       const T = this.tileSize;
       const S = Math.max(this.columnTopRow(g.a - 1), this.columnTopRow(g.b + 1));
@@ -1606,6 +1782,82 @@
       }
       for (const cell of [this.spawnTile, this.portalTile]) {
         if (cell && cell.x >= a && cell.x <= b && (cell.y === S || cell.y === S + 1)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    shaftIntact() {
+      const g = this.shaftGap;
+      if (!g)
+        return true;
+      if (this.direction !== "vertical")
+        return false;
+      if (this.levelNumber < ELEVATOR_FIRST_LEVEL)
+        return false;
+      const { sx, ex, A, B } = g;
+      if (B - A < MIN_SHAFT_LIFT || B - A > MAX_SHAFT_LIFT)
+        return false;
+      if (sx < SHAFT_LEDGE_W || ex > this.width - 1 - SHAFT_LEDGE_W) {
+        return false;
+      }
+      if (A < VERTICAL_PORTAL_MAX_Y + 2 || B > SHAFT_BOTTOM_MAX_ROW) {
+        return false;
+      }
+      for (let y = 0;y <= B + 1; y++) {
+        for (let cx = sx;cx <= ex; cx++) {
+          if (this.tiles[y][cx] !== 0)
+            return false;
+        }
+      }
+      for (let cx = 0;cx < this.width; cx++) {
+        if (cx >= sx && cx <= ex)
+          continue;
+        if (this.tiles[A][cx] !== 1)
+          return false;
+      }
+      for (const lx of shaftLedgeCols(sx, ex)) {
+        if (this.tiles[B][lx] !== 1)
+          return false;
+      }
+      const side = shaftBoardSide(sx, this.width);
+      for (const [row, col] of [
+        [B - 1, sx - 1],
+        [B - 2, sx - 1],
+        [B - 1, ex + 1],
+        [B - 2, ex + 1],
+        [A - 1, side < 0 ? sx - 1 : ex + 1],
+        [A - 2, side < 0 ? sx - 1 : ex + 1]
+      ]) {
+        if (this.tiles[row][col] !== 0)
+          return false;
+      }
+      for (let y = 0;y < this.height; y++) {
+        for (let x = 0;x < this.width; x++) {
+          const t = this.tiles[y][x];
+          if ((t === 2 || t === 4) && this.inShaftWindow(x, y))
+            return false;
+        }
+      }
+      for (const cell of [this.spawnTile, this.portalTile]) {
+        if (cell && cell.x >= sx && cell.x <= ex)
+          return false;
+      }
+      const plain = computeReachable(this.tiles, this.width, this.height, this.spawnTile, true, null, null);
+      if (this.portalTile && plain.has(this.portalTile.y * this.width + this.portalTile.x)) {
+        return false;
+      }
+      return this.shaftLegal(sx, A, B);
+    }
+    shaftLegal(sx, A, B) {
+      const overlapsX = (l, r, l2, r2) => l < r2 && l2 < r;
+      for (const s of this.deriveEnemySpawns()) {
+        if (s.y >= A - 1 && s.y <= B && overlapsX(s.left, s.right + 1, sx, sx + SHAFT_COLS)) {
+          return false;
+        }
+      }
+      for (const cell of [this.spawnTile, this.portalTile]) {
+        if (cell && cell.x >= sx && cell.x <= sx + SHAFT_COLS - 1 && cell.y >= A - 1 && cell.y <= B) {
           return false;
         }
       }
@@ -3237,17 +3489,28 @@
         ctx.fillRect(p.x + 9, p.y + H - 6, 2, 2);
         ctx.fillRect(p.x + p.width - 11, p.y + 4, 2, 2);
         ctx.fillRect(p.x + p.width - 11, p.y + H - 6, 2, 2);
-        const sp = Math.min(1, Math.abs(p.vx) / 30);
+        const vert = p.axis === "v";
+        const v = vert ? p.vy : p.vx;
+        const sp = Math.min(1, Math.abs(v) / 30);
         if (sp > 0.05) {
-          const dir = p.vx > 0 ? 1 : -1;
-          const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+          const dir = v > 0 ? 1 : -1;
           ctx.fillStyle = `rgba(255,255,255,${(0.16 + 0.3 * sp).toFixed(3)})`;
           for (let i = 0;i < 2; i++) {
-            const bx = bx0 + i * 6 * dir;
             ctx.beginPath();
-            ctx.moveTo(bx, p.y + 4);
-            ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
-            ctx.lineTo(bx, p.y + H - 4);
+            if (vert) {
+              const by0 = dir > 0 ? p.y + H - 10 : p.y + 10;
+              const by = by0 + i * 5 * dir;
+              const cx0 = p.x + p.width / 2;
+              ctx.moveTo(cx0 - 5, by);
+              ctx.lineTo(cx0, by + 4 * dir);
+              ctx.lineTo(cx0 + 5, by);
+            } else {
+              const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+              const bx = bx0 + i * 6 * dir;
+              ctx.moveTo(bx, p.y + 4);
+              ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
+              ctx.lineTo(bx, p.y + H - 4);
+            }
             ctx.fill();
           }
         } else if (p.dwelling) {
@@ -3612,6 +3875,7 @@
   class MovingPlatformManager {
     constructor(descriptors = []) {
       this.platforms = descriptors.map((d) => new MovingPlatform(d));
+      this.riding = null;
     }
     updateAll(dt) {
       for (const p of this.platforms)
@@ -3622,7 +3886,8 @@
       for (const p of this.platforms) {
         if (!aabbOverlap(player, p))
           continue;
-        if (player.vy < p.vy - VY_EPSILON)
+        const stickyDescent = p === this.riding && p.dy > 0 && player.vy >= 0;
+        if (player.vy < p.vy - VY_EPSILON && !stickyDescent)
           continue;
         const topRef = p.dy < 0 ? p.prevY : p.y;
         if (player.prevY !== undefined && player.prevY + player.height > topRef + LAND_TOLERANCE) {
@@ -3640,6 +3905,10 @@
           return p;
       }
       return null;
+    }
+    attachRider(player) {
+      this.riding = this.supportUnder(player);
+      return this.riding;
     }
   }
 
@@ -4748,7 +5017,7 @@
           const decks = this.movingPlatforms.oneWayRects(this.player);
           if (decks.length)
             this.physics.resolveYCollision(this.player, decks);
-          this._riding = this.movingPlatforms.supportUnder(this.player);
+          this._riding = this.movingPlatforms.attachRider(this.player);
         }
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;

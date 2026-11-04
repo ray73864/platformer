@@ -1590,18 +1590,30 @@ export class Sprites {
             ctx.fillRect(p.x + p.width - 11, p.y + 4, 2, 2);
             ctx.fillRect(p.x + p.width - 11, p.y + H - 6, 2, 2);
             // Motion cue: two chevrons pointing along travel, brightening
-            // with speed (state-derived, never random).
-            const sp = Math.min(1, Math.abs(p.vx) / 30);
+            // with speed (state-derived, never random). Axis 'v' cabins get
+            // the same chevrons rotated 90° (up/down), keyed to |vy|.
+            const vert = p.axis === 'v';
+            const v = vert ? p.vy : p.vx;
+            const sp = Math.min(1, Math.abs(v) / 30);
             if (sp > 0.05) {
-                const dir = p.vx > 0 ? 1 : -1;
-                const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+                const dir = v > 0 ? 1 : -1;
                 ctx.fillStyle = `rgba(255,255,255,${(0.16 + 0.3 * sp).toFixed(3)})`;
                 for (let i = 0; i < 2; i++) {
-                    const bx = bx0 + i * 6 * dir;
                     ctx.beginPath();
-                    ctx.moveTo(bx, p.y + 4);
-                    ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
-                    ctx.lineTo(bx, p.y + H - 4);
+                    if (vert) {
+                        const by0 = dir > 0 ? p.y + H - 10 : p.y + 10;
+                        const by = by0 + i * 5 * dir;
+                        const cx0 = p.x + p.width / 2;
+                        ctx.moveTo(cx0 - 5, by);
+                        ctx.lineTo(cx0, by + 4 * dir);
+                        ctx.lineTo(cx0 + 5, by);
+                    } else {
+                        const bx0 = dir > 0 ? p.x + p.width - 26 : p.x + 20;
+                        const bx = bx0 + i * 6 * dir;
+                        ctx.moveTo(bx, p.y + 4);
+                        ctx.lineTo(bx + 4 * dir, p.y + H / 2 - 1);
+                        ctx.lineTo(bx, p.y + H - 4);
+                    }
                     ctx.fill();
                 }
             } else if (p.dwelling) {

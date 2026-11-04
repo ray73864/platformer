@@ -89,9 +89,15 @@ test("L8..100 x 10 seeds: every bridge legal, plain BFS refuses the gap", () => 
             const where = `L${lvl} seed ${seed}`;
             const decks = level.getMovingPlatforms();
             if (level.direction === "vertical") {
-                // Elevators deferred: vertical maps ship neither decks nor
-                // corridors this wave.
-                expect(decks.length, `${where}: vertical gate`).toBe(0);
+                // Vertical maps ship elevator cabins (axis 'v') from L13,
+                // never horizontal decks or corridors.
+                for (const d of decks) {
+                    expect(d.axis, `${where}: vertical deck axis`).toBe("v");
+                }
+                expect(decks.length, `${where}: vertical cap 1`)
+                    .toBeLessThanOrEqual(1);
+                if (lvl < 13) expect(decks.length, `${where}: pre-gate cabin`)
+                    .toBe(0);
                 expect(level.bridgeGap, `${where}: vertical corridor`).toBe(null);
                 continue;
             }
