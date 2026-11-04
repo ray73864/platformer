@@ -1059,7 +1059,7 @@
   var BRIDGE_LIP_BAN_COLS = 3;
   var ELEVATOR_FIRST_LEVEL = 13;
   var MAX_SHAFTS = 1;
-  var SHAFT_CHANCE = 0.7;
+  var SHAFT_CHANCE = 0.82;
   var MIN_SHAFT_LIFT = 4;
   var MAX_SHAFT_LIFT = 6;
   var SHAFT_COLS = 2;
@@ -1067,7 +1067,7 @@
   var SHAFT_WINDOW_PAD = 2;
   var V_DECK_SPEED_MIN = 20;
   var V_DECK_SPEED_RANGE = 5;
-  var SHAFT_BOTTOM_MIN_ROW = 12;
+  var SHAFT_BOTTOM_MIN_ROW = 16;
   var SHAFT_BOTTOM_MAX_ROW = 18;
   function routeModelEdges(level) {
     const tiles = level.tiles;
@@ -1698,7 +1698,7 @@
     generateVertical(tiles) {
       const w = this.width;
       const h = this.height;
-      const kv = this.motif === "atrium" ? { extMin: 4, extMax: 8, standardStream: false } : this.motif === "zigzag" ? { extMin: 1, extMax: 2, standardStream: false } : { extMin: 2, extMax: 5, standardStream: true };
+      const kv = this.motif === "atrium" ? { extMin: 4, extMax: 8, flipChance: 0.12, flipCap: 7, standardStream: false } : this.motif === "zigzag" ? { extMin: 1, extMax: 2, flipChance: 0.45, flipCap: 4, standardStream: false } : { extMin: 2, extMax: 5, flipChance: 0.16, flipCap: 6, standardStream: true };
       for (let x = 0;x < w; x++) {
         for (let y = h - 3;y < h; y++) {
           tiles[y][x] = 1;
@@ -1706,10 +1706,15 @@
       }
       if (this.levelNumber >= ELEVATOR_FIRST_LEVEL && this.rng() < SHAFT_CHANCE) {
         const lift = MIN_SHAFT_LIFT + Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
-        const sxMin = SHAFT_LEDGE_W + 3;
-        const sxMax = w - 3 - SHAFT_LEDGE_W - SHAFT_COLS;
-        const sx = sxMin + Math.floor(this.rng() * (sxMax - sxMin + 1));
-        const B = SHAFT_BOTTOM_MIN_ROW + Math.floor(this.rng() * (SHAFT_BOTTOM_MAX_ROW - SHAFT_BOTTOM_MIN_ROW + 1));
+        const spawnX = Math.floor(w / 2);
+        const sxSlots = [];
+        for (let cx = SHAFT_LEDGE_W;cx <= w - 3 - SHAFT_COLS; cx++) {
+          if (cx === spawnX || cx === spawnX - 1)
+            continue;
+          sxSlots.push(cx);
+        }
+        const sx = sxSlots[Math.floor(this.rng() * sxSlots.length)];
+        let B = SHAFT_BOTTOM_MIN_ROW + Math.floor(this.rng() * (SHAFT_BOTTOM_MAX_ROW - SHAFT_BOTTOM_MIN_ROW + 1));
         this.shaftGap = { sx, ex: sx + SHAFT_COLS - 1, A: B - lift, B };
       }
       this.pathCells = new Set;
@@ -1719,6 +1724,8 @@
       const boardSide = g === null ? 0 : shaftBoardSide(g.sx, w);
       const boardCol = g === null ? -1 : boardSide < 0 ? g.sx - 1 : g.ex + 1;
       let steerCol = -1;
+      let prevMid = -1;
+      let sinceFlip = 0;
       const chainLink = (row, steered, forceCol = 0) => {
         let step;
         if (steered) {
@@ -1730,7 +1737,9 @@
           if (forceCol && Math.abs(forceCol - x) <= 2)
             step = forceCol - x;
         } else {
-          step = dir * (this.rng() < 0.15 ? 2 : 1);
+          const flip = kv.flipChance > 0 && (this.rng() < kv.flipChance || sinceFlip >= (g === null ? kv.flipCap : 2));
+          step = (flip ? -dir : dir) * (this.rng() < 0.15 ? 2 : 1);
+          sinceFlip = flip ? 0 : sinceFlip + 1;
         }
         let c = x + step;
         const inShaftCols = (cx) => g !== null && row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
@@ -1738,10 +1747,11 @@
           if (c < 1 || c > w - 2 || inShaftCols(c)) {
             step = -Math.sign(step || 1);
             c = x + step;
+            sinceFlip = 0;
           }
-          if (!kv.standardStream && this.pathCells.has((row + 1) * w + c)) {
-            for (const alt of [x - step, x + 1, x - 1]) {
-              if (alt >= 1 && alt <= w - 2 && !inShaftCols(alt) && !this.pathCells.has((row + 1) * w + alt)) {
+          if (this.pathCells.has((row + 1) * w + c) || c === prevMid) {
+            for (const alt of [x - step, x + 1, x - 1, x + 2, x - 2]) {
+              if (alt >= 1 && alt <= w - 2 && !inShaftCols(alt) && !this.pathCells.has((row + 1) * w + alt) && alt !== prevMid) {
                 step = alt - x;
                 c = alt;
                 break;
@@ -1756,10 +1766,13 @@
         for (let cx = Math.max(0, lo);cx <= Math.min(w - 1, hi); cx++) {
           if (this.pathCells.has((row + 1) * w + cx))
             continue;
+          if (cx === prevMid)
+            continue;
           tiles[row][cx] = 1;
         }
         this.pathCells.add(row * w + x);
         this.pathCells.add((row - 1) * w + c);
+        prevMid = Math.abs(step) === 2 ? x + Math.sign(step) : -1;
         return c;
       };
       if (g === null) {
@@ -1800,6 +1813,7 @@
         }
         x = boardCol;
         dir = boardSide;
+        sinceFlip = 0;
         for (let row = g.A - 1;row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
           x = chainLink(row, false);
         }
@@ -2485,8 +2499,18 @@
       if (!span)
         return false;
       const [bandMin, bandMax] = this.patrolBandBounds();
-      const minSpan = opts.allowRouteAdjacent ? 1 : 2;
-      return Math.min(span.right, bandMax) - Math.max(span.left, bandMin) + 1 >= minSpan;
+      let left = Math.max(span.left, bandMin);
+      let right = Math.min(span.right, bandMax);
+      if (this.shaftGap) {
+        const wLo = this.shaftGap.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD;
+        const wHi = this.shaftGap.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD;
+        if (x < wLo)
+          right = Math.min(right, wLo - 1);
+        else if (x > wHi)
+          left = Math.max(left, wHi + 1);
+      }
+      const minSpan = opts.allowRouteAdjacent && this.direction !== "vertical" ? 1 : 2;
+      return right - left + 1 >= minSpan;
     }
     placeEnemyMarkers(tiles) {
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
@@ -2505,10 +2529,17 @@
       };
       let candidates = collectSites(false);
       shuffle(candidates, this.rng);
+      const markedRuns = new Set;
       let placed = 0;
       for (const c of candidates) {
         if (placed >= target)
           break;
+        if (this.direction === "vertical") {
+          const runKey = solidRunKey(tiles, this.width, c.x, c.y + 1);
+          if (markedRuns.has(runKey))
+            continue;
+          markedRuns.add(runKey);
+        }
         tiles[c.y][c.x] = 4;
         placed++;
       }
@@ -2518,6 +2549,12 @@
         for (const c of candidates) {
           if (placed >= Math.min(target, 1))
             break;
+          if (this.direction === "vertical") {
+            const runKey = solidRunKey(tiles, this.width, c.x, c.y + 1);
+            if (markedRuns.has(runKey))
+              continue;
+            markedRuns.add(runKey);
+          }
           tiles[c.y][c.x] = 4;
           placed++;
         }

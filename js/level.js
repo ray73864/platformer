@@ -210,9 +210,20 @@ const BRIDGE_LIP_BAN_COLS = 3;
 // where it is optional-danger-free horizontally first, then made load-bearing.
 const ELEVATOR_FIRST_LEVEL = 13;
 const MAX_SHAFTS = 1;                // per map (structural gate)
-// Raw per-attempt roll. Realized coverage lands lower (attempt rerolls on
-// burned constructions); measured against the 40-60% target below.
-const SHAFT_CHANCE = 0.7;
+// Raw per-attempt roll. Realized coverage lands lower than the roll because
+// a shaft-bearing construction competes with plain ones through the retry
+// loop: its steered delivery tail + clamped marker seating accept at only
+// ~0.25x the plain-attempt rate (measured post-wave: realized f=0.529 at
+// c=0.82 implies accept_shaft/accept_plain = f/(1-f)·(1-c)/c ≈ 0.246), so
+// the chance must be pushed well past the target to win enough retries.
+// RETUNED 0.7 -> 0.82 (M1 fix, 2026-11-05): the sx-slot exclusion + stop-row
+// raise above halved that acceptance ratio and collapsed realized hosting
+// 0.540 (HEAD da8c8c9 population) -> 0.354 (n=900 verticals L13+, fresh
+// seeds s=100..129) at the old 0.7. At 0.82 the same probe measures 0.529
+// (n=3000, thrown=0) — back inside the 40-60% design target and within one
+// binomial sigma of HEAD parity. Parity comes from attempt ECONOMICS only:
+// every shaft fairness gate and reachability validation is untouched.
+const SHAFT_CHANCE = 0.82;
 // WHY 4: Step-0 measurement (scratch sim on the shipped Player/Physics,
 // brute-forced press frames incl. run-ups/coyote/buffer, maxrise.mjs): the
 // movement MODEL climbs exactly 1 row per jump (computeReachable steps up to
@@ -241,9 +252,21 @@ const V_DECK_SPEED_MIN = 20;
 const V_DECK_SPEED_RANGE = 5;
 // Stop rows for the bottom stop: at least 3 rows above the ground band's
 // standing row (a lower-section climb precedes the ride) and at most row 18
-// so the top stop (B - lift >= 12 - 6 = 6) stays clear of the portal band
+// so the top stop (B - lift >= 16 - 6 = 10) stays clear of the portal band
 // (y <= VERTICAL_PORTAL_MAX_Y) with a buffer row.
-const SHAFT_BOTTOM_MIN_ROW = 12;
+// RAISED 12 -> 16 (vertical threat-layer restoration wave): with B drawn as
+// low as 12, BOTH ends of the ride were starved — the steered lower climb
+// had to cross up to 8 rows of open map (measured @da8c8c9: ~90% of shaft
+// attempts died no-portal, frozen below the floor: 194 cell-solid + 172
+// no-support + 128 capped route cells below the boarding row across
+// L13..60 x 4 seeds), and the upper segment above row A = B - lift shrank
+// to 1-2 links, too short to seat a marker pocket below the approach-window
+// ban rows (A-1, A-2). Holding the stop at 16..18 keeps the approach 3-5
+// rows AND guarantees a >= 5-link upper segment. Retries hid the low-B tax
+// while plain attempts failed often too; once marker seating made plain
+// attempts much cheaper to accept, realized shaft hosting collapsed
+// 0.60 -> 0.18 against the level_motifs band (> 0.35).
+const SHAFT_BOTTOM_MIN_ROW = 16;
 const SHAFT_BOTTOM_MAX_ROW = 18;
 
 // --- Motif knob sets (see motifForLevel) -------------------------------------
@@ -1334,21 +1357,26 @@ export class Level {
         // Vertical motifs (see MOTIF_GATES): knob-only reshapers of the SAME
         // ledge-chain machine — extMin/extMax scale each link's decorative
         // forward run (atrium: wide chamber shelves; zigzag: short dense
-        // ones). The route mechanics (rise <= 1 per jump, pathCells
-        // protection, wall bounce, chimney exclusion, steered shaft delivery
-        // tail) are untouched, so elevators, spikes, markers and coins keep
-        // their exact fairness contracts. 'standard' reproduces the shipped
-        // draws verbatim (ext = 2 + floor(rng*4)). A forced direction flip
-        // for zigzag was TRIED AND REMOVED: reversing every link parks the
-        // next span inside the previous hop's intermediate column at target
-        // height (strict dist-2 rule) and starves the attempt budget (avg
-        // 35.6 attempts, ~1/1000 throws); short shelves alone measured avg
-        // 14.5 with 0 throws over 400 maps while reading visibly denser.
+        // ones); flipChance biases how often the snake REVERSES direction
+        // (see the patrol-pocket note in chainLink). The route mechanics
+        // (rise <= 1 per jump, pathCells protection, wall bounce, chimney
+        // exclusion, steered shaft delivery tail) are untouched, so elevators,
+        // spikes, markers and coins keep their exact fairness contracts.
+        // 'standard' reproduces the shipped EXTENSION draws verbatim
+        // (ext = 2 + floor(rng*4)); its stream still reshuffles from this
+        // wave because every motif now rolls the flip draw. A forced direction
+        // flip for zigzag was TRIED AND REMOVED long ago: reversing EVERY
+        // link parks the next span inside the previous hop's intermediate
+        // column at target height (strict dist-2 rule) and starves the
+        // attempt budget (avg 35.6 attempts, ~1/1000 throws); short shelves
+        // alone measured avg 14.5 with 0 throws over 400 maps while reading
+        // visibly denser. A PROBABILISTIC flip is different: mean forward run
+        // stays multi-link, and the constructor BFS stays the safety net.
         const kv = this.motif === 'atrium'
-            ? { extMin: 4, extMax: 8, standardStream: false }
+            ? { extMin: 4, extMax: 8, flipChance: 0.12, flipCap: 7, standardStream: false }
             : this.motif === 'zigzag'
-                ? { extMin: 1, extMax: 2, standardStream: false }
-                : { extMin: 2, extMax: 5, standardStream: true };
+                ? { extMin: 1, extMax: 2, flipChance: 0.45, flipCap: 4, standardStream: false }
+                : { extMin: 2, extMax: 5, flipChance: 0.16, flipCap: 6, standardStream: true };
 
         // Ground band along the bottom: full-width solid from row h-3 down,
         // so the standing surface is row h-4 across the whole floor and the
@@ -1370,17 +1398,32 @@ export class Level {
             this.rng() < SHAFT_CHANCE) {
             const lift = MIN_SHAFT_LIFT +
                 Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
-            // Ledges need SHAFT_LEDGE_W columns each side plus the 2 shaft
-            // columns plus 2 more for the delivery tail's stair (tOut/tOut2
-            // stay off the walls on either flank); bottom stop keeps >= 3
-            // rows of climb beneath it and the top stop stays clear of the
-            // portal band (see constants).
-            const sxMin = SHAFT_LEDGE_W + 3;                 // 5
-            const sxMax = w - 3 - SHAFT_LEDGE_W - SHAFT_COLS; // 8 on w=15
-            const sx = sxMin +
-                Math.floor(this.rng() * (sxMax - sxMin + 1));
-            const B = SHAFT_BOTTOM_MIN_ROW + Math.floor(
+            // Ledges need SHAFT_LEDGE_W columns each side (stop shelves and
+            // their stand cells stay on the map); the delivery tail runs
+            // OUTWARD from the boarding flank, which the widened slot below
+            // always leaves room for because its two extremes board toward
+            // the centre. THE SPAWN COLUMN IS EXCLUDED: shaftIntact bans the
+            // spawn from the chimney columns outright, so a chimney covering
+            // the bottom-center spawn column was a DOOMED roll — measured at
+            // this wave, that tax burned HALF of all shaft attempts before
+            // geometry even ran, and once marker seating made plain
+            // attempts cheaper to accept, the doomed half collapsed realized
+            // shaft hosting from ~0.6 to ~0.15 (retry competition). Drawing
+            // only feasible columns keeps one rng draw here and restores
+            // hosting while widening placement variety (2..9, was 5..8).
+            const spawnX = Math.floor(w / 2);
+            const sxSlots = [];
+            for (let cx = SHAFT_LEDGE_W; cx <= w - 3 - SHAFT_COLS; cx++) {
+                if (cx === spawnX || cx === spawnX - 1) continue;
+                sxSlots.push(cx);
+            }
+            const sx = sxSlots[Math.floor(this.rng() * sxSlots.length)];
+            let B = SHAFT_BOTTOM_MIN_ROW + Math.floor(
                 this.rng() * (SHAFT_BOTTOM_MAX_ROW - SHAFT_BOTTOM_MIN_ROW + 1));
+            // (An older guard nudged B down when A = B - lift would sit too
+            // high for the upper segment; SHAFT_BOTTOM_MIN_ROW = 16 against
+            // MAX_SHAFT_LIFT = 6 leaves A >= 10 > VERTICAL_PORTAL_MAX_Y + 4
+            // unconditionally, so the branch could never fire and is gone.)
             this.shaftGap = { sx, ex: sx + SHAFT_COLS - 1, A: B - lift, B };
         }
 
@@ -1414,6 +1457,17 @@ export class Level {
             (boardSide < 0 ? g.sx - 1 : g.ex + 1);
         // Current steering target for steered links (set per segment below).
         let steerCol = -1;
+        // Column whose cell AT THE CURRENT PAINT ROW must stay air: the
+        // intermediate cell of the PREVIOUS link's dist-2 rise-jump (that
+        // hop passes through (row, prevMid) at target height — see
+        // computeReachable's strict dist-2 rule). Only non-steered links
+        // record or read it; steered segments reset it to -1 because their
+        // delivery geometry is fixed and validated separately.
+        let prevMid = -1;
+        // Straight non-steered links since the last reversal (flip or wall
+        // bounce); kv.flipCap forces a pocket once this runs out. Restarted
+        // at each segment seam so short upper segments still force one.
+        let sinceFlip = 0;
 
         // One chain link: pick the landing column, paint the supporting
         // ledge forward, record the route cells. steered=true replaces the
@@ -1431,7 +1485,32 @@ export class Level {
                     (Math.abs(delta) > 1 && this.rng() < 0.15 ? 2 : 1);
                 if (forceCol && Math.abs(forceCol - x) <= 2) step = forceCol - x;
             } else {
-                step = dir * (this.rng() < 0.15 ? 2 : 1);
+                // Patrol-pocket bias (vertical threat-layer restoration
+                // 2026-11-04): the chain paints one ledge per row, so a
+                // straight-forward run BURIES each ledge's walking surface
+                // under the next ledge's mass — measured at HEAD da8c8c9,
+                // ZERO strict marker sites existed on 320/320 vertical maps
+                // and 96.6% shipped no enemies at all (the route-adjacent
+                // fallback's single-cell seats die at the ENEMY_MIN_RUN
+                // deploy filter). A direction REVERSAL at the next link
+                // extends its ledge BACKWARD, leaving this link's decorative
+                // run open as a genuine >=2-column patrol shelf above clear
+                // headroom; flipChance sizes how often that happens and
+                // flipCap FORCES one after that many straight links, so
+                // every multi-link segment carries at least one pocket
+                // instead of leaving the threat layer to chance (wall
+                // bounces reset the counter too — they reverse travel just
+                // the same). On shaft maps the upper segment uses a cap of
+                // 2: its rows A-1/A-2 sit inside the approach-window ban, so
+                // the pocket must come from link 2's landing row (A-3) or
+                // higher above the window. Mean forward run stays multi-link
+                // (unlike the removed forced flip), walls still bounce, and
+                // the constructor BFS stays the authority on the climb.
+                const flip = kv.flipChance > 0 &&
+                    (this.rng() < kv.flipChance ||
+                        sinceFlip >= (g === null ? kv.flipCap : 2));
+                step = (flip ? -dir : dir) * (this.rng() < 0.15 ? 2 : 1);
+                sinceFlip = flip ? 0 : sinceFlip + 1;
             }
             let c = x + step;
             const inShaftCols = (cx) => g !== null &&
@@ -1452,22 +1531,34 @@ export class Level {
                     // mid cell.
                     step = -Math.sign(step || 1);
                     c = x + step;
+                    sinceFlip = 0; // a bounce reverses travel like a flip
                 }
-                // Support-punch guard: a landing column whose cell-below
-                // (row + 1, c) already carries the route gets its support
-                // (row, c) PUNCHED by the never-cap rule below — the landing
-                // would float and the BFS would freeze the climb. Mirrored
-                // step first, then unit sidesteps; the constructor BFS stays
-                // the final authority if all fail. Motif-gated: 'standard'
-                // historically resolved this rare collision through whole-
-                // attempt retries, and its shipped rng stream is a byte-
-                // identity contract (the pin catches even two L7 seeds where
-                // the guard would have fired) — leave it alone.
-                if (!kv.standardStream &&
-                    this.pathCells.has((row + 1) * w + c)) {
-                    for (const alt of [x - step, x + 1, x - 1]) {
+                // Support-punch / mid-cell guard: two collisions freeze the
+                // climb at this landing. (a) A landing column whose cell-
+                // below (row + 1, c) already carries the route gets its
+                // support (row, c) PUNCHED by the never-cap rule below — the
+                // landing would float. (b) A landing exactly on prevMid sits
+                // where the PREVIOUS dist-2 hop needs clear air at target
+                // height; painting its support (row, prevMid) severs that
+                // hop (flipChance reversals make this collision frequent).
+                // Mirrored step first, then unit sidesteps; the constructor
+                // BFS stays the final authority if all fail. The pre-flip
+                // wave gated the punch half off for 'standard' (its byte-
+                // identity contract predates this file's flip draws); with
+                // vertical streams intentionally reshuffled by the pocket
+                // bias, every motif shares one guard.
+                if (this.pathCells.has((row + 1) * w + c) || c === prevMid) {
+                    // Unit sidesteps first (cheapest visual break), then
+                    // two-column escapes: at a wall a U-turn collision has
+                    // NO legal unit neighbour (both sides collide or leave
+                    // the map) while a dist-2 landing always fits — its
+                    // support rides the fresh span, and the hop's mid cell
+                    // is exactly the air the never-cap rule already keeps
+                    // open at the turn.
+                    for (const alt of [x - step, x + 1, x - 1, x + 2, x - 2]) {
                         if (alt >= 1 && alt <= w - 2 && !inShaftCols(alt) &&
-                            !this.pathCells.has((row + 1) * w + alt)) {
+                            !this.pathCells.has((row + 1) * w + alt) &&
+                            alt !== prevMid) {
                             step = alt - x;
                             c = alt;
                             break;
@@ -1495,6 +1586,11 @@ export class Level {
                 // support (row, c) is never a cell-above-route (the route
                 // column always moved), so the chain stays intact.
                 if (this.pathCells.has((row + 1) * w + cx)) continue;
+                // Never bury the previous dist-2 hop's intermediate cell:
+                // it sits at THIS row and must stay air for that hop to
+                // validate (leaving a hole here is cosmetic — support runs
+                // and patrol spans own walkability, the BFS owns the route).
+                if (cx === prevMid) continue;
                 tiles[row][cx] = 1;
             }
             // Jump-off and landing cells carry the route: protect them from
@@ -1502,6 +1598,13 @@ export class Level {
             // makes the only validated climb periodically lethal, S10).
             this.pathCells.add(row * w + x);
             this.pathCells.add((row - 1) * w + c);
+            // Record this hop's mid cell for the NEXT link's paint row;
+            // dist-1 hops carry none. Steered hops record it too (their
+            // dist-2 option can bury its own mid under the next link's
+            // span); the steered branch never READS prevMid for landing
+            // selection — its delivery geometry is fixed and validated by
+            // construction — it only keeps the air clear.
+            prevMid = Math.abs(step) === 2 ? x + Math.sign(step) : -1;
             return c;
         };
 
@@ -1548,6 +1651,7 @@ export class Level {
             // Segment seam: resume the climb on the slab egress stand.
             x = boardCol;
             dir = boardSide;
+            sinceFlip = 0; // the upper segment owes itself a pocket too
             for (let row = g.A - 1; row >= VERTICAL_PORTAL_MAX_Y + 1; row--) {
                 x = chainLink(row, false);
             }
@@ -2680,17 +2784,43 @@ export class Level {
         const span = this.patrolSpan(tiles, x, y);
         if (!span) return false;
         const [bandMin, bandMax] = this.patrolBandBounds();
+        let left = Math.max(span.left, bandMin);
+        let right = Math.min(span.right, bandMax);
+        // Predict the shaft approach-window clamp that deriveEnemySpawns
+        // applies AFTER placement (mirror of its column-scoped rule): a legal
+        // site just outside the window whose span reaches INTO it arrives at
+        // deployment narrower than it looked here — historically the largest
+        // single leak class (165 of 419 sub-tile patrols @f18725e). Seating
+        // markers only on sites that survive the predicted clamp makes the
+        // ENEMY_MIN_RUN deploy filter a formality instead of a reaper.
+        // Shaft gaps never co-occur with horizontal or 'left' maps, so this
+        // block is a provable no-op there and their streams stay byte-exact.
+        if (this.shaftGap) {
+            const wLo = this.shaftGap.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD;
+            const wHi = this.shaftGap.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD;
+            if (x < wLo) right = Math.min(right, wLo - 1);
+            else if (x > wHi) left = Math.max(left, wHi + 1);
+        }
         // Strict sites patrol at least two columns. The fallback pass also
-        // accepts a one-column shelf: it still saves the CONSTRUCTION from
-        // being thrown (the validity guard reads raw deriveEnemySpawns, and
-        // starving these last sites is what burned whole 200-attempt
-        // budgets on tight climb grids), but since ruling 2026-11-04 the
-        // deploy filter in spawnEnemies drops such sites instead of shipping
-        // a body with sub-tile travel that clamp-flips every frame (the old
-        // "stationary enemy" claim was never true — it vibrates).
-        const minSpan = opts.allowRouteAdjacent ? 1 : 2;
-        return Math.min(span.right, bandMax) -
-            Math.max(span.left, bandMin) + 1 >= minSpan;
+        // accepts a one-column shelf ON HORIZONTAL MAPS: it still saves the
+        // CONSTRUCTION from being thrown (the validity guard reads raw
+        // deriveEnemySpawns, and starving these last sites is what burned
+        // whole 200-attempt budgets on tight climb grids), but since ruling
+        // 2026-11-04 the deploy filter in spawnEnemies drops such sites
+        // instead of shipping a body with sub-tile travel that clamp-flips
+        // every frame (the old "stationary enemy" claim was never true — it
+        // vibrates). On VERTICAL maps the fallback now demands the same >=2
+        // final span as the strict pass: cramped seats could never deploy
+        // anyway, so accepting them only burned the marker budget on a body
+        // the filter reaps — the vertical layout machine (flipChance pockets,
+        // see generateVertical) guarantees real ledges exist instead. The
+        // constructor's derive-guard keeps its teeth: attempts without any
+        // legal site still reroll, which is the selection pressure that made
+        // pre-rescue measurements ship enemies on every accepted map.
+        // Horizontal fallback behavior is byte-identical to before.
+        const minSpan = opts.allowRouteAdjacent &&
+            this.direction !== 'vertical' ? 1 : 2;
+        return right - left + 1 >= minSpan;
     }
 
     placeEnemyMarkers(tiles) {
@@ -2736,9 +2866,24 @@ export class Level {
 
         shuffle(candidates, this.rng);
 
+        // One marker per support run on VERTICAL maps: a wide pocket ledge
+        // offers several legal columns, and seating a marker on each packs
+        // 3+ patrols onto one shelf — a wall-of-enemies read that the tier
+        // caps were never meant to deliver on climbs ("patrols are
+        // seasoning; the climb is the difficulty"). Mirrors the joint-hostile
+        // one-run rule's economics for ALL kinds: one shelf, one patrol.
+        // Horizontal maps keep multi-site shelves (their corridor width IS
+        // the threat space) and byte-exact streams.
+        const markedRuns = new Set();
         let placed = 0;
         for (const c of candidates) {
             if (placed >= target) break;
+            if (this.direction === 'vertical') {
+                const runKey = solidRunKey(
+                    tiles, this.width, c.x, c.y + 1);
+                if (markedRuns.has(runKey)) continue;
+                markedRuns.add(runKey);
+            }
             tiles[c.y][c.x] = 4;
             placed++;
         }
@@ -2750,6 +2895,12 @@ export class Level {
             shuffle(candidates, this.rng);
             for (const c of candidates) {
                 if (placed >= Math.min(target, 1)) break;
+                if (this.direction === 'vertical') {
+                    const runKey = solidRunKey(
+                        tiles, this.width, c.x, c.y + 1);
+                    if (markedRuns.has(runKey)) continue;
+                    markedRuns.add(runKey);
+                }
                 tiles[c.y][c.x] = 4;
                 placed++;
             }

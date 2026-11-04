@@ -31,6 +31,17 @@ const T = 32;
 // drifts (deriveMovingPlatforms draws shift behind the dropped kind rolls
 // — see the spawnEnemies stream note in level.js). If this pin fails on
 // an L1..4 row, that IS drift.
+// RECAPTURED again for the vertical threat-layer restoration of 2026-11-05:
+// ALL 8 L7 rows intentionally changed (L7 is the only vertical in the pinned
+// band). The marker-time pocket machinery — chain direction flips with forced
+// cadence, the unified punch/mid-cell guard, and shaft-clamp prediction in
+// isMarkerSite — reshapes every accepted vertical construction so patrols
+// exist at MARKER time instead of dying at the ENEMY_MIN_RUN deploy filter
+// (96.6% of verticals shipped zero enemies before). L1..6 keep their prior
+// hashes byte-identically: horizontals never enter generateVertical, the
+// clamp predictor is a provable no-op there (shaftGap is null), and the
+// one-marker-per-support-run pass only fires on vertical maps. If this pin
+// fails on an L1..6 row, that IS drift.
 const GOLDEN_L1_7 = [
     [1, 11, "43dc716b"], [1, 22, "e568e737"], [1, 33, "85137246"], [1, 44, "82be8d9a"],
     [1, 55, "49f57ede"], [1, 66, "af5cd10e"], [1, 77, "20272d24"], [1, 88, "adc51e8a"],
@@ -44,8 +55,8 @@ const GOLDEN_L1_7 = [
     [5, 55, "493c36cc"], [5, 66, "b3fdc651"], [5, 77, "4596d13b"], [5, 88, "b47ed851"],
     [6, 11, "e0bd7866"], [6, 22, "b99279f0"], [6, 33, "8e97045a"], [6, 44, "5cc1b713"],
     [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "20f3b6fc"], [6, 88, "0e67c32d"],
-    [7, 11, "8bbe45d7"], [7, 22, "65c32af4"], [7, 33, "77be0cff"], [7, 44, "ed077cc4"],
-    [7, 55, "4491f4c4"], [7, 66, "b9ec657c"], [7, 77, "ec900bdd"], [7, 88, "50a00bd6"]
+    [7, 11, "f22b14bd"], [7, 22, "f42ccc32"], [7, 33, "333006fe"], [7, 44, "bc32302d"],
+    [7, 55, "f136f4c3"], [7, 66, "ef5e92fe"], [7, 77, "285c6abb"], [7, 88, "8f0b1f69"]
 ];
 
 function fnv1a(str) {
@@ -205,6 +216,17 @@ for (const name of ["hills", "terraces", "archipelago", "canyon", "pillars",
             if (lvl >= 5) {
                 expect(level.deriveEnemySpawns().length,
                     `L${lvl} seed ${seed}: enemy sites`).toBeGreaterThan(0);
+                // Vertical threat-layer restoration (2026-11-05): marker-time
+                // pocket seating means verticals now DEPLOY, not merely hold
+                // sites — the constructor guard's derive-only floor is no
+                // longer the operative bound there. Horizontals keep the
+                // sites-only floor above (cramped-site maps may legitimately
+                // ship zero under ENEMY_MIN_RUN).
+                if (level.direction === "vertical") {
+                    expect(level.getEnemyManager().enemies.length,
+                        `L${lvl} seed ${seed}: deployed enemies`)
+                        .toBeGreaterThan(0);
+                }
                 if (level.direction !== "vertical") {
                     expect(level.countTilesOfType(2),
                         `L${lvl} seed ${seed}: spikes`).toBeGreaterThan(0);
@@ -486,6 +508,39 @@ test("elevator shafts still host legally on atrium/zigzag maps (L13+ vertical)",
     }
     expect(vert).toBeGreaterThan(10);
     const frac = shafted / vert;
-    expect(frac).toBeGreaterThan(0.35);
+    // RE-PINNED 2026-11-05 (M1 fix): the old >0.35 floor was an ACCIDENTAL
+    // pass. The uncommitted vertical wave had collapsed realized hosting to
+    // 0.334 across an 870-map population (this pinned probe read 0.356 on
+    // these exact seeds by luck — a random same-size seed set failed it ~62%
+    // of the time), against HEAD da8c8c9's measured 0.540. SHAFT_CHANCE was
+    // retuned 0.7 -> 0.82 (see the constant's comment in level.js for the
+    // acceptance economics): this pinned probe now measures 0.540 and the
+    // fresh-seed population below 0.513 (0.529 over 3000 maps). Floor 0.40
+    // keeps honest margin under the population rate while still catching a
+    // collapse of the size that just happened.
+    expect(frac).toBeGreaterThan(0.4);
     expect(frac).toBeLessThan(0.7);
+});
+
+test("shaft hosting holds its band across a fresh-seed population", () => {
+    // The pinned probe above is only 87 maps — seed luck moved it ±0.02 last
+    // wave and hid the collapse. Same hosting definition (accepted
+    // construction carries a truthy shaftGap), 300 fresh-seed verticals
+    // (seeds s=100..109, disjoint from every pinned seed set in this file):
+    // measured 0.513 at SHAFT_CHANCE 0.82. Band brackets ~±3.8 binomial
+    // sigma so any future attempt-cost or chance shift trips THIS test even
+    // when the pinned one gets lucky.
+    let vert = 0, shafted = 0;
+    for (let lvl = 13; lvl <= 100; lvl++) {
+        if ((lvl - 5) % 3 !== 2) continue; // directionForLevel's vertical stream
+        for (let s = 100; s <= 109; s++) {
+            const level = new Level(lvl, T, lvl * 1000 + s);
+            vert++;
+            if (level.shaftGap) shafted++;
+        }
+    }
+    expect(vert).toBe(300);
+    const frac = shafted / vert;
+    expect(frac).toBeGreaterThan(0.42);
+    expect(frac).toBeLessThan(0.64);
 });
