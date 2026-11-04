@@ -1,7 +1,9 @@
 import { Collectibles } from './collectibles.js';
-import { Difficulty, PHASE2_FIRST_LEVEL } from './difficulty.js';
+import { Difficulty, PHASE2_FIRST_LEVEL, tierIndexFor } from './difficulty.js';
 import { EnemyManager } from './enemies.js';
 import { Hazards } from './hazards.js';
+import { Physics, aabbOverlap } from './physics.js';
+import { Player } from './player.js';
 
 const DIFFICULTY = new Difficulty();
 
@@ -182,6 +184,264 @@ const V_DECK_SPEED_RANGE = 5;
 const SHAFT_BOTTOM_MIN_ROW = 12;
 const SHAFT_BOTTOM_MAX_ROW = 18;
 
+// --- Motif knob sets (see motifForLevel) -------------------------------------
+// gapMul scales the per-level gapChance ramp (1 is float-exact for the
+// standard stream); gapMinW forces a STARTED gap to widen before it may end
+// (hills' "fewer but larger" gaps). Archipelago keeps gap frequency at the
+// tier value but holds every island together for ARCH_MIN_ISLAND_RUN columns
+// before a fresh gap may start — interior spike/patrol sites need flat width
+// (the constructor's spike/enemy presence guards must not starve on islands),
+// and paints only depth rows instead of filling to the bottom, which is what
+// makes the silhouette read as floating islands over sparse ground. Since
+// the verification tune wave: the archipelago emission rules additionally
+// resume FLUSH after wide gaps (never step-and-hold toward the floor) and
+// hard-gate painting so no slab lands within 3 rows of the map bottom;
+// canyon terrain runs the STANDARD stream verbatim (gapMul 1) and gets its
+// identity purely from the canopy pass (own side-stream, low corridor roofs,
+// no hazards or markers on canopy rock); pillars pre-seed one tower cluster
+// per map, refire at 0.35/junction, and suspend gap rolls while a staircase
+// queue runs.
+//
+// DENSITY RECONCILIATION (policy: realized per-map densities within ±15% of
+// the standard-motif density for the same level band, unless the delta IS
+// the motif's identity and documented here; census = L8..40 x 100 seeds vs
+// HEAD-232edce baseline, /tmp/opencode/review-motifs/density_drift.mjs):
+//   FIXED this wave:
+//   * canyon coins/spikes/enemies/pit cols now ±0.3% across L25..100 (was
+//     enemies +47%): gapMul 0.85→1 (patrol fragmentation was inverted),
+//     canopy draws moved to a dedicated side stream (main-stream consumption
+//     reshuffled spike/marker picks: +55% deployed on site-scarce maps from
+//     stream shift ALONE, A/B measured), and hazards/markers banned from
+//     canopy support cells (roof-perched spikes vacated the floor sites the
+//     marker proximity vetoes depend on: un-vetoed pool flooded deployments
+//     to target, +55..+90% along the whole canyon run).
+//   * terraces coins +15.4%→+12.1% and enemies −38.5%→−29.6% via band
+//     re-roll 0.7→0.55 (longer settled treads keep patrol spans alive).
+//   * archipelago all three metrics inside ±5% (coins +4.1, spikes +1.0,
+//     enemies +2.5) despite the float retune.
+//   * canyon SOFT-LOCKS killed (physics sweep found capped-route maps):
+//     canopies keep off pit mouths plus one launch column each side, and
+//     canyonRouteFair() re-validates every ACCEPTED construction by RUNNING
+//     THE SHIPPED Player/Physics over the route graph (edgecheck's
+//     harvest-aware soft-lock semantics inside the accept loop) — routes
+//     that die on spike cores or truncated arcs now reject instead of
+//     shipping. Retry tiers: canopy-only re-roll (stream rewind), then
+//     fresh terrain; seeds the gate never bites keep pre-gate streams
+//     byte-identically.
+//   DOCUMENTED RESIDUALS (knob space exhausted; closing these would require
+//   weakening fairness machinery — forbidden):
+//   * atrium spikes −71.5% (0.12 vs 0.43/map): "fewer, WIDER ledges" leaves
+//     fewer mid-shelf candidate cells (measured 1.8 vs 2.6/map) and each
+//     accepted spike claims ±4 columns of an already-scarce row pool. Both
+//     numbers sit far below the formula target; vertical spikes are
+//     opportunistic by design (constructor never requires them vertically).
+//   * zigzag spikes +18.5% (0.51 vs 0.43/map): absolute delta +0.08/map,
+//     noise scale on opportunistic vertical spikes; kept as-is.
+//   * terraces enemies −29.6% (3.24 vs 4.60): band transits are stepped
+//     columns, and patrolSpan ≥2 flat columns (fairness rule: a marker must
+//     deploy onto a moving patrol, never a frozen body) cannot hold there.
+//     Longer treads (6..10) measured WORSE (2.77); 0.55 is the frontier.
+//   * terraces pit cols 8.8% vs 13.6% and pillars pit cols 14.3% vs 20.5%:
+//     contiguous plateaus / solid tower mass ARE the silhouettes.
+//   * pillars coins +21.6%, spikes +23.0%, enemies −31.6%: tower clusters
+//     add reachable vertical surface (coin pool fills closer to the shared
+//     target), remove pit rims from the spike besideDropOff veto ring (more
+//     surviving floor sites), and break patrol spans on their stair flanks
+//     (same fairness rule as terraces). Refire 0.25/hold 3..5 variants both
+//     measured no better than the shipped 0.35/2..4.
+//   * archipelago pit cols 80.3% vs 20.1%: lethal void between islands is
+//     the motif (player ruling: islands must FLOAT where players walk);
+//     route validity stays BFS-verified per attempt, zero throws measured.
+
+// ---------------------------------------------------------------------------
+// Route physics simulation (canyonRouteFair support; see its comment on the
+// Level class). Two module-local helpers, kept out of the class to hold the
+// simulation surface small and dependency-free (Player/Physics are shipped
+// runtime modules — the gate exercises the SAME code the game runs).
+
+// Model-edge scan mirroring computeReachable's transition set without the
+// reachability bookkeeping: enumerates consecutive-cell edges so the route's
+// shortest path can be reconstructed and each hop simulated. Deck corridors
+// emit trusted 'deck' edges (rider suites validate the ride itself).
+function routeModelEdges(level) {
+    const tiles = level.tiles;
+    const w = level.width, h = level.height;
+    const solid = (x, y) => {
+        if (x < 0 || x >= w) return true;
+        if (y < 0 || y >= h) return false;
+        return tiles[y][x] === 1;
+    };
+    const hazard = (x, y) => {
+        if (x < 0 || x >= w || y < 0 || y >= h) return false;
+        return tiles[y][x] === 2;
+    };
+    const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
+    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
+    const corr = level.bridgeGap;
+    const isCorr = (x, y) => corr !== null && corr !== undefined &&
+        y === corr.S - 1 && x >= corr.a && x <= corr.b;
+    const key = (x, y) => y * w + x;
+    const edges = [];
+    if (!standable(level.spawnTile.x, level.spawnTile.y)) return edges;
+    const seen = new Set([key(level.spawnTile.x, level.spawnTile.y)]);
+    const queue = [[level.spawnTile.x, level.spawnTile.y]];
+    while (queue.length) {
+        const [x, y] = queue.shift();
+        if (isCorr(x, y)) {
+            for (const dir of [-1, 1]) {
+                const nx = x + dir;
+                if (isCorr(nx, y)) {
+                    edges.push({ ax: x, ay: y, bx: nx, by: y,
+                        kind: 'deck', dist: 1, dir });
+                    if (!seen.has(key(nx, y))) {
+                        seen.add(key(nx, y)); queue.push([nx, y]);
+                    }
+                    continue;
+                }
+                for (const ny of [y, y - 1]) {
+                    if (standable(nx, ny)) {
+                        edges.push({ ax: x, ay: y, bx: nx, by: ny,
+                            kind: 'deck', dist: 1, dir });
+                        if (!seen.has(key(nx, ny))) {
+                            seen.add(key(nx, ny)); queue.push([nx, ny]);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        for (const dir of [-1, 1]) {
+            for (let dist = 1; dist <= MAX_H_JUMP; dist++) {
+                let blocked = false, hazardRun = 0;
+                for (let m = 1; m < dist; m++) {
+                    const midX = x + dir * m;
+                    if (solid(midX, y)) { blocked = true; break; }
+                    if (hazard(midX, y)) {
+                        hazardRun++;
+                        if (hazardRun >= 3) { blocked = true; break; }
+                    } else hazardRun = 0;
+                }
+                if (blocked) continue;
+                const c = x + dir * dist;
+                for (let ly = y; ly < h; ly++) {
+                    if (hazard(c, ly)) break;
+                    if (standable(c, ly)) {
+                        edges.push({ ax: x, ay: y, bx: c, by: ly,
+                            kind: ly === y ? 'walk' : 'fall', dist, dir });
+                        if (!seen.has(key(c, ly))) {
+                            seen.add(key(c, ly)); queue.push([c, ly]);
+                        }
+                    }
+                    if (solid(c, ly)) break;
+                }
+            }
+            for (const dist of [1, 2]) {
+                const c = x + dir * dist;
+                const ty = y - 1;
+                if (!standable(c, ty)) continue;
+                let clear = true;
+                if (dist === 2) {
+                    const midX = x + dir;
+                    if (solid(midX, ty) || hazard(midX, ty)) clear = false;
+                }
+                if (clear) {
+                    edges.push({ ax: x, ay: y, bx: c, by: ty,
+                        kind: 'stepup', dist, dir });
+                    if (!seen.has(key(c, ty))) {
+                        seen.add(key(c, ty)); queue.push([c, ty]);
+                    }
+                }
+            }
+        }
+        if (corr !== null && corr !== undefined) {
+            for (const nx of [x - 1, x + 1]) {
+                const ny = isCorr(nx, y) ? y
+                    : (isCorr(nx, y + 1) ? y + 1 : -1);
+                if (ny >= 0) {
+                    edges.push({ ax: x, ay: y, bx: nx, by: ny,
+                        kind: 'deck', dist: 1, dir: Math.sign(nx - x) });
+                    if (!seen.has(key(nx, ny))) {
+                        seen.add(key(nx, ny)); queue.push([nx, ny]);
+                    }
+                }
+            }
+        }
+    }
+    return edges;
+}
+
+// Runs ONE input policy on ONE route edge with the shipped Player and
+// Physics classes. True when the body lands inside cell B alive. Mirrors
+// edgecheck.simPolicy faithfully on the mechanics that decide outcomes:
+// settle frames, jump press gated on grounded contact (main.js), held-key
+// window, landing brake (main.js zeroes vx on touchdown with no input),
+// inset spike cores (hazards.js convention), void death below the grid.
+// Policy fields: j (jump frame, null = never), from/until (direction-held
+// window), off (start offset px toward B). Returns {ok, harvests:Set<key>}
+// where harvests holds grid keys (y*w+x) of grounded landings reached on
+// cells other than A — overshoot footholds count as executed movement.
+function simTransition(e, pol, ctx) {
+    const { T, w, DT, SIM_FRAMES, PLAYER_SPEED, JUMP_FORCE, physicsFactory,
+        collect, cores, pitY } = ctx;
+    const harvests = new Set();
+    const fail = () => ({ ok: false, harvests });
+    const dir = Math.sign(e.bx - e.ax);
+    const physics = physicsFactory();
+    const player = new Player(
+        e.ax * T + (pol.off || 0) * dir, e.ay * T, PLAYER_SPEED, JUMP_FORCE);
+    player.prevX = player.x; player.prevY = player.y;
+    const candidates = [];
+    const step = (left, right) => {
+        player.prevX = player.x; player.prevY = player.y;
+        player.update(DT, left, right);
+        physics.applyGravity(player, DT);
+        physics.resolveCollisions(player, collect(player, candidates));
+    };
+    step(false, false); step(false, false);
+    if (!player.grounded) return fail();
+    const dirFrom = pol.from || 0;
+    const dirUntil = pol.until === undefined ? Infinity : pol.until;
+    let prevGrounded = true;
+    for (let f = 0; f < SIM_FRAMES; f++) {
+        const held = f >= dirFrom && f < dirUntil;
+        if (pol.j !== null && f === pol.j && player.grounded) player.jump();
+        step(held && dir < 0, held && dir > 0);
+        if (player.grounded && !prevGrounded && !held) {
+            player.vx = 0; // landing brake (main.js)
+        }
+        prevGrounded = player.grounded;
+        for (const core of cores) {
+            if (aabbOverlap(player, core)) return fail();
+        }
+        if (player.y > pitY + 100) return fail();
+        if (player.grounded) {
+            const cx = Math.floor((player.x + player.width / 2) / T);
+            const bodyRow = Math.floor((player.y + player.height - 0.001) / T);
+            if (cx === e.bx && bodyRow === e.by) {
+                return { ok: true, harvests };
+            }
+            if (cx !== e.ax || bodyRow !== e.ay) {
+                harvests.add(bodyRow * w + cx);
+            }
+        }
+    }
+    return fail();
+}
+
+const MOTIF_KNOBS = {
+    standard: { gapMul: 1, gapMinW: 1 },
+    hills: { gapMul: 0.55, gapMinW: 2 },
+    // Wide gaps force the landing one row DOWN (uncrossable-rise law), and
+    // at the capped ~0.64 gap chance that force-down outran the band walk,
+    // pinning terraces to the floor line. Halve the gap rate so treads stay
+    // contiguous and bands actually form.
+    terraces: { gapMul: 0.45, gapMinW: 1 },
+    archipelago: { gapMul: 1, gapMinW: 1 },
+    canyon: { gapMul: 1, gapMinW: 1 },
+    pillars: { gapMul: 0.8, gapMinW: 1 }
+};
+const ARCH_MIN_ISLAND_RUN = 4;
+
 // Contiguous type-1 tiles on a support row through a column: the solid-run
 // width of the shelf a spawn cell stands on (same measurement as the
 // fairness probe — support row y+1 only; rock/spikes on the walk row do not
@@ -226,6 +486,108 @@ function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
 function directionForLevel(levelNumber) {
     if (levelNumber < PHASE2_FIRST_LEVEL) return 'right';
     return ['right', 'left', 'vertical'][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
+}
+
+// --- Layout motifs -----------------------------------------------------------
+// Player ruling 2026-11-04: "A lot of the levels just seem same old same
+// old." Palettes varied; STRUCTURE did not — every horizontal map was the
+// ground-with-gaps silhouette grammar, every vertical map the staggered-
+// shelf climb. A motif is a KNOB SET applied to the existing generation
+// machines (the horizontal column/segment walk and the vertical ledge
+// chain), never a parallel generator: terrain shape changes, while spikes,
+// markers, kinds, deck bridges, elevator shafts, coins, portal and spawn
+// keep running UNCHANGED on top of the motif-shaped final grid, with every
+// ban radius and fairness gate biting exactly as before.
+//
+// Selection is a PURE function of the level number (no rng draw anywhere):
+// seeded replay stays exact, the same level always replays identical, and
+// adjacent same-direction levels never repeat a motif. Gates ramp the
+// availability so the early game stays pristine-ish:
+//   * 'standard' — the shipped machine, byte-identical rng stream. The ONLY
+//     motif for every level below its first competitor, which pins L1..11
+//     horizontal AND every vertical map below L16 byte-for-byte against the
+//     pre-motif generator (the L1..7 golden pin plus the untouched streams
+//     cover that). Introducing motifs reshapes maps from each gate level up
+//     BY DESIGN: the changed bands are horizontal L12+ and vertical L16+.
+//   * Weights: standard thins with level (3 slots <L16, 2 <L25, 1 from the
+//     expert tier); every gated motif doubles from the expert tier (L25+),
+//     weighting mid-tiers toward the more complex structures.
+const MOTIF_GATES = {
+    hills: 12,        // rolling surface, fewer/larger gaps
+    terraces: 16,     // 2-3 elevation bands as big plateaus, step-up seams
+    archipelago: 20,  // thin floating-island chains over sparse ground
+    canyon: 25,       // overhead rock sections narrowing the corridor read
+    pillars: 30,      // stepped tower clusters over flat-ish ground
+    atrium: 16,       // vertical: fewer, WIDER ledges (open chambers)
+    zigzag: 19        // vertical: dense alternating short shelves
+};
+
+// Small deterministic integer hash (Knuth multiply + murmur-style mixes):
+// adjacent level numbers land on different slots without any state.
+function motifHash(levelNumber) {
+    let h = Math.imul(levelNumber, 0x9E3779B1) >>> 0;
+    h ^= h >>> 15;
+    h = Math.imul(h, 0x85EBCA6B) >>> 0;
+    h ^= h >>> 13;
+    return h >>> 0;
+}
+
+// Weighted slot list for one level: repeated names ARE the availability
+// curve (pick uniformly from the slots). Vertical pools stay unweighted —
+// three shapes across the vertical run is already the full appetite.
+function motifSlots(levelNumber, direction) {
+    if (direction === 'vertical') {
+        const pool = ['standard'];
+        if (levelNumber >= MOTIF_GATES.atrium) pool.push('atrium');
+        if (levelNumber >= MOTIF_GATES.zigzag) pool.push('zigzag');
+        return pool;
+    }
+    const tier = tierIndexFor(levelNumber);
+    const slots = [];
+    const push = (name, gate) => {
+        if (levelNumber < gate) return;
+        const weight = name === 'standard'
+            ? (levelNumber < 16 ? 3 : levelNumber < 25 ? 2 : 1)
+            : (tier >= 3 ? 2 : 1);
+        for (let i = 0; i < weight; i++) slots.push(name);
+    };
+    push('standard', 1);
+    push('hills', MOTIF_GATES.hills);
+    push('terraces', MOTIF_GATES.terraces);
+    push('archipelago', MOTIF_GATES.archipelago);
+    push('canyon', MOTIF_GATES.canyon);
+    push('pillars', MOTIF_GATES.pillars);
+    return slots;
+}
+
+// Motif of the nearest EARLIER level of the same direction class — what the
+// player actually experiences back-to-back (a vertical map between two
+// horizontals resets the eye). Recursion terminates at level 1.
+function prevSameDirectionMotif(levelNumber, direction) {
+    for (let n = levelNumber - 1; n >= 1; n--) {
+        if (directionForLevel(n) === direction) return motifForLevel(n);
+    }
+    return null;
+}
+
+// The motif contract, exported for tests and diagnostics: deterministic
+// (same input, same output, no rng), adjacency-differs within each
+// direction class, and never earlier than the motif's gate. Invalid input
+// reads as 'standard' WITHOUT warning (per-frame-safe like tierIndexFor).
+export function motifForLevel(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1) return 'standard';
+    const direction = directionForLevel(levelNumber);
+    const slots = motifSlots(levelNumber, direction);
+    let idx = motifHash(levelNumber) % slots.length;
+    const prev = prevSameDirectionMotif(levelNumber, direction);
+    // Adjacency-differs: rotate off the predecessor's motif. With >= 2
+    // distinct names in the pool one rotation always lands elsewhere; a
+    // single-name pool (early game) has nothing to differ FROM anyway.
+    let guard = 0;
+    while (prev !== null && slots[idx] === prev && guard++ < slots.length) {
+        idx = (idx + 1) % slots.length;
+    }
+    return slots[idx];
 }
 
 // Seeded PRNG (mulberry32): a Level built with the same seed replays
@@ -597,15 +959,24 @@ export class Level {
         this.tileSize = tileSize;
         // Seeded when given (Game passes runSeed-per-level so retries are
         // exact replays); unseeded callers keep fresh random maps.
-        this.rng = makeRng(seed === undefined
+        const resolvedSeed = seed === undefined
             ? (Math.random() * 0xffffffff) >>> 0
-            : seed >>> 0);
+            : seed >>> 0;
+        this.rng = makeRng(resolvedSeed);
         // The resolved seed, kept for diagnostics: the HUD readout lets a
-        // playtest screenshot pin the exact map for reproduction.
-        this.seed = seed === undefined ? null : seed >>> 0;
+        // playtest screenshot pin the exact map for reproduction. Also the
+        // root of the canyon-canopy side stream (paintCanyonCeilings).
+        this.seedResolved = resolvedSeed;
+        this.seed = seed === undefined ? null : resolvedSeed;
 
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
+
+        // Layout motif (see motifForLevel): pure function of the level
+        // number, stable across every generation attempt and retry, read by
+        // generatePlatforms/generateVertical as a knob set. 'standard' keeps
+        // the shipped rng stream byte-identical.
+        this.motif = motifForLevel(levelNumber);
 
         // Difficulty tiers size horizontal maps (see LEVEL_CONFIGS in
         // difficulty.js: six tiers from 20x15 up to 40x30 at legend).
@@ -621,7 +992,23 @@ export class Level {
 
         let attempt = 0;
         let valid = false;
-        while (attempt < MAX_GENERATION_ATTEMPTS && !valid) {
+        // Canyon post-deployment fairness (see canyonRouteFair): an accepted
+        // construction whose SHIPPED grid fails the physics-executed route
+        // check regenerates. Retry tiers, cheapest first:
+        //   1) main-stream REWIND (same terrain, hazard and enemy economy
+        //      rebuilt identically) while the canopy side stream advances
+        //      via _canopyCalls — each retry re-rolls only ceiling placement;
+        //   2) after REWIND_BUDGET unfair repeats, genuinely new terrain via
+        //      an attempt-seeded stream root.
+        // Seeds the gate never bites keep the ORIGINAL pre-gate stream
+        // semantics exactly (invalid attempts simply continue consuming),
+        // so byte identity holds for every construction accepted without a
+        // physics rejection — including all golden-pinned L1..7 maps.
+        let fair = false;
+        let physRejects = 0;
+        let gateEngaged = false;
+        const REWIND_BUDGET = 4;
+        while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
             // Terrain, spike tiles (type 2), and enemy markers (type 4) are
             // all laid down before computeReachable runs, so the validation
             // BFS sees the final geometry. If spikes wall off the map, no
@@ -669,6 +1056,28 @@ export class Level {
                         this.countTilesOfType(2) > 0);
             }
             attempt++;
+            if (valid) {
+                if (this.canyonRouteFair()) {
+                    fair = true; // shipped grid walks clean
+                } else {
+                    valid = false;
+                    physRejects++;
+                    gateEngaged = true;
+                    if (physRejects <= REWIND_BUDGET) {
+                        // Tier 1: same terrain, next canopy variant. The
+                        // side-stream ordinal (_canopyCalls) intentionally
+                        // survives the rewind so ceiling placement re-rolls.
+                        this.rng = makeRng(this.seedResolved);
+                    }
+                }
+            } else if (gateEngaged && physRejects > REWIND_BUDGET) {
+                // Tier 2: fresh terrain, own stream root; canopy series
+                // restarts with it.
+                this.rng = makeRng((this.seedResolved ^ Math.imul(
+                    attempt + 1, 0x01000193)) >>> 0);
+                this._canopyCalls = 0;
+                physRejects = 0;
+            }
         }
 
         // Accepted construction's retry cost, kept for diagnostics the same
@@ -769,6 +1178,9 @@ export class Level {
         // Elevator shaft descriptor (vertical maps only — never mirrored,
         // because the 'left' flip below cannot co-occur with a shaft).
         this.shaftGap = null;
+        // Canyon ceiling-span rects (canonical space until the 'left' flip;
+        // paintCanyonCeilings fills them, exposeCeilingSpans reads them).
+        this.ceilingSpans = null;
 
         if (this.direction === 'vertical') {
             this.generateVertical(tiles);
@@ -810,6 +1222,12 @@ export class Level {
                 const { a, b, S } = this.bridgeGap;
                 this.bridgeGap = { a: this.width - 1 - b, b: this.width - 1 - a, S };
             }
+            if (this.ceilingSpans && this.ceilingSpans.length > 0) {
+                this.ceilingSpans = this.ceilingSpans.map((s) => ({
+                    x0: this.width - 1 - s.x1, x1: this.width - 1 - s.x0,
+                    yTop: s.yTop, yBot: s.yBot
+                }));
+            }
         }
 
         return tiles;
@@ -818,6 +1236,25 @@ export class Level {
     generateVertical(tiles) {
         const w = this.width;
         const h = this.height;
+
+        // Vertical motifs (see MOTIF_GATES): knob-only reshapers of the SAME
+        // ledge-chain machine — extMin/extMax scale each link's decorative
+        // forward run (atrium: wide chamber shelves; zigzag: short dense
+        // ones). The route mechanics (rise <= 1 per jump, pathCells
+        // protection, wall bounce, chimney exclusion, steered shaft delivery
+        // tail) are untouched, so elevators, spikes, markers and coins keep
+        // their exact fairness contracts. 'standard' reproduces the shipped
+        // draws verbatim (ext = 2 + floor(rng*4)). A forced direction flip
+        // for zigzag was TRIED AND REMOVED: reversing every link parks the
+        // next span inside the previous hop's intermediate column at target
+        // height (strict dist-2 rule) and starves the attempt budget (avg
+        // 35.6 attempts, ~1/1000 throws); short shelves alone measured avg
+        // 14.5 with 0 throws over 400 maps while reading visibly denser.
+        const kv = this.motif === 'atrium'
+            ? { extMin: 4, extMax: 8, standardStream: false }
+            : this.motif === 'zigzag'
+                ? { extMin: 1, extMax: 2, standardStream: false }
+                : { extMin: 2, extMax: 5, standardStream: true };
 
         // Ground band along the bottom: full-width solid from row h-3 down,
         // so the standing surface is row h-4 across the whole floor and the
@@ -903,6 +1340,8 @@ export class Level {
                 step = dir * (this.rng() < 0.15 ? 2 : 1);
             }
             let c = x + step;
+            const inShaftCols = (cx) => g !== null &&
+                row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
             if (!steered) {
                 // Wall bounce, extended to the chimney: landing columns must
                 // stay outside the shaft columns whenever the landing row
@@ -912,8 +1351,6 @@ export class Level {
                 // row B+2 survives). The flipped step always fits: both
                 // neighbours of an outside column cannot sit inside a
                 // 2-wide shaft, and standing columns stay within [1, w-2].
-                const inShaftCols = (cx) => g !== null &&
-                    row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
                 if (c < 1 || c > w - 2 || inShaftCols(c)) {
                     // Bounce off the wall; the flipped step always fits
                     // since every standing column stays inside [1, w-2]. A
@@ -922,11 +1359,35 @@ export class Level {
                     step = -Math.sign(step || 1);
                     c = x + step;
                 }
+                // Support-punch guard: a landing column whose cell-below
+                // (row + 1, c) already carries the route gets its support
+                // (row, c) PUNCHED by the never-cap rule below — the landing
+                // would float and the BFS would freeze the climb. Mirrored
+                // step first, then unit sidesteps; the constructor BFS stays
+                // the final authority if all fail. Motif-gated: 'standard'
+                // historically resolved this rare collision through whole-
+                // attempt retries, and its shipped rng stream is a byte-
+                // identity contract (the pin catches even two L7 seeds where
+                // the guard would have fired) — leave it alone.
+                if (!kv.standardStream &&
+                    this.pathCells.has((row + 1) * w + c)) {
+                    for (const alt of [x - step, x + 1, x - 1]) {
+                        if (alt >= 1 && alt <= w - 2 && !inShaftCols(alt) &&
+                            !this.pathCells.has((row + 1) * w + alt)) {
+                            step = alt - x;
+                            c = alt;
+                            break;
+                        }
+                    }
+                }
             }
             dir = Math.sign(step) || dir;
-            // Decorative forward run (>= 2 tiles): gives the ledge body a
-            // contiguous top at least 3 columns wide for enemy patrols.
-            const ext = 2 + Math.floor(this.rng() * 4);
+            // Decorative forward run (>= 2 tiles standard): gives the ledge
+            // body a contiguous top at least 3 columns wide for enemy
+            // patrols. Motif knobs scale the run (atrium wider, zigzag
+            // shorter); the standard range reproduces the shipped draw.
+            const ext = kv.extMin +
+                Math.floor(this.rng() * (kv.extMax - kv.extMin + 1));
             const lo = dir === 1 ? c : c - ext;
             const hi = dir === 1 ? c + ext : c;
             for (let cx = Math.max(0, lo); cx <= Math.min(w - 1, hi); cx++) {
@@ -1091,6 +1552,60 @@ export class Level {
             }
         }
 
+        // --- Motif knobs (see MOTIF_GATES) ----------------------------------
+        // 'standard' keeps gapMul 1 (float-exact) and every decision
+        // expression below verbatim, so its rng stream and geometry are
+        // byte-identical. Non-standard motifs consume extra draws ONLY from
+        // their gate level up (documented reshuffle band).
+        const motif = this.motif;
+        const KM = MOTIF_KNOBS[motif] ?? MOTIF_KNOBS.standard;
+        // Hills: cosine surface (starts flush with the ground line at x=0,
+        // so the spawn zone resets into the curve without a step).
+        const hill = motif === 'hills' ? {
+            amp: 2 + Math.floor(this.rng() * 3),      // 2..4 rows
+            lambda: 10 + Math.floor(this.rng() * 7)   // 10..16 columns
+        } : null;
+        // Terraces: 2-3 elevation bands; the walk staircases toward the
+        // active band and re-picks it after settling.
+        const ter = motif === 'terraces' ? (() => {
+            // Band spacing 2..3 rows: deeper steps starve the spike site
+            // rules (every tooth within 3 columns of a riser or a drop is
+            // vetoed), and whole attempts died with zero spikes on the old
+            // 3..4-row bands.
+            const d = 2 + Math.floor(this.rng() * 2);
+            const bands = this.rng() < 0.5
+                ? [this.height - 3, this.height - 3 - d,
+                    Math.max(3, this.height - 3 - 2 * d)]
+                : [this.height - 3, this.height - 3 - d];
+            // Start aimed at the UPPER band, not the floor line: the spawn
+            // zone holds the ground row, then the map climbs onto its first
+            // terrace immediately (measured: starting on the floor band left
+            // most maps flat because re-rolls only fire once settled).
+            return { bands, bandY: bands[bands.length - 1] };
+        })() : null;
+        // Pillars: scripted tower sequences (climb k, hold, descend k) queued
+        // at junctions; between towers the ground stays nearly flat. TUNE
+        // 2026-11-04 (verification review): at 0.16/junction with no seed,
+        // 43.8% of pillar maps shipped FLAT (spread ≤1) and half had no
+        // tower flank at all. One cluster is now pre-seeded per map (it
+        // climbs right out of the spawn zone) and the queue refire doubled
+        // to 0.35/junction. Holds widened to 2..4 columns so tower tops
+        // keep legal patrol spans (marker sites need ≥2 flat columns).
+        const pil = motif === 'pillars' ? { queue: [] } : null;
+        if (pil !== null) {
+            const k = 2 + Math.floor(this.rng() * 3);
+            const hold = 2 + Math.floor(this.rng() * 3);
+            for (let i = 0; i < k; i++) pil.queue.push(-1);
+            for (let i = 0; i < hold; i++) pil.queue.push(0);
+            for (let i = 0; i < k; i++) pil.queue.push(1);
+        }
+        // Archipelago: thin island slabs (depth rows instead of fill-to-
+        // bottom) with a minimum flat run before a gap may START, so islands
+        // keep interior spike/patrol sites (the constructor's spike/enemy
+        // presence guards must survive on sparse ground).
+        const arch = motif === 'archipelago'
+            ? { depth: 3, run: 0 } : null;
+
         for (let x = 0; x < this.width; x++) {
             // Bridge void columns: pure air top-to-bottom (falling in =
             // void death only, never a spiked floor). currentY passes
@@ -1103,6 +1618,8 @@ export class Level {
             }
             if (bridgeA >= 0 && x === bridgeA + bridgeW) {
                 // Forced flush right lip (no junction step, fresh plateau).
+                // Always painted full-depth even under thin-island motifs:
+                // the flush-flank contract wants ordinary mass at the lip.
                 for (let y = currentY; y < this.height; y++) tiles[y][x] = 1;
                 segRemaining = 1 + Math.floor(this.rng() * 4);
                 continue;
@@ -1113,11 +1630,26 @@ export class Level {
 
             // The column left of a bridge lip must be solid (it IS the lip):
             // suppress the ordinary gap roll there. Columns inside the
-            // corridor never reach this line.
+            // corridor never reach this line. Pillar staircases get the same
+            // protection while their queue runs: a hole cut mid-climb breaks
+            // the tower flank AND hands the wide-gap resume a forced step
+            // that overrides the scripted sequence (verifier note).
+            let doGap = false;
             if (!isSpawnZone && !isEndZone && gapStreak < maxGap &&
                 segRemaining === 0 && !(bridgeA >= 0 && x === bridgeA - 1) &&
-                this.rng() < gapChance) {
+                !(pil !== null && pil.queue.length > 0)) {
+                if (KM.gapMinW > 1 && gapStreak > 0 && gapStreak < KM.gapMinW) {
+                    doGap = true; // hills: widen a started gap, no re-roll
+                } else if (arch !== null && gapStreak === 0 &&
+                    arch.run < ARCH_MIN_ISLAND_RUN) {
+                    doGap = false; // young island: hold it together
+                } else {
+                    doGap = this.rng() < gapChance * KM.gapMul;
+                }
+            }
+            if (doGap) {
                 gapStreak++;
+                if (arch !== null) arch.run = 0;
                 continue; // Air column (pit) at a segment edge; max maxGap in a row
             }
             const resumedAfterWideGap = gapStreak >= 2;
@@ -1137,27 +1669,502 @@ export class Level {
                 // or more columns wide the landing must sit at same-or-lower
                 // height: rise-jumps reach only dist <= 2 in the movement
                 // model, so a column rising over a wide gap is an uncrossable
-                // wall.
-                const atTop = currentY <= 3;
-                const atFloor = currentY >= this.height - 3;
+                // wall — THAT forcing stays universal, above every motif.
+                // The old atTop/atFloor bounces belong to the standard
+                // chooser only: motif steppers self-target within clamped
+                // ranges (the currentY clamp below is their boundary), and
+                // running the bounce first pinned terraces to the floor line
+                // (measured: elevation spread 1 row across 400 seeds).
                 let step;
-                if (resumedAfterWideGap) step = 1;
-                else if (atTop) step = 1;
-                else if (atFloor) step = -1;
-                else step = this.rng() < 0.55 ? 1 : -1;
+                let popped = false;
+                let terMoving = false;
+                // Archipelago resumes FLUSH instead of stepping down: the
+                // uncrossable-rise law only forbids rising over a wide gap,
+                // and the +1-down at gapChance≈0.64 ratcheted the island
+                // walk line to the floor (measured: 40% of route stand-tiles
+                // floated, elevated band reached in 1.7% of solid columns).
+                // Flush lips stay deck-crossable in the movement model.
+                if (resumedAfterWideGap) step = motif === 'archipelago' ? 0 : 1;
+                else if (motif === 'hills') {
+                    const target = this.height - 3 - Math.round(
+                        hill.amp *
+                        (0.5 - 0.5 * Math.cos((2 * Math.PI * x) / hill.lambda)));
+                    const delta = target - currentY;
+                    if (delta !== 0) step = Math.sign(delta);
+                    else step = this.rng() < 0.3
+                        ? (this.rng() < 0.5 ? 1 : -1) : 0;
+                } else if (motif === 'terraces') {
+                    // Re-roll only fires once the walk has SETTLED on the
+                    // active band, and always picks a DIFFERENT band: holding
+                    // the floor band with a same-band-allowed roll left most
+                    // maps flat (elevation spread ~0 across 400 seeds).
+                    if (ter.bandY === currentY) {
+                        const others = ter.bands.filter(
+                            (b) => b !== ter.bandY);
+                        if (others.length > 0 && this.rng() < 0.55) {
+                            ter.bandY =
+                                others[Math.floor(this.rng() * others.length)];
+                        }
+                    }
+                    const delta = ter.bandY - currentY;
+                    step = delta === 0 ? 0 : Math.sign(delta);
+                    terMoving = delta !== 0;
+                } else if (motif === 'pillars') {
+                    if (pil.queue.length === 0 && this.rng() < 0.35) {
+                        const k = 2 + Math.floor(this.rng() * 3);
+                        const hold = 2 + Math.floor(this.rng() * 3);
+                        for (let i = 0; i < k; i++) pil.queue.push(-1);
+                        for (let i = 0; i < hold; i++) pil.queue.push(0);
+                        for (let i = 0; i < k; i++) pil.queue.push(1);
+                    }
+                    if (pil.queue.length > 0) {
+                        step = pil.queue.shift();
+                        popped = true;
+                    } else {
+                        step = this.rng() < 0.15
+                            ? (this.rng() < 0.5 ? 1 : -1) : 0;
+                    }
+                } else if (motif === 'archipelago') {
+                    // Islands ride an ELEVATED band (tops h-8..h-5) so the
+                    // thin slabs read as floating chains over open void —
+                    // riding the floor line made them look like plain ground
+                    // with holes. Spawn zone stays on the ground row, so the
+                    // chain steps up at the left flank naturally.
+                    const hiRow = Math.max(3, this.height - 8);
+                    const loRow = this.height - 5;
+                    if (currentY <= hiRow) step = 1;
+                    else if (currentY >= loRow) step = -1;
+                    else step = this.rng() < 0.5 ? 1 : -1;
+                } else {
+                    // Standard chooser (also canyon terrain walk),
+                    // verbatim including its rng draw order.
+                    const atTop = currentY <= 3;
+                    const atFloor = currentY >= this.height - 3;
+                    if (atTop) step = 1;
+                    else if (atFloor) step = -1;
+                    else step = this.rng() < 0.55 ? 1 : -1;
+                }
                 currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
-                segRemaining = 1 + Math.floor(this.rng() * 4);
+                if (popped) {
+                    segRemaining = 0; // staircase: every riser is its own column
+                } else if (motif === 'terraces') {
+                    // Every column risers toward the active band (adjacent
+                    // heights stay within the verified one-tile climb), so
+                    // the map REACHES its bands instead of crawling one row
+                    // per plateau and spending the whole map in transit.
+                    // Settled treads 4..8 wide: interiors beyond the ±3
+                    // riser/drop veto keep legal spike sites, so attempts
+                    // stop dying on the required-spike guard.
+                    segRemaining = terMoving ? 0 : 4 + Math.floor(this.rng() * 5);
+                } else if (arch !== null && resumedAfterWideGap) {
+                    // Land flush, then CLIMB BACK toward the island band on
+                    // the very next junction instead of holding the low
+                    // landing for a whole segment (the hold was the second
+                    // half of the floor-ratchet: land down, sit there,
+                    // paint grounded-looking slabs).
+                    segRemaining = 0;
+                } else {
+                    segRemaining = 1 + Math.floor(this.rng() * 4);
+                }
+                // Mostly 2-row slabs: thin decks read as floating; the
+                // occasional 3 still gives islands some mass.
+                if (arch !== null) arch.depth = 2 + (this.rng() < 0.3 ? 1 : 0);
             }
 
-            for (let y = currentY; y < this.height; y++) {
+            // Hard float gate: an island slab NEVER paints within 3 rows of
+            // the map bottom — a slab sitting on the floor reads as grounded
+            // ground with holes, not an island. The stepper keeps currentY
+            // inside [h-8, h-5], so this only trims the depth of transition
+            // columns (a thin deck over ≥3 void rows still reads floating);
+            // the spawn zone keeps its ordinary grounded runway because the
+            // player starts there. Bridge lips paint full-depth above.
+            let paintBottom = this.height;
+            if (arch !== null && !isSpawnZone) {
+                paintBottom = Math.min(currentY + arch.depth, this.height - 3);
+            }
+            for (let y = currentY; y < paintBottom; y++) {
                 tiles[y][x] = 1; // Solid platform
             }
+            if (arch !== null) arch.run++;
         }
 
         if (bridgeA >= 0) {
             this.bridgeGap = { a: bridgeA, b: bridgeA + bridgeW - 1, S: bridgeS };
         }
+        if (motif === 'canyon') this.paintCanyonCeilings(tiles);
         return tiles;
+    }
+
+    // Canyon overhead rock (see MOTIF_GATES.canyon). THE LAW: no standable
+    // cell may gain a solid within TWO rows above it — the 32px body fills a
+    // tile and the ~62.5px jump barely clears two rows, so anything closer
+    // turns a BFS-modelled jump into a head-bonk. The horizontal movement
+    // model deliberately does NOT run requireOpenHead (byte-identical
+    // heritage), so the GENERATOR owns this clearance; the structural sweep
+    // re-verifies it against every final grid.
+    //
+    // TUNE 2026-11-04 (verification review): the first version hung flat
+    // slabs 4..6 rows above the tallest column in the span, which measured
+    // as floating islands, not a corridor: median headroom 5 rows, ceiling
+    // present on only ~8 cells per map, 5% of maps zero. The roof now
+    // FOLLOWs the smoothed surface top at a per-span clearance of 2..3 free
+    // rows above the walk line (the legal minimum under THE LAW — bottom =
+    // t-hr-2 keeps rows t-1..t-3 free in every column, and cellSafe below
+    // stays as the belt-and-braces guard), spans widen to 8..14 columns and
+    // number 2..3 per map, placement retries until at least one span paints,
+    // and painted rects land in this.ceilingSpans so the renderer keeps
+    // decoration off overhead rock (exposeCeilingSpans). Spans stay clear of
+    // the spawn runway (x < 8), the portal apron (x > width-6) and any
+    // bridge window (deck clearance needs pure air above the corridor).
+    // Ceilings can only REMOVE movement edges (solid mid-columns block
+    // scans), so the BFS validating the real grid stays honest — worst case
+    // is a rejected attempt, never an unfair accepted route.
+    paintCanyonCeilings(tiles) {
+        const w = this.width;
+        // Canopy draws come from a DEDICATED stream (level seed + attempt
+        // ordinal), never the main generator rng: consuming main-stream
+        // draws here reshuffled every downstream shuffle (spike claims,
+        // marker picks), and on site-scarce maps that alone swung realized
+        // enemy density +55% vs the identical-terrain baseline (measured
+        // A/B, L32 x 100 seeds). The side stream keeps spikes/markers
+        // byte-aligned with the standard stream; ceilings then act purely
+        // through geometry (reachability pruning), which is the honest
+        // channel.
+        const crng = makeRng(((this.seedResolved ?? 0) ^
+            Math.imul(0x9E3779B1, this._canopyCalls = (this._canopyCalls ?? 0) + 1)) >>> 0);
+        const topRow = (x) => {
+            for (let y = 0; y < this.height; y++) {
+                if (tiles[y][x] === 1) return y;
+            }
+            return null;
+        };
+        // Painting (x,r) would cap standable (x,r+1) [needs solid r+2] or
+        // (x,r+2) [needs solid r+3]. Reject exactly those cells.
+        const cellSafe = (x, r) => r >= 1 &&
+            tiles[r + 2]?.[x] !== 1 && tiles[r + 3]?.[x] !== 1;
+        const bwLo = this.bridgeGap ? this.bridgeGap.a - 1 : -1;
+        const bwHi = this.bridgeGap ? this.bridgeGap.b + 1 : -1;
+        this.ceilingSpans = [];
+        // Terrain tops snapshotted BEFORE any canopy paint: a second span
+        // reading the first span's roof as "surface" hung a double-decker
+        // ceiling with a sealed pocket (measured on L32 seed#0) — the exact
+        // stacked-slab silhouette the corridor read exists to avoid. Where
+        // spans overlap, the later pass merges into existing rock instead.
+        const surfTop = [];
+        for (let x = 0; x < w; x++) surfTop.push(topRow(x));
+        // PIT-JUMP PROTECTION (physics-sweep ruling): a canopy lid over a
+        // pit truncates the crossing arc — apex 62.5px, body 32px, so a
+        // full flight needs ~94.5px = three free rows and an hr=2 roof cuts
+        // it into the void. Margin bands around pits were tried first and
+        // STARVED the motif: canyon terrain is pit-dense (~21% of columns),
+        // ±2 exclusion lifted zero-roof maps to 8.3%, ±4 to 31.3%. The
+        // shipped rule keeps rock off the fall itself (void columns) plus
+        // one launch column either side, and canyonRouteFair() rejects
+        // any construction whose accepted route still crosses under a roof
+        // that a headroom-aware walk cannot pass — geometry-checked, not
+        // margin-guessed. Open mouths read as canyon entrances; canopies
+        // gather between them.
+        const pitNear = new Array(w).fill(false);
+        for (let x = 0; x < w; x++) {
+            if (surfTop[x] !== null) continue; // solid underfoot everywhere
+            for (let k = Math.max(0, x - 1); k <= Math.min(w - 1, x + 1); k++) {
+                pitNear[k] = true;
+            }
+        }
+        const targetSpans = 2 + (crng() < 0.5 ? 1 : 0);
+        // Guard bounds rng burn: geometry usually satisfies targetSpans (or
+        // the whole budget) without ever hitting it.
+        let guard = 0;
+        const paintedKeys = new Set(); // every canopy cell, for the law repair
+        while ((this.ceilingSpans.length < targetSpans ||
+            this.ceilingSpans.length === 0) && guard++ < 8) {
+            const len = 8 + Math.floor(crng() * 7);       // 8..14 columns
+            const maxStart = w - 6 - len;                     // portal apron
+            if (maxStart < 8) break;                          // too narrow
+            const start = 8 + Math.floor(crng() * (maxStart - 8 + 1));
+            const thick = 1 + Math.floor(crng() * 2);     // 1..2 rows
+            const hr = 2 + (crng() < 0.5 ? 1 : 0);        // headroom 2..3
+            // Surface tops across the span; gap columns carry the nearest
+            // known top so the roof stays continuous over shallow bumps
+            // (deep falls are already excluded by the jump zone above).
+            const tops = [];
+            for (let x = start; x < start + len; x++) tops.push(surfTop[x]);
+            for (let k = 1; k < tops.length; k++) {
+                if (tops[k] === null) tops[k] = tops[k - 1];
+            }
+            for (let k = tops.length - 2; k >= 0; k--) {
+                if (tops[k] === null) tops[k] = tops[k + 1];
+            }
+            if (tops[0] === null) continue; // whole span over pure void
+            // Follow the OWN column top: bottom = t-hr-2 puts the walk row
+            // (t-1) at exactly hr free rows under the roof — the corridor
+            // read. (A ±1 min-window smoothing was tried first and lifted
+            // the roof over every bump: measured headroom median 4, only
+            // 19.8% of under-canopy route cols at ≤3.) THE LAW holds per
+            // column by construction (rows t-1..t-3 stay air) and cellSafe
+            // remains the guard.
+            let painted = 0, yTop = this.height, yBot = -1, x0 = -1, x1 = -1;
+            for (let x = start; x < start + len; x++) {
+                if (x >= bwLo && x <= bwHi) continue; // bridge clearance wins
+                if (pitNear[x]) continue; // pit crossings keep open sky
+                const t = tops[x - start];
+                const bottom = t - hr - 2; // walk row t-1 keeps hr free rows
+                for (let rr = Math.max(2, bottom - thick + 1); rr <= bottom; rr++) {
+                    if (rr < 1 || rr >= this.height) continue;
+                    if (tiles[rr][x] === 1 || !cellSafe(x, rr)) continue;
+                    tiles[rr][x] = 1;
+                    painted++;
+                    paintedKeys.add(rr * w + x);
+                    if (x0 < 0) x0 = x;
+                    x1 = x;
+                    if (rr < yTop) yTop = rr;
+                    if (rr > yBot) yBot = rr;
+                }
+                // Stalactite fang: one extra row down at scattered columns.
+                // cellSafe rejects it whenever the local headroom is already
+                // at the legal floor (its +3 scan hits the surface), so fangs
+                // only bite where they cannot cap a standable cell.
+                if (crng() < 0.3) {
+                    const rr = bottom + 1;
+                    if (rr >= 2 && rr < this.height && tiles[rr][x] !== 1 &&
+                        cellSafe(x, rr)) {
+                        tiles[rr][x] = 1;
+                        painted++;
+                        paintedKeys.add(rr * w + x);
+                        if (x0 < 0) x0 = x;
+                        x1 = x;
+                        if (rr < yTop) yTop = rr;
+                        if (rr > yBot) yBot = rr;
+                    }
+                }
+            }
+            if (painted > 0) this.ceilingSpans.push({ x0, x1, yTop, yBot });
+        }
+        // Law repair (structural sweep, L53 s5300014): cellSafe only sees
+        // the grid AT PAINT TIME, so a later span can add support BENEATH an
+        // earlier span's cell and turn it into a cap over a newly-standable
+        // row (two free rows between spans became one standable row). Drop
+        // offending canopy cells until the grid obeys THE LAW everywhere;
+        // removal never adds mass, so each pass strictly shrinks the set and
+        // the loop terminates. Terrain can never be the cap here: a heightmap
+        // solid at y-1 implies fill through y, so no standable sits under it.
+        let dirty = true;
+        while (dirty) {
+            dirty = false;
+            for (const key of paintedKeys) {
+                const x = key % w;
+                const y = (key - x) / w;
+                for (const dy of [1, 2]) {
+                    const sy = y + dy;
+                    if (sy < this.height && tiles[sy][x] === 0 &&
+                        tiles[sy + 1]?.[x] === 1) {
+                        tiles[y][x] = 0;
+                        paintedKeys.delete(key);
+                        dirty = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Ceiling-span rects painted over the corridor, in FINAL grid space
+    // ({x0,x1,yTop,yBot} inclusive; 'left' maps mirror them with the grid).
+    // Empty array on every non-canyon map. The renderer uses this to keep
+    // surface decoration (props/sprites scatter) off overhead rock — cactus
+    // and battlement growth on a canopy top reads as a floating island,
+    // killing the corridor feel the ceilings exist to create.
+    exposeCeilingSpans() {
+        return this.ceilingSpans ?? [];
+    }
+
+    // Canyon route validation (physics-sweep ruling): the horizontal BFS
+    // model deliberately ignores headroom, so a canopy can seal a crossing
+    // the scan still claims — a soft-lock no margin rule caught in three
+    // measured tiers. Instead of guessing margins, re-run the reachability
+    // pass with requireOpenHead ON: it models the one jump type a roof can
+    // kill (the step-up onto a ledge), and under canyon canopies every
+    // standable cell already has its two legal free rows, so the flag bites
+    // ONLY on cells capped by painted rock. A route that survives is
+    // walkable under open-sky rules; anything else rejects the construction
+    // and the retry loop regenerates. Ceilings never add floor, so this gate
+    // cannot demand geometry the terrain does not have. The authoritative
+    // call site is canyonRouteFair below — post-deployment, on the shipped
+    // grid — because spike/marker removals re-open cells the pre-placement
+    // walk could not use; validateCanyonRoute stays as the reusable
+    // primitive for tests and diagnostics.
+    validateCanyonRoute() {
+        if (this.motif !== 'canyon' || this.direction === 'vertical') {
+            return true;
+        }
+        const strict = computeReachable(
+            this.tiles, this.width, this.height, this.spawnTile,
+            true, this.bridgeGap, this.shaftGap);
+        return strict.has(
+            this.portalTile.y * this.width + this.portalTile.x);
+    }
+
+    // Post-deployment fairness check for canyon constructions (see
+    // validateCanyonRoute). The pre-placement gate above runs BEFORE spikes
+    // and markers land; their removals re-open cells (a spike tile is not
+    // standable to the strict walk) that the shipped grid's route later
+    // walks as a flat fall — L48 s48001 carried exactly such a construction
+    // whose pre-placement gates ALL passed while every physical crossing of
+    // the pit at 7..9 died in void or on the spike at 15,19. So the
+    // authoritative verdict runs once per accepted construction, after
+    // deployment, here: fail => clear the board and regenerate (attempts
+    // consume the same streams, so terrain stays deterministic per attempt
+    // ordinal). Two tiers:
+    //   1) geometry — headroom-aware walk must reach the portal;
+    //   2) physics (when Level.physRoute is injected by the verification
+    //      harness) — the portal must be reachable using ONLY edges the
+    //      shipped player/physics simulation lands, deck/lift crossings
+    //      trusted, plus grounded landings harvested mid-flight. This is
+    //      edgecheck's soft-lock cross-check moved inside the accept loop;
+    //      runtime play never injects it (zero-dependency rule), and the
+    //      sweeps prove zero soft-locks ship.
+    canyonRouteFair() {
+        if (this.motif !== 'canyon' || this.direction === 'vertical') {
+            return true;
+        }
+        if (!this.validateCanyonRoute()) return false;
+        if (Level.physRoute) {
+            return Level.physRoute(this);
+        }
+        return this.routePhysicallyExecutable();
+    }
+
+    // Physics-executed route check (shipping gate). The horizontal BFS
+    // models jumps geometrically; L48 s48001 proved geometry alone can ship
+    // a route whose every physical crossing dies (a single spike reads as
+    // passable to the scan, but the drop behind it stretches the body's
+    // overlap with the inset core past survival under EVERY takeoff timing).
+    // This runs the SHIPPED Player + Physics over the BFS shortest path's
+    // transitions: each consecutive pair must be landable under at least one
+    // input policy (walk-through, or jump at frame j with direction held /
+    // late-steer variants), mirroring edgecheck's policy battery in reduced
+    // form. Deck/lift crossings are trusted (validated by their own rider
+    // suites). Early exit on first success per transition keeps accepted
+    // maps cheap (~ms); only doomed transitions burn the full battery — and
+    // those reject the construction anyway. Constants mirror main.js
+    // (PLAYER_SPEED/JUMP_FORCE) and edgecheck's faithful simPolicy loop:
+    // settle frames, ledge-fall seeding via player.update, landing brake,
+    // inset spike cores (hazards.js convention), void below the grid.
+    routePhysicallyExecutable() {
+        const T = this.tileSize;
+        const w = this.width, h = this.height;
+        // Policy battery (reduced edgecheck set): walk-through, early jump
+        // held end-to-end, late-steer jumps (direction pressed after
+        // takeoff), and release-early variants so landing-brake behavior is
+        // exercised too.
+        const policies = [{ j: null }];
+        for (const j of [0, 1, 2, 3, 4, 6, 8]) policies.push({ j });
+        for (const j of [0, 2]) {
+            for (const from of [8, 12, 16, 20, 24]) {
+                policies.push({ j, from });
+            }
+        }
+        for (const until of [10, 16, 24]) policies.push({ j: 0, until });
+        for (const j of [0, 2, 4]) {
+            for (const off of [6, 12, 18]) policies.push({ j, off });
+        }
+        const rectGrid = [];
+        for (let y = 0; y < h; y++) {
+            const row = [];
+            for (let x = 0; x < w; x++) {
+                row.push(this.tiles[y][x] === 1
+                    ? { x: x * T, y: y * T, width: T, height: T } : null);
+            }
+            rectGrid.push(row);
+        }
+        const INSET = 4; // hazards.js inset-core convention
+        // Spike CORES straight from the tile grid: at gate time the spike
+        // list object may not exist yet (it is built after acceptance), but
+        // type-2 cells are laid before validation runs.
+        const cores = [];
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                if (this.tiles[y][x] === 2) {
+                    cores.push({
+                        x: x * T + INSET, y: y * T + INSET,
+                        width: T - 2 * INSET, height: T - 2 * INSET
+                    });
+                }
+            }
+        }
+        const pitY = h * T;
+        const collect = (player, out) => {
+            out.length = 0;
+            const x0 = Math.floor(player.x / T) - 1;
+            const x1 = Math.floor((player.x + player.width) / T) + 1;
+            const y0 = Math.floor(player.y / T) - 1;
+            const y1 = Math.floor((player.y + player.height) / T) + 1;
+            for (let ty = y0; ty <= y1; ty++) {
+                if (ty < 0 || ty >= h) continue;
+                for (let tx = x0; tx <= x1; tx++) {
+                    if (tx < 0 || tx >= w) continue;
+                    const r = rectGrid[ty][tx];
+                    if (r) out.push(r);
+                }
+            }
+            return out;
+        };
+        const ctx = {
+            T, DT: 1 / 60, SIM_FRAMES: 180,
+            PLAYER_SPEED: 200, JUMP_FORCE: 350, // mirror main.js
+            physicsFactory: () => new Physics(),
+            collect, cores, pitY, w
+        };
+        const routeEdges = routeModelEdges(this);
+        // Harvest-aware search over physics-executed footholds (edgecheck's
+        // soft-lock semantics, mirrored): adjacency = landed route-model
+        // edges PLUS grounded landings harvested mid-flight (an overshoot
+        // onto a new column is a real foothold). BFS must reach the portal
+        // through that graph; shortest-path-only checking would reject maps
+        // where the executable chain detours (measured on L48 s48001).
+        const adj = new Map();
+        const addAdj = (ak, bk) => {
+            if (!adj.has(ak)) adj.set(ak, []);
+            adj.get(ak).push(bk);
+        };
+        const startK = this.spawnTile.y * w + this.spawnTile.x;
+        const goalK = this.portalTile.y * w + this.portalTile.x;
+        const seen = new Set();
+        let anyLanded = false;
+        // Runs one policy on one edge; returns {ok, harvests:[cellKey,...]}
+        // where harvests are grounded landings reached anywhere but A.
+        const sim = (e, pol) => simTransition(e, pol, ctx);
+        for (const e of routeEdges) {
+            const ak = e.ay * w + e.ax;
+            if (e.kind === 'deck' || e.kind === 'lift') {
+                addAdj(ak, e.by * w + e.bx);
+                continue;
+            }
+            const ek = `${e.ax},${e.ay}->${e.bx},${e.by}`;
+            if (seen.has(ek)) continue;
+            seen.add(ek);
+            let landedHere = false;
+            for (const pol of policies) {
+                const r = sim(e, pol);
+                if (r.ok) {
+                    landedHere = true;
+                    addAdj(ak, e.by * w + e.bx);
+                }
+                for (const hk of r.harvests) addAdj(ak, hk);
+            }
+            if (landedHere) anyLanded = true;
+        }
+        if (!anyLanded) return false;
+        const vis = new Set([startK]);
+        const q = [startK];
+        while (q.length) {
+            const k = q.pop();
+            if (k === goalK) return true;
+            for (const n of (adj.get(k) ?? [])) {
+                if (!vis.has(n)) { vis.add(n); q.push(n); }
+            }
+        }
+        return false;
     }
 
     // Generation-space exclusion for spikes and enemy markers. Canonical
@@ -1336,7 +2343,13 @@ export class Level {
                 // the tooth sits at feet level exactly where they land
                 // (playtest ruling — deaths must be avoidable by ordinary
                 // movement, and stepping off a ledge is ordinary).
-                if (tiles[y][nx] === 1 || tiles[y - 1][nx] === 1) return true;
+                // y===0 guard: a surface at row 1 would put the candidate
+                // itself in the top sky row (canyon canopies are clamped to
+                // row >= 2 so this cannot fire today; it kept a latent
+                // tiles[-1] crash alive through the pre-motif ceiling pass).
+                if (tiles[y][nx] === 1 || (y > 0 && tiles[y - 1][nx] === 1)) {
+                    return true;
+                }
             }
             return false;
         };
@@ -1365,6 +2378,17 @@ export class Level {
                     continue;
                 }
                 if (nearRouteCell(x, y)) continue;
+                // No teeth on canyon-canopy rock (mirror of the marker ban):
+                // a spike perched on a slab top sits out of the corridor's
+                // threat geometry entirely — it neither menaces the walk
+                // line nor claims its columns — yet it consumes the map's
+                // single-spike budget and vacates the FLOOR sites where the
+                // marker proximity vetoes depend on it. Measured: relocated
+                // roof spikes un-vetoed the floor patrol pool and drove
+                // canyon deployed density +55..+90% past target across the
+                // motif's whole level run. Canopy rock hosts no hazards;
+                // the corridor floor keeps the standard economy.
+                if (this.inCeilingCell(x, y + 1)) continue;
                 // Shaft approach fairness: no teeth on or beside the stop
                 // ledges (see inShaftWindow). The chimney columns themselves
                 // are pure void, so a spike can never site inside them.
@@ -1477,6 +2501,19 @@ export class Level {
         }
     }
 
+    // True when cell (x,y) is a painted canyon-canopy cell (canonical space
+    // while generating; see exposeCeilingSpans). Empty list everywhere else.
+    inCeilingCell(x, y) {
+        const spans = this.ceilingSpans;
+        if (!spans || spans.length === 0) return false;
+        for (const s of spans) {
+            if (x >= s.x0 && x <= s.x1 && y >= s.yTop && y <= s.yBot) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Single-cell enemy marker site predicate, shared by placeEnemyMarkers'
     // candidate scan and placeSpikes' keep-if-harmless gate (I2): allowed
     // coordinate band (rows on vertical), air on solid ground, off the
@@ -1507,6 +2544,13 @@ export class Level {
         // boarding point is the same ambush the bridge lip ban exists for.
         if (this.inShaftWindow(x, y)) return false;
         if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1) return false;
+        // Canyon canopy tops are no patrol ground: overhead rock measured
+        // +47% deployed enemies on canyon maps, every extra body walking a
+        // roof slab one row over the corridor — unreachable, unstompable,
+        // and a contact vector from a surface the fairness rules were never
+        // sized for (hostile-shelf lineage). Corridor-floor surfaces around
+        // and beneath the canopy stay fully legal.
+        if (this.inCeilingCell(x, y + 1)) return false;
         if (this.pathCells && this.pathCells.has(y * this.width + x)) {
             return false;
         }
@@ -2243,3 +3287,10 @@ export class Level {
         }
     }
 }
+
+// Verification-harness hook for canyonRouteFair (see its comment): sweeps
+// assign a function (level) => boolean that answers "is the portal reachable
+// from spawn using ONLY physics-simulated landed edges (plus trusted deck /
+// lift crossings and harvested grounded landings)?" Runtime play leaves it
+// unset, keeping the shipped module zero-dependency.
+Level.physRoute = null;

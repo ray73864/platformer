@@ -810,6 +810,238 @@
   var V_DECK_SPEED_RANGE = 5;
   var SHAFT_BOTTOM_MIN_ROW = 12;
   var SHAFT_BOTTOM_MAX_ROW = 18;
+  function routeModelEdges(level) {
+    const tiles = level.tiles;
+    const { width: w, height: h } = level;
+    const solid = (x, y) => {
+      if (x < 0 || x >= w)
+        return true;
+      if (y < 0 || y >= h)
+        return false;
+      return tiles[y][x] === 1;
+    };
+    const hazard = (x, y) => {
+      if (x < 0 || x >= w || y < 0 || y >= h)
+        return false;
+      return tiles[y][x] === 2;
+    };
+    const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
+    const standable = (x, y) => freeCell(x, y) && solid(x, y + 1);
+    const corr = level.bridgeGap;
+    const isCorr = (x, y) => corr !== null && corr !== undefined && y === corr.S - 1 && x >= corr.a && x <= corr.b;
+    const key = (x, y) => y * w + x;
+    const edges = [];
+    if (!standable(level.spawnTile.x, level.spawnTile.y))
+      return edges;
+    const seen = new Set([key(level.spawnTile.x, level.spawnTile.y)]);
+    const queue = [[level.spawnTile.x, level.spawnTile.y]];
+    while (queue.length) {
+      const [x, y] = queue.shift();
+      if (isCorr(x, y)) {
+        for (const dir of [-1, 1]) {
+          const nx = x + dir;
+          if (isCorr(nx, y)) {
+            edges.push({
+              ax: x,
+              ay: y,
+              bx: nx,
+              by: y,
+              kind: "deck",
+              dist: 1,
+              dir
+            });
+            if (!seen.has(key(nx, y))) {
+              seen.add(key(nx, y));
+              queue.push([nx, y]);
+            }
+            continue;
+          }
+          for (const ny of [y, y - 1]) {
+            if (standable(nx, ny)) {
+              edges.push({
+                ax: x,
+                ay: y,
+                bx: nx,
+                by: ny,
+                kind: "deck",
+                dist: 1,
+                dir
+              });
+              if (!seen.has(key(nx, ny))) {
+                seen.add(key(nx, ny));
+                queue.push([nx, ny]);
+              }
+            }
+          }
+        }
+        continue;
+      }
+      for (const dir of [-1, 1]) {
+        for (let dist = 1;dist <= MAX_H_JUMP; dist++) {
+          let blocked = false, hazardRun = 0;
+          for (let m = 1;m < dist; m++) {
+            const midX = x + dir * m;
+            if (solid(midX, y)) {
+              blocked = true;
+              break;
+            }
+            if (hazard(midX, y)) {
+              hazardRun++;
+              if (hazardRun >= 3) {
+                blocked = true;
+                break;
+              }
+            } else
+              hazardRun = 0;
+          }
+          if (blocked)
+            continue;
+          const c = x + dir * dist;
+          for (let ly = y;ly < h; ly++) {
+            if (hazard(c, ly))
+              break;
+            if (standable(c, ly)) {
+              edges.push({
+                ax: x,
+                ay: y,
+                bx: c,
+                by: ly,
+                kind: ly === y ? "walk" : "fall",
+                dist,
+                dir
+              });
+              if (!seen.has(key(c, ly))) {
+                seen.add(key(c, ly));
+                queue.push([c, ly]);
+              }
+            }
+            if (solid(c, ly))
+              break;
+          }
+        }
+        for (const dist of [1, 2]) {
+          const c = x + dir * dist;
+          const ty = y - 1;
+          if (!standable(c, ty))
+            continue;
+          let clear = true;
+          if (dist === 2) {
+            const midX = x + dir;
+            if (solid(midX, ty) || hazard(midX, ty))
+              clear = false;
+          }
+          if (clear) {
+            edges.push({
+              ax: x,
+              ay: y,
+              bx: c,
+              by: ty,
+              kind: "stepup",
+              dist,
+              dir
+            });
+            if (!seen.has(key(c, ty))) {
+              seen.add(key(c, ty));
+              queue.push([c, ty]);
+            }
+          }
+        }
+      }
+      if (corr !== null && corr !== undefined) {
+        for (const nx of [x - 1, x + 1]) {
+          const ny = isCorr(nx, y) ? y : isCorr(nx, y + 1) ? y + 1 : -1;
+          if (ny >= 0) {
+            edges.push({
+              ax: x,
+              ay: y,
+              bx: nx,
+              by: ny,
+              kind: "deck",
+              dist: 1,
+              dir: Math.sign(nx - x)
+            });
+            if (!seen.has(key(nx, ny))) {
+              seen.add(key(nx, ny));
+              queue.push([nx, ny]);
+            }
+          }
+        }
+      }
+    }
+    return edges;
+  }
+  function simTransition(e, pol, ctx) {
+    const {
+      T,
+      w,
+      DT,
+      SIM_FRAMES,
+      PLAYER_SPEED,
+      JUMP_FORCE,
+      physicsFactory,
+      collect,
+      cores,
+      pitY
+    } = ctx;
+    const harvests = new Set;
+    const fail = () => ({ ok: false, harvests });
+    const dir = Math.sign(e.bx - e.ax);
+    const physics = physicsFactory();
+    const player = new Player(e.ax * T + (pol.off || 0) * dir, e.ay * T, PLAYER_SPEED, JUMP_FORCE);
+    player.prevX = player.x;
+    player.prevY = player.y;
+    const candidates = [];
+    const step = (left, right) => {
+      player.prevX = player.x;
+      player.prevY = player.y;
+      player.update(DT, left, right);
+      physics.applyGravity(player, DT);
+      physics.resolveCollisions(player, collect(player, candidates));
+    };
+    step(false, false);
+    step(false, false);
+    if (!player.grounded)
+      return fail();
+    const dirFrom = pol.from || 0;
+    const dirUntil = pol.until === undefined ? Infinity : pol.until;
+    let prevGrounded = true;
+    for (let f = 0;f < SIM_FRAMES; f++) {
+      const held = f >= dirFrom && f < dirUntil;
+      if (pol.j !== null && f === pol.j && player.grounded)
+        player.jump();
+      step(held && dir < 0, held && dir > 0);
+      if (player.grounded && !prevGrounded && !held) {
+        player.vx = 0;
+      }
+      prevGrounded = player.grounded;
+      for (const core of cores) {
+        if (aabbOverlap(player, core))
+          return fail();
+      }
+      if (player.y > pitY + 100)
+        return fail();
+      if (player.grounded) {
+        const cx = Math.floor((player.x + player.width / 2) / T);
+        const bodyRow = Math.floor((player.y + player.height - 0.001) / T);
+        if (cx === e.bx && bodyRow === e.by) {
+          return { ok: true, harvests };
+        }
+        if (cx !== e.ax || bodyRow !== e.ay) {
+          harvests.add(bodyRow * w + cx);
+        }
+      }
+    }
+    return fail();
+  }
+  var MOTIF_KNOBS = {
+    standard: { gapMul: 1, gapMinW: 1 },
+    hills: { gapMul: 0.55, gapMinW: 2 },
+    terraces: { gapMul: 0.45, gapMinW: 1 },
+    archipelago: { gapMul: 1, gapMinW: 1 },
+    canyon: { gapMul: 1, gapMinW: 1 },
+    pillars: { gapMul: 0.8, gapMinW: 1 }
+  };
+  var ARCH_MIN_ISLAND_RUN = 4;
   function solidRunWidth(tiles, width, x, supportY) {
     const row = tiles[supportY];
     if (!row || row[x] !== 1)
@@ -841,6 +1073,68 @@
     if (levelNumber < PHASE2_FIRST_LEVEL)
       return "right";
     return ["right", "left", "vertical"][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
+  }
+  var MOTIF_GATES = {
+    hills: 12,
+    terraces: 16,
+    archipelago: 20,
+    canyon: 25,
+    pillars: 30,
+    atrium: 16,
+    zigzag: 19
+  };
+  function motifHash(levelNumber) {
+    let h = Math.imul(levelNumber, 2654435761) >>> 0;
+    h ^= h >>> 15;
+    h = Math.imul(h, 2246822507) >>> 0;
+    h ^= h >>> 13;
+    return h >>> 0;
+  }
+  function motifSlots(levelNumber, direction) {
+    if (direction === "vertical") {
+      const pool = ["standard"];
+      if (levelNumber >= MOTIF_GATES.atrium)
+        pool.push("atrium");
+      if (levelNumber >= MOTIF_GATES.zigzag)
+        pool.push("zigzag");
+      return pool;
+    }
+    const tier = tierIndexFor(levelNumber);
+    const slots = [];
+    const push = (name, gate) => {
+      if (levelNumber < gate)
+        return;
+      const weight = name === "standard" ? levelNumber < 16 ? 3 : levelNumber < 25 ? 2 : 1 : tier >= 3 ? 2 : 1;
+      for (let i = 0;i < weight; i++)
+        slots.push(name);
+    };
+    push("standard", 1);
+    push("hills", MOTIF_GATES.hills);
+    push("terraces", MOTIF_GATES.terraces);
+    push("archipelago", MOTIF_GATES.archipelago);
+    push("canyon", MOTIF_GATES.canyon);
+    push("pillars", MOTIF_GATES.pillars);
+    return slots;
+  }
+  function prevSameDirectionMotif(levelNumber, direction) {
+    for (let n = levelNumber - 1;n >= 1; n--) {
+      if (directionForLevel(n) === direction)
+        return motifForLevel(n);
+    }
+    return null;
+  }
+  function motifForLevel(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return "standard";
+    const direction = directionForLevel(levelNumber);
+    const slots = motifSlots(levelNumber, direction);
+    let idx = motifHash(levelNumber) % slots.length;
+    const prev = prevSameDirectionMotif(levelNumber, direction);
+    let guard = 0;
+    while (prev !== null && slots[idx] === prev && guard++ < slots.length) {
+      idx = (idx + 1) % slots.length;
+    }
+    return slots[idx];
   }
   function makeRng(seed) {
     let s = seed >>> 0;
@@ -995,9 +1289,12 @@
     constructor(levelNumber, tileSize, seed) {
       this.levelNumber = levelNumber;
       this.tileSize = tileSize;
-      this.rng = makeRng(seed === undefined ? Math.random() * 4294967295 >>> 0 : seed >>> 0);
-      this.seed = seed === undefined ? null : seed >>> 0;
+      const resolvedSeed = seed === undefined ? Math.random() * 4294967295 >>> 0 : seed >>> 0;
+      this.rng = makeRng(resolvedSeed);
+      this.seedResolved = resolvedSeed;
+      this.seed = seed === undefined ? null : resolvedSeed;
       this.direction = directionForLevel(levelNumber);
+      this.motif = motifForLevel(levelNumber);
       if (this.direction === "vertical") {
         this.width = VERTICAL_WIDTH;
         this.height = VERTICAL_HEIGHT;
@@ -1008,7 +1305,11 @@
       }
       let attempt = 0;
       let valid = false;
-      while (attempt < MAX_GENERATION_ATTEMPTS && !valid) {
+      let fair = false;
+      let physRejects = 0;
+      let gateEngaged = false;
+      const REWIND_BUDGET = 4;
+      while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
         this.tiles = this.generateLevel();
         this.spawnTile = this.getSpawnTile();
         this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap, this.shaftGap);
@@ -1018,6 +1319,22 @@
           valid = this.deriveEnemySpawns().length > 0 && (this.direction === "vertical" || this.countTilesOfType(2) > 0);
         }
         attempt++;
+        if (valid) {
+          if (this.canyonRouteFair()) {
+            fair = true;
+          } else {
+            valid = false;
+            physRejects++;
+            gateEngaged = true;
+            if (physRejects <= REWIND_BUDGET) {
+              this.rng = makeRng(this.seedResolved);
+            }
+          }
+        } else if (gateEngaged && physRejects > REWIND_BUDGET) {
+          this.rng = makeRng((this.seedResolved ^ Math.imul(attempt + 1, 16777619)) >>> 0);
+          this._canopyCalls = 0;
+          physRejects = 0;
+        }
       }
       this.generationAttempts = attempt;
       if (!valid) {
@@ -1062,6 +1379,7 @@
       this.pathCells = null;
       this.bridgeGap = null;
       this.shaftGap = null;
+      this.ceilingSpans = null;
       if (this.direction === "vertical") {
         this.generateVertical(tiles);
       } else {
@@ -1077,12 +1395,21 @@
           const { a, b, S } = this.bridgeGap;
           this.bridgeGap = { a: this.width - 1 - b, b: this.width - 1 - a, S };
         }
+        if (this.ceilingSpans && this.ceilingSpans.length > 0) {
+          this.ceilingSpans = this.ceilingSpans.map((s) => ({
+            x0: this.width - 1 - s.x1,
+            x1: this.width - 1 - s.x0,
+            yTop: s.yTop,
+            yBot: s.yBot
+          }));
+        }
       }
       return tiles;
     }
     generateVertical(tiles) {
       const w = this.width;
       const h = this.height;
+      const kv = this.motif === "atrium" ? { extMin: 4, extMax: 8, standardStream: false } : this.motif === "zigzag" ? { extMin: 1, extMax: 2, standardStream: false } : { extMin: 2, extMax: 5, standardStream: true };
       for (let x = 0;x < w; x++) {
         for (let y = h - 3;y < h; y++) {
           tiles[y][x] = 1;
@@ -1117,15 +1444,24 @@
           step = dir * (this.rng() < 0.15 ? 2 : 1);
         }
         let c = x + step;
+        const inShaftCols = (cx) => g !== null && row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
         if (!steered) {
-          const inShaftCols = (cx) => g !== null && row <= g.B + 1 && cx >= g.sx && cx <= g.ex;
           if (c < 1 || c > w - 2 || inShaftCols(c)) {
             step = -Math.sign(step || 1);
             c = x + step;
           }
+          if (!kv.standardStream && this.pathCells.has((row + 1) * w + c)) {
+            for (const alt of [x - step, x + 1, x - 1]) {
+              if (alt >= 1 && alt <= w - 2 && !inShaftCols(alt) && !this.pathCells.has((row + 1) * w + alt)) {
+                step = alt - x;
+                c = alt;
+                break;
+              }
+            }
+          }
         }
         dir = Math.sign(step) || dir;
-        const ext = 2 + Math.floor(this.rng() * 4);
+        const ext = kv.extMin + Math.floor(this.rng() * (kv.extMax - kv.extMin + 1));
         const lo = dir === 1 ? c : c - ext;
         const hi = dir === 1 ? c + ext : c;
         for (let cx = Math.max(0, lo);cx <= Math.min(w - 1, hi); cx++) {
@@ -1225,6 +1561,33 @@
           bridgeW = pick.wGap;
         }
       }
+      const motif = this.motif;
+      const KM = MOTIF_KNOBS[motif] ?? MOTIF_KNOBS.standard;
+      const hill = motif === "hills" ? {
+        amp: 2 + Math.floor(this.rng() * 3),
+        lambda: 10 + Math.floor(this.rng() * 7)
+      } : null;
+      const ter = motif === "terraces" ? (() => {
+        const d = 2 + Math.floor(this.rng() * 2);
+        const bands = this.rng() < 0.5 ? [
+          this.height - 3,
+          this.height - 3 - d,
+          Math.max(3, this.height - 3 - 2 * d)
+        ] : [this.height - 3, this.height - 3 - d];
+        return { bands, bandY: bands[bands.length - 1] };
+      })() : null;
+      const pil = motif === "pillars" ? { queue: [] } : null;
+      if (pil !== null) {
+        const k = 2 + Math.floor(this.rng() * 3);
+        const hold = 2 + Math.floor(this.rng() * 3);
+        for (let i = 0;i < k; i++)
+          pil.queue.push(-1);
+        for (let i = 0;i < hold; i++)
+          pil.queue.push(0);
+        for (let i = 0;i < k; i++)
+          pil.queue.push(1);
+      }
+      const arch = motif === "archipelago" ? { depth: 3, run: 0 } : null;
       for (let x = 0;x < this.width; x++) {
         if (bridgeA >= 0 && x === bridgeA)
           bridgeS = currentY;
@@ -1239,8 +1602,20 @@
         }
         const isSpawnZone = x < 6;
         const isEndZone = x >= this.width - 5;
-        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && segRemaining === 0 && !(bridgeA >= 0 && x === bridgeA - 1) && this.rng() < gapChance) {
+        let doGap = false;
+        if (!isSpawnZone && !isEndZone && gapStreak < maxGap && segRemaining === 0 && !(bridgeA >= 0 && x === bridgeA - 1) && !(pil !== null && pil.queue.length > 0)) {
+          if (KM.gapMinW > 1 && gapStreak > 0 && gapStreak < KM.gapMinW) {
+            doGap = true;
+          } else if (arch !== null && gapStreak === 0 && arch.run < ARCH_MIN_ISLAND_RUN) {
+            doGap = false;
+          } else {
+            doGap = this.rng() < gapChance * KM.gapMul;
+          }
+        }
+        if (doGap) {
           gapStreak++;
+          if (arch !== null)
+            arch.run = 0;
           continue;
         }
         const resumedAfterWideGap = gapStreak >= 2;
@@ -1251,28 +1626,347 @@
         } else if (segRemaining > 0) {
           segRemaining--;
         } else {
-          const atTop = currentY <= 3;
-          const atFloor = currentY >= this.height - 3;
           let step;
+          let popped = false;
+          let terMoving = false;
           if (resumedAfterWideGap)
-            step = 1;
-          else if (atTop)
-            step = 1;
-          else if (atFloor)
-            step = -1;
-          else
-            step = this.rng() < 0.55 ? 1 : -1;
+            step = motif === "archipelago" ? 0 : 1;
+          else if (motif === "hills") {
+            const target = this.height - 3 - Math.round(hill.amp * (0.5 - 0.5 * Math.cos(2 * Math.PI * x / hill.lambda)));
+            const delta = target - currentY;
+            if (delta !== 0)
+              step = Math.sign(delta);
+            else
+              step = this.rng() < 0.3 ? this.rng() < 0.5 ? 1 : -1 : 0;
+          } else if (motif === "terraces") {
+            if (ter.bandY === currentY) {
+              const others = ter.bands.filter((b) => b !== ter.bandY);
+              if (others.length > 0 && this.rng() < 0.55) {
+                ter.bandY = others[Math.floor(this.rng() * others.length)];
+              }
+            }
+            const delta = ter.bandY - currentY;
+            step = delta === 0 ? 0 : Math.sign(delta);
+            terMoving = delta !== 0;
+          } else if (motif === "pillars") {
+            if (pil.queue.length === 0 && this.rng() < 0.35) {
+              const k = 2 + Math.floor(this.rng() * 3);
+              const hold = 2 + Math.floor(this.rng() * 3);
+              for (let i = 0;i < k; i++)
+                pil.queue.push(-1);
+              for (let i = 0;i < hold; i++)
+                pil.queue.push(0);
+              for (let i = 0;i < k; i++)
+                pil.queue.push(1);
+            }
+            if (pil.queue.length > 0) {
+              step = pil.queue.shift();
+              popped = true;
+            } else {
+              step = this.rng() < 0.15 ? this.rng() < 0.5 ? 1 : -1 : 0;
+            }
+          } else if (motif === "archipelago") {
+            const hiRow = Math.max(3, this.height - 8);
+            const loRow = this.height - 5;
+            if (currentY <= hiRow)
+              step = 1;
+            else if (currentY >= loRow)
+              step = -1;
+            else
+              step = this.rng() < 0.5 ? 1 : -1;
+          } else {
+            const atTop = currentY <= 3;
+            const atFloor = currentY >= this.height - 3;
+            if (atTop)
+              step = 1;
+            else if (atFloor)
+              step = -1;
+            else
+              step = this.rng() < 0.55 ? 1 : -1;
+          }
           currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
-          segRemaining = 1 + Math.floor(this.rng() * 4);
+          if (popped) {
+            segRemaining = 0;
+          } else if (motif === "terraces") {
+            segRemaining = terMoving ? 0 : 4 + Math.floor(this.rng() * 5);
+          } else if (arch !== null && resumedAfterWideGap) {
+            segRemaining = 0;
+          } else {
+            segRemaining = 1 + Math.floor(this.rng() * 4);
+          }
+          if (arch !== null)
+            arch.depth = 2 + (this.rng() < 0.3 ? 1 : 0);
         }
-        for (let y = currentY;y < this.height; y++) {
+        let paintBottom = this.height;
+        if (arch !== null && !isSpawnZone) {
+          paintBottom = Math.min(currentY + arch.depth, this.height - 3);
+        }
+        for (let y = currentY;y < paintBottom; y++) {
           tiles[y][x] = 1;
         }
+        if (arch !== null)
+          arch.run++;
       }
       if (bridgeA >= 0) {
         this.bridgeGap = { a: bridgeA, b: bridgeA + bridgeW - 1, S: bridgeS };
       }
+      if (motif === "canyon")
+        this.paintCanyonCeilings(tiles);
       return tiles;
+    }
+    paintCanyonCeilings(tiles) {
+      const w = this.width;
+      const crng = makeRng(((this.seedResolved ?? 0) ^ Math.imul(2654435761, this._canopyCalls = (this._canopyCalls ?? 0) + 1)) >>> 0);
+      const topRow = (x) => {
+        for (let y = 0;y < this.height; y++) {
+          if (tiles[y][x] === 1)
+            return y;
+        }
+        return null;
+      };
+      const cellSafe = (x, r) => r >= 1 && tiles[r + 2]?.[x] !== 1 && tiles[r + 3]?.[x] !== 1;
+      const bwLo = this.bridgeGap ? this.bridgeGap.a - 1 : -1;
+      const bwHi = this.bridgeGap ? this.bridgeGap.b + 1 : -1;
+      this.ceilingSpans = [];
+      const surfTop = [];
+      for (let x = 0;x < w; x++)
+        surfTop.push(topRow(x));
+      const pitNear = new Array(w).fill(false);
+      for (let x = 0;x < w; x++) {
+        if (surfTop[x] !== null)
+          continue;
+        for (let k = Math.max(0, x - 1);k <= Math.min(w - 1, x + 1); k++) {
+          pitNear[k] = true;
+        }
+      }
+      const targetSpans = 2 + (crng() < 0.5 ? 1 : 0);
+      let guard = 0;
+      const paintedKeys = new Set;
+      while ((this.ceilingSpans.length < targetSpans || this.ceilingSpans.length === 0) && guard++ < 8) {
+        const len = 8 + Math.floor(crng() * 7);
+        const maxStart = w - 6 - len;
+        if (maxStart < 8)
+          break;
+        const start = 8 + Math.floor(crng() * (maxStart - 8 + 1));
+        const thick = 1 + Math.floor(crng() * 2);
+        const hr = 2 + (crng() < 0.5 ? 1 : 0);
+        const tops = [];
+        for (let x = start;x < start + len; x++)
+          tops.push(surfTop[x]);
+        for (let k = 1;k < tops.length; k++) {
+          if (tops[k] === null)
+            tops[k] = tops[k - 1];
+        }
+        for (let k = tops.length - 2;k >= 0; k--) {
+          if (tops[k] === null)
+            tops[k] = tops[k + 1];
+        }
+        if (tops[0] === null)
+          continue;
+        let painted = 0, yTop = this.height, yBot = -1, x0 = -1, x1 = -1;
+        for (let x = start;x < start + len; x++) {
+          if (x >= bwLo && x <= bwHi)
+            continue;
+          if (pitNear[x])
+            continue;
+          const t = tops[x - start];
+          const bottom = t - hr - 2;
+          for (let rr = Math.max(2, bottom - thick + 1);rr <= bottom; rr++) {
+            if (rr < 1 || rr >= this.height)
+              continue;
+            if (tiles[rr][x] === 1 || !cellSafe(x, rr))
+              continue;
+            tiles[rr][x] = 1;
+            painted++;
+            paintedKeys.add(rr * w + x);
+            if (x0 < 0)
+              x0 = x;
+            x1 = x;
+            if (rr < yTop)
+              yTop = rr;
+            if (rr > yBot)
+              yBot = rr;
+          }
+          if (crng() < 0.3) {
+            const rr = bottom + 1;
+            if (rr >= 2 && rr < this.height && tiles[rr][x] !== 1 && cellSafe(x, rr)) {
+              tiles[rr][x] = 1;
+              painted++;
+              paintedKeys.add(rr * w + x);
+              if (x0 < 0)
+                x0 = x;
+              x1 = x;
+              if (rr < yTop)
+                yTop = rr;
+              if (rr > yBot)
+                yBot = rr;
+            }
+          }
+        }
+        if (painted > 0)
+          this.ceilingSpans.push({ x0, x1, yTop, yBot });
+      }
+      let dirty = true;
+      while (dirty) {
+        dirty = false;
+        for (const key of paintedKeys) {
+          const x = key % w;
+          const y = (key - x) / w;
+          for (const dy of [1, 2]) {
+            const sy = y + dy;
+            if (sy < this.height && tiles[sy][x] === 0 && tiles[sy + 1]?.[x] === 1) {
+              tiles[y][x] = 0;
+              paintedKeys.delete(key);
+              dirty = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    exposeCeilingSpans() {
+      return this.ceilingSpans ?? [];
+    }
+    validateCanyonRoute() {
+      if (this.motif !== "canyon" || this.direction === "vertical") {
+        return true;
+      }
+      const strict = computeReachable(this.tiles, this.width, this.height, this.spawnTile, true, this.bridgeGap, this.shaftGap);
+      return strict.has(this.portalTile.y * this.width + this.portalTile.x);
+    }
+    canyonRouteFair() {
+      if (this.motif !== "canyon" || this.direction === "vertical") {
+        return true;
+      }
+      if (!this.validateCanyonRoute())
+        return false;
+      if (Level.physRoute) {
+        return Level.physRoute(this);
+      }
+      return this.routePhysicallyExecutable();
+    }
+    routePhysicallyExecutable() {
+      const T = this.tileSize;
+      const w = this.width, h = this.height;
+      const policies = [{ j: null }];
+      for (const j of [0, 1, 2, 3, 4, 6, 8])
+        policies.push({ j });
+      for (const j of [0, 2]) {
+        for (const from of [8, 12, 16, 20, 24]) {
+          policies.push({ j, from });
+        }
+      }
+      for (const until of [10, 16, 24])
+        policies.push({ j: 0, until });
+      for (const j of [0, 2, 4]) {
+        for (const off of [6, 12, 18])
+          policies.push({ j, off });
+      }
+      const rectGrid = [];
+      for (let y = 0;y < h; y++) {
+        const row = [];
+        for (let x = 0;x < w; x++) {
+          row.push(this.tiles[y][x] === 1 ? { x: x * T, y: y * T, width: T, height: T } : null);
+        }
+        rectGrid.push(row);
+      }
+      const INSET = 4;
+      const cores = [];
+      for (let y = 0;y < h; y++) {
+        for (let x = 0;x < w; x++) {
+          if (this.tiles[y][x] === 2) {
+            cores.push({
+              x: x * T + INSET,
+              y: y * T + INSET,
+              width: T - 2 * INSET,
+              height: T - 2 * INSET
+            });
+          }
+        }
+      }
+      const pitY = h * T;
+      const collect = (player, out) => {
+        out.length = 0;
+        const x0 = Math.floor(player.x / T) - 1;
+        const x1 = Math.floor((player.x + player.width) / T) + 1;
+        const y0 = Math.floor(player.y / T) - 1;
+        const y1 = Math.floor((player.y + player.height) / T) + 1;
+        for (let ty = y0;ty <= y1; ty++) {
+          if (ty < 0 || ty >= h)
+            continue;
+          for (let tx = x0;tx <= x1; tx++) {
+            if (tx < 0 || tx >= w)
+              continue;
+            const r = rectGrid[ty][tx];
+            if (r)
+              out.push(r);
+          }
+        }
+        return out;
+      };
+      const ctx = {
+        T,
+        DT: 1 / 60,
+        SIM_FRAMES: 180,
+        PLAYER_SPEED: 200,
+        JUMP_FORCE: 350,
+        physicsFactory: () => new Physics,
+        collect,
+        cores,
+        pitY,
+        w
+      };
+      const routeEdges = routeModelEdges(this);
+      const adj = new Map;
+      const addAdj = (ak, bk) => {
+        if (!adj.has(ak))
+          adj.set(ak, []);
+        adj.get(ak).push(bk);
+      };
+      const startK = this.spawnTile.y * w + this.spawnTile.x;
+      const goalK = this.portalTile.y * w + this.portalTile.x;
+      const seen = new Set;
+      let anyLanded = false;
+      const sim = (e, pol) => simTransition(e, pol, ctx);
+      for (const e of routeEdges) {
+        const ak = e.ay * w + e.ax;
+        if (e.kind === "deck" || e.kind === "lift") {
+          addAdj(ak, e.by * w + e.bx);
+          continue;
+        }
+        const ek = `${e.ax},${e.ay}->${e.bx},${e.by}`;
+        if (seen.has(ek))
+          continue;
+        seen.add(ek);
+        let landedHere = false;
+        for (const pol of policies) {
+          const r = sim(e, pol);
+          if (r.ok) {
+            landedHere = true;
+            addAdj(ak, e.by * w + e.bx);
+          }
+          for (const hk of r.harvests)
+            addAdj(ak, hk);
+        }
+        if (landedHere)
+          anyLanded = true;
+      }
+      if (!anyLanded)
+        return false;
+      const vis = new Set([startK]);
+      const q = [startK];
+      while (q.length) {
+        const k = q.pop();
+        if (k === goalK)
+          return true;
+        for (const n of adj.get(k) ?? []) {
+          if (!vis.has(n)) {
+            vis.add(n);
+            q.push(n);
+          }
+        }
+      }
+      return false;
     }
     hazardPlacementAllowed(coord) {
       if (this.direction === "vertical") {
@@ -1368,8 +2062,9 @@
           }
           if (!ground)
             return true;
-          if (tiles[y][nx] === 1 || tiles[y - 1][nx] === 1)
+          if (tiles[y][nx] === 1 || y > 0 && tiles[y - 1][nx] === 1) {
             return true;
+          }
         }
         return false;
       };
@@ -1392,6 +2087,8 @@
             continue;
           }
           if (nearRouteCell(x, y))
+            continue;
+          if (this.inCeilingCell(x, y + 1))
             continue;
           if (this.inShaftWindow(x, y))
             continue;
@@ -1450,6 +2147,17 @@
         }
       }
     }
+    inCeilingCell(x, y) {
+      const spans = this.ceilingSpans;
+      if (!spans || spans.length === 0)
+        return false;
+      for (const s of spans) {
+        if (x >= s.x0 && x <= s.x1 && y >= s.yTop && y <= s.yBot) {
+          return true;
+        }
+      }
+      return false;
+    }
     isMarkerSite(tiles, x, y, reachable, opts = {}) {
       if (!this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
         return false;
@@ -1460,6 +2168,8 @@
       if (this.inShaftWindow(x, y))
         return false;
       if (tiles[y][x] !== 0 || tiles[y + 1][x] !== 1)
+        return false;
+      if (this.inCeilingCell(x, y + 1))
         return false;
       if (this.pathCells && this.pathCells.has(y * this.width + x)) {
         return false;
@@ -1939,6 +2649,7 @@
       }
     }
   }
+  Level.physRoute = null;
 
   // js/camera.js
   class Camera {
@@ -3213,6 +3924,15 @@
         }
         return true;
       };
+      const ceilSpans = typeof level.exposeCeilingSpans === "function" ? level.exposeCeilingSpans() : [];
+      const onCeiling = (tx, ty) => {
+        for (const s of ceilSpans) {
+          if (tx >= s.x0 && tx <= s.x1 && ty >= s.yTop && ty <= s.yBot) {
+            return true;
+          }
+        }
+        return false;
+      };
       const KINDS = [
         [["tuft", 0.5], ["flower", 0.3], ["pebble", 0.2]],
         [["cactus", 0.4], ["pebbles", 0.35], ["bones", 0.25]],
@@ -3224,6 +3944,8 @@
           if (level.tiles[ty][tx] !== 1 || level.tiles[ty - 1][tx] !== 0)
             continue;
           if (spikeNear(tx, ty, 1))
+            continue;
+          if (onCeiling(tx, ty))
             continue;
           if (rng() <= 0.34) {
             let roll = rng();

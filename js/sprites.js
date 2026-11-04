@@ -1274,6 +1274,21 @@ export class Sprites {
             }
             return true;
         };
+        // Canyon canopy cells never host surface growth: cactus/battlement
+        // art on an overhead slab top sells it as a floating island and
+        // kills the corridor read (level.exposeCeilingSpans marks the rects;
+        // empty list on every other map). Ceiling VINES below stay — hanging
+        // greenery reads as canopy, not as walkable ground.
+        const ceilSpans = typeof level.exposeCeilingSpans === 'function'
+            ? level.exposeCeilingSpans() : [];
+        const onCeiling = (tx, ty) => {
+            for (const s of ceilSpans) {
+                if (tx >= s.x0 && tx <= s.x1 && ty >= s.yTop && ty <= s.yBot) {
+                    return true;
+                }
+            }
+            return false;
+        };
         // Cumulative kind picks per band (small growth only).
         const KINDS = [
             [['tuft', 0.5], ['flower', 0.3], ['pebble', 0.2]],
@@ -1285,6 +1300,7 @@ export class Sprites {
             for (let tx = 0; tx < level.width; tx++) {
                 if (level.tiles[ty][tx] !== 1 || level.tiles[ty - 1][tx] !== 0) continue;
                 if (spikeNear(tx, ty, 1)) continue;
+                if (onCeiling(tx, ty)) continue;
                 if (rng() <= 0.34) {
                     let roll = rng();
                     let kind = KINDS[KINDS.length - 1][0];

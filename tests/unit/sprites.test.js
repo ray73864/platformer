@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE } from "../../js/sprites.js";
+import { Level, motifForLevel } from "../../js/level.js";
 
 // Frame-map integrity: every index referenced by the renderer must exist
 // inside its packed sheet, or the game draws garbage rectangles of pixels.
@@ -450,4 +451,31 @@ test("the hero no longer references the Kenney characters sheet", () => {
     for (const key of Object.keys(CHARS)) {
         expect(key.startsWith('PLAYER_'), `${key} retired`).toBe(false);
     }
+});
+
+// Canyon tune wave (2026-11-04 review): surface growth on an overhead slab
+// top sells it as a floating island and kills the corridor read. The sprite
+// layer must skip every cell level.exposeCeilingSpans() reports; hanging
+// vines stay on purpose (greenery reads as canopy, not walkable ground).
+test("canyon canopy rock hosts no surface growth (vines below stay)", () => {
+    const sprites = new Sprites();
+    let maps = 0;
+    for (const lvl of [32, 44, 48, 53, 57, 59]) {
+        if (motifForLevel(lvl) !== 'canyon') continue;
+        const level = new Level(lvl, 32, lvl * 1000 + 7);
+        const spans = level.exposeCeilingSpans();
+        expect(spans.length, `L${lvl}: canyon ships canopies`).toBeGreaterThan(0);
+        maps++;
+        for (const d of sprites._ensureDecor(level)) {
+            if (d.kind === 'vine') continue;
+            for (const s of spans) {
+                const inside = d.tx >= s.x0 && d.tx <= s.x1 &&
+                    d.ty >= s.yTop && d.ty <= s.yBot;
+                expect(inside,
+                    `L${lvl} ${d.kind} at ${d.tx},${d.ty} on canopy rect ` +
+                    `${s.x0}..${s.x1}@${s.yTop}..${s.yBot}`).toBe(false);
+            }
+        }
+    }
+    expect(maps).toBe(6);
 });
