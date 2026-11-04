@@ -1055,6 +1055,15 @@
       right++;
     return right - left + 1;
   }
+  function solidRunKey(tiles, width, x, supportY) {
+    const row = tiles[supportY];
+    if (!row || row[x] !== 1)
+      return null;
+    let left = x;
+    while (left > 0 && row[left - 1] === 1)
+      left--;
+    return `${supportY}:${left}`;
+  }
   function shaftLedgeCols(sx, ex) {
     const cols = [];
     for (let k = 1;k <= SHAFT_LEDGE_W; k++)
@@ -2367,6 +2376,7 @@
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
       const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
       let spinies = 0;
+      const hostileRuns = new Set;
       for (const s of legalSpawns) {
         let kind = "walker";
         const roll = this.rng();
@@ -2377,6 +2387,13 @@
         }
         if (kind !== "walker" && solidRunWidth(this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
           kind = "walker";
+        }
+        if (kind !== "walker") {
+          const runKey = solidRunKey(this.tiles, this.width, s.x, s.y + 1);
+          if (hostileRuns.has(runKey))
+            kind = "walker";
+          else
+            hostileRuns.add(runKey);
         }
         if (kind === "spiny")
           spinies++;

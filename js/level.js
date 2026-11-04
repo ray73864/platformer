@@ -85,6 +85,26 @@ const SPINY_CAP_DIVISOR = 3;
 // to 5 for chargers specifically (dash halves the reaction room) — tune by
 // measurement, not by eye.
 const HOSTILE_MIN_RUN = 4;
+// Joint-hostile shelf rule (player reports 2026-11-04, screenshots L34 day
+// band + L23 dusk band): at most ONE hostile (spiny|charger) may deploy per
+// contiguous solid support run. WHY: a hostile patrols its whole run by
+// construction (patrolSpan clamps at ledges), so two hostiles on one run are
+// a moving lethal carpet with no timing window — HOSTILE_MIN_RUN=4 sizes the
+// pass-by arc for exactly ONE body (see above); a second body removes the
+// wait-for-the-far-bound room the ruling depends on. The leak was structural:
+// placeEnemyMarkers has NO inter-marker spacing rule (the ±4 THREAT_SPACING
+// claim covers spike-vs-spike only; isMarkerSite vetoes spikes within ±4 but
+// never other markers), and every kind gate is PER SITE, so each hostile on
+// a wide run passed individually. Attribution sweep @8802355, L5..100 x 10
+// seeds: 216/960 maps (22.5%) deployed >=2 hostiles sharing one run (493
+// pairs); blocking the shared surface under computeReachable proves 79 of
+// those runs MANDATORY (portal disconnects) — the reported unwinnable class.
+// Walkers stay exempt: stompable/dodgeable, sharing is fair play. Adjacent-
+// run chains were measured too: ZERO of 960 maps had two distinct hostile-
+// bearing runs jointly cutting the route (gap <=2 cols, simultaneous surface
+// block disconnects while neither alone does), so no cross-run separation
+// constant is introduced — revisit only if new data shows chains biting
+// on-route after this rule lands.
 // Player ruling 2026-11-04: "Enemies that are on a single tile wide block
 // just bounce back and forth really super fast, I don't think they should be
 // able to spawn on a single wide block." The vibration is exact arithmetic:
@@ -471,6 +491,18 @@ function solidRunWidth(tiles, width, x, supportY) {
     let right = x;
     while (right < width - 1 && row[right + 1] === 1) right++;
     return right - left + 1;
+}
+
+// Identity of the contiguous solid support run beneath (x, supportY):
+// support row + left edge. Two spawns share a patrol surface exactly when
+// their keys match (patrolSpan bounds every body on the run by its ledges).
+// Null when the column has no solid support.
+function solidRunKey(tiles, width, x, supportY) {
+    const row = tiles[supportY];
+    if (!row || row[x] !== 1) return null;
+    let left = x;
+    while (left > 0 && row[left - 1] === 1) left--;
+    return `${supportY}:${left}`;
 }
 
 // Shelf columns flanking a shaft at its two stop ledges: SHAFT_LEDGE_W wide
@@ -2920,6 +2952,11 @@ export class Level {
             CHARGER_CHANCE_MAX);
         const spinyCap = Math.ceil(legalSpawns.length / SPINY_CAP_DIVISOR);
         let spinies = 0;
+        // Support-run keys that already hold a DEPLOYED hostile (see the
+        // joint-hostile shelf rule at HOSTILE_MIN_RUN). Checked after the
+        // roll like every other gate: no extra draw, demotion frees the
+        // spiny-cap slot exactly as the narrow-shelf demotion does.
+        const hostileRuns = new Set();
 
         for (const s of legalSpawns) {
             let kind = 'walker';
@@ -2942,6 +2979,18 @@ export class Level {
             if (kind !== 'walker' && solidRunWidth(
                 this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
                 kind = 'walker';
+            }
+            // Joint-hostile shelf gate (see the rule at HOSTILE_MIN_RUN):
+            // a hostile roll on a run that already carries one demotes to
+            // walker — two stomp-immune patrols sweeping the same surface
+            // leave no safe tile mid-crossing (screenshot ruling 2026-11-04:
+            // twin spinies evenly spaced on one wide shelf; a spiny/charger
+            // quad packed into five tiles). Same no-re-roll discipline.
+            if (kind !== 'walker') {
+                const runKey = solidRunKey(
+                    this.tiles, this.width, s.x, s.y + 1);
+                if (hostileRuns.has(runKey)) kind = 'walker';
+                else hostileRuns.add(runKey);
             }
             if (kind === 'spiny') spinies++;
             // Cap overflow falls through to walker: the roll that wanted a
