@@ -94,7 +94,7 @@ export const CHARS = {
 export const THEMES = [
     {
         x: 0, w: 96, sky: '#dff6f5', ground: '#c2e3e8',
-        skyTop: '#7cc0da', skyBottom: '#e8faf7',
+        skyTop: '#7cc0da', skyBottom: '#e8faf7', zenith: '#3d7ba3',
         disc: { x: 0.74, y: 0.14, r: 26, core: '#fff6cf', halo: '#ffeeae' },
         cloud: '#ffffff', hillFar: '#aedbe1', hillNear: '#84c2cd',
         mote: '#fffbe0', fireflies: false,
@@ -108,7 +108,7 @@ export const THEMES = [
     },
     {
         x: 96, w: 48, sky: '#fbc97b', ground: '#cb815e',
-        skyTop: '#c76e79', skyBottom: '#fdd79b',
+        skyTop: '#c76e79', skyBottom: '#fdd79b', zenith: '#6d2f4c',
         disc: { x: 0.66, y: 0.46, r: 34, core: '#ffe7ad', halo: '#ffbf7a' },
         cloud: '#ffdcae', hillFar: '#b5727c', hillNear: '#93546a',
         mote: '#ffd9a8', fireflies: false,
@@ -122,7 +122,7 @@ export const THEMES = [
     },
     {
         x: 144, w: 48, sky: '#7ff0a5', ground: '#2eb082',
-        skyTop: '#1f9d79', skyBottom: '#9ff3c3',
+        skyTop: '#1f9d79', skyBottom: '#9ff3c3', zenith: '#0b574a',
         disc: { x: 0.78, y: 0.12, r: 22, core: '#f2fff5', halo: '#c9f7dd' },
         cloud: '#d9fce6', hillFar: '#4fbe93', hillNear: '#2f9c78',
         mote: '#d6ffa8', fireflies: true,
@@ -145,19 +145,23 @@ const TERRAIN_MATS = [
         // Day: keep the sheet's warm brown, just deepen the speckle.
         veil: null,
         grain: 'dark',           // scattered dark specks (the original look)
-        interiorVeil: 'rgba(24,14,6,0.24)'
+        interiorVeil: 'rgba(24,14,6,0.24)',
+        // Aesthetic wave 2: buried-mass mottle dabs (see bakeBody interior).
+        mottleDark: 'rgba(18,9,3,0.34)', mottleLight: 'rgba(255,236,190,0.13)'
     },
     {
         // Dusk: amber sandstone with horizontal strata, blockier faces.
         veil: 'rgba(226,146,78,0.40)',
         grain: 'strata',
-        interiorVeil: 'rgba(74,32,12,0.26)'
+        interiorVeil: 'rgba(74,32,12,0.26)',
+        mottleDark: 'rgba(58,22,6,0.30)', mottleLight: 'rgba(255,214,150,0.10)'
     },
     {
         // Jungle: cool dark mossy earth with vertical grain/root streaks.
         veil: 'rgba(26,88,56,0.42)',
         grain: 'vertical',
-        interiorVeil: 'rgba(4,30,16,0.30)'
+        interiorVeil: 'rgba(4,30,16,0.30)',
+        mottleDark: 'rgba(2,16,8,0.34)', mottleLight: 'rgba(190,240,190,0.08)'
     }
 ];
 
@@ -950,6 +954,34 @@ export class Sprites {
         return grad;
     }
 
+    // Aesthetic wave 2 — upper-sky depth cue. On tall (vertical) maps the
+    // camera climbs far above the ground line while the base gradient stays
+    // screen-fixed, so every altitude looks like the same afternoon. When the
+    // world floor drops out below the viewport we blend a zenith-toned
+    // overlay in from the top of the screen, strengthening with climb height
+    // (quantised to 20 px buckets so the cache rebuilds rarely). The trigger
+    // is floor VISIBILITY, not orientation: it fires whenever the world
+    // floor sinks >64 px below the viewport bottom, which horizontal maps
+    // never do (their floor stays framed by the camera clamp) — so those
+    // render byte-identical to before. Purely render-side: no rng, no state.
+    _zenithOverlay(ctx, themeIdx, viewH, altPx) {
+        const bucket = Math.min(8, Math.floor((altPx - 64) / 20));
+        const key = `${themeIdx}:${bucket}`;
+        const cached = this._zenithCache?.[key];
+        if (cached && cached.h === viewH) return cached.grad;
+        const t = THEMES[themeIdx];
+        // A full vertical map pans the ground line roughly one viewport past
+        // the screen bottom, so the usable signal lives in the first couple
+        // hundred px: reach full strength there rather than stretching it
+        // thin over a never-seen 512 px ramp.
+        const strength = Math.min(1, bucket * 20 / 140) * 0.6;
+        const grad = ctx.createLinearGradient(0, 0, 0, viewH * 0.85);
+        grad.addColorStop(0, withAlpha(t.zenith, strength));
+        grad.addColorStop(1, withAlpha(t.zenith, 0));
+        (this._zenithCache ??= {})[key] = { h: viewH, grad };
+        return grad;
+    }
+
     // Per-level atmosphere kit: sun/moon disc + three cloud bands + twin hill
     // ridges + near-background biome structures + horizon haze + foreground
     // placement list, all baked into offscreen canvases from a level-seeded
@@ -1004,6 +1036,13 @@ export class Sprites {
         const theme = THEMES[themeIdx];
         ctx.fillStyle = this._skyGradient(ctx, themeIdx, viewH);
         ctx.fillRect(0, 0, viewW, viewH);
+        // Upper-sky depth cue: strengthen toward zenith as the ground line
+        // falls further below the viewport (vertical climbs only).
+        const altPx = Number.isFinite(worldBottomScreen) ? worldBottomScreen - viewH : 0;
+        if (altPx > 64) {
+            ctx.fillStyle = this._zenithOverlay(ctx, themeIdx, viewH, altPx);
+            ctx.fillRect(0, 0, viewW, viewH * 0.85);
+        }
         if (!this.images.backgrounds) return;
 
         const bd = this._ensureBackdrop(levelNumber, themeIdx);
@@ -1129,9 +1168,10 @@ export class Sprites {
         ctx.fillRect(0, 0, viewW, viewH);
     }
 
-    // Per-theme terrain art: four surface/body variants + two interior
-    // variants + a baked surface cap, all derived once from the sheet's dirt
-    // cell through the TERRAIN_MATS recipe (veil colour + directional grain).
+    // Per-theme terrain art: four surface/body variants + four mottled
+    // interior variants + a baked surface cap, all derived once from the
+    // sheet's dirt cell through the TERRAIN_MATS recipe (veil colour +
+    // directional grain).
     // The tile-grid hash picks a variant, so masses get stable texture
     // variation without per-frame draws and without flicker. Interior tiles
     // (solid on all four sides) use the darker, flatter variants: exposed
@@ -1185,12 +1225,25 @@ export class Sprites {
                 // Buried: flatten the texture back out under a deep veil.
                 g.fillStyle = mat.interiorVeil;
                 g.fillRect(0, 0, rect.sw, rect.sh);
+                // Aesthetic wave 2 — hash-of-cell mottling: the grid hash
+                // picks one of four baked interiors, each carrying its own
+                // stable dab pattern (mostly dark void pockets + one lit
+                // mineral fleck), so buried mass reads as volume instead of
+                // a flat fill. Baked per biome at load; zero per-frame cost.
+                const mrng = makeRng(0x8CCED ^ Math.imul(v + 1, 0x9E3779B1));
+                for (let i = 0; i < 6; i++) {
+                    g.fillStyle = i === 5 ? mat.mottleLight : mat.mottleDark;
+                    g.fillRect(Math.floor(mrng() * (rect.sw - 2)),
+                        Math.floor(mrng() * (rect.sh - 2)),
+                        2, i === 5 ? 1 : 2);
+                }
             }
             return c;
         };
         const body = [];
         for (let v = 0; v < 4; v++) body.push(bakeBody(v, false));
-        const interior = [bakeBody(0, true), bakeBody(1, true)];
+        const interior = [];
+        for (let v = 0; v < 4; v++) interior.push(bakeBody(v, true));
         this._terrainArt[themeIdx] = { body, interior, cap: this._buildCapArt(themeIdx) };
         return this._terrainArt[themeIdx];
     }
@@ -1215,6 +1268,14 @@ export class Sprites {
                 g.fillRect(Math.floor(rng() * 17), CAP_OVER - (2 + Math.floor(rng() * 3)),
                     1, 2 + Math.floor(rng() * 3));
             }
+            // Aesthetic wave 2: two-tone sunlit-shoulder row under the grass.
+            // The lit row reads as soil catching the same light as the blades;
+            // the shade row below it separates cap from body so stacked
+            // surfaces never merge into one flat green-brown slab.
+            g.fillStyle = '#b9895a';
+            g.fillRect(0, CAP_OVER + GRASS_BAND_H, 18, 1);
+            g.fillStyle = '#8a6238';
+            g.fillRect(0, CAP_OVER + GRASS_BAND_H + 1, 18, 1);
         } else if (themeIdx === 1) {
             // Dusk: sunlit sandstone lip stepping down through strata.
             g.fillStyle = '#f4cf94'; g.fillRect(0, CAP_OVER, 18, 2);
@@ -1387,7 +1448,7 @@ export class Sprites {
                     const right = tx < level.width - 1 ? level.tiles[ty][tx + 1] : 0;
                     const h = hash2(tx, ty);
                     if (above === 1 && below === 1 && left === 1 && right === 1) {
-                        ctx.drawImage(art.interior[h & 1],
+                        ctx.drawImage(art.interior[h & 3],
                             0, 0, 18, 18, tx * size, ty * size, drawn, drawn);
                     } else {
                         ctx.drawImage(art.body[h & 3],
