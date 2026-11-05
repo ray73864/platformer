@@ -108,7 +108,7 @@ test("placements come from geometry alone: the rule changes kind, never position
             expect(actual).toEqual(expected);
         }
     }
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~3.2s solo brushes bun's 5s default under parallel load
 
 test("named repros (2026-11-03 screenshot ruling): narrow shelves hold no hostiles", () => {
     // The three pinned maps: Level(15,32,15007) spiny on a runW=2 shelf,

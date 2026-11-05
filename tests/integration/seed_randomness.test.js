@@ -149,7 +149,7 @@ test("same runSeed replays the identical guarded seed sequence", () => {
     // Different runSeed, different sequence (guards included).
     const C = guardedSequence(0x9999BE00, 20);
     expect(C.seeds).not.toEqual(A.seeds);
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~3.7s solo brushes bun's 5s default under parallel load
 
 test("in-run layouts stay dissimilar: no comparable pair reaches 0.7 IoU", { timeout: 60000 }, () => {
     // Three fixed runs x 40 levels. Baseline (unguarded, scratch sweep):

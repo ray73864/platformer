@@ -201,8 +201,21 @@ const ENEMY_MIN_RUN = 2;
 // the house style of the shelf rulings (patrolSpan bounds every body;
 // HOSTILE_MIN_RUN sizes ONE body's pass-by arc statically) and errs toward
 // flagging. Vertical maps are exempt here: the model graph cannot see shaft
-// rides (their virtual corridor is invisible to routeModelEdges), and their
-// one-marker-per-shelf economy (placeEnemyMarkers) already caps stacks.
+// rides (their virtual corridor is invisible to routeModelEdges). EXPOSURE
+// OF THAT EXEMPTION MEASURED 2026-11-06 (shaft-fairness wave; scratch mirror
+// of routeModelEdges WITH virtual shaft edges per computeReachable's rider
+// conventions; 886 fresh-seed shaft maps L13..100, seeds lvl*10000+1000+i):
+// blind must-pass is NULL on 886/886 — shafts are load-bearing, so today's
+// exempt filter sees no mandatory traverse on any shaft map — while the
+// shaft-aware graph finds 12..17 must-pass cells per map (outside the
+// patrol-ban window on 757/886) and 627/886 maps host an enemy neighborhood
+// touching one. Flags anyway ZERO: max crossing group = 2 bodies with >=2
+// pockets vs the >=3-bodies-zero-pockets bar, because the vertical marker
+// economy (placeEnemyMarkers) ships <=2 bodies on 881/886 maps. The residual
+// exposure is bounded by threat DENSITY, not model blindness — re-measure
+// before wiring shaft edges into routeModelEdges; the pin
+// (tests/unit/enemy_shaft_gauntlet_fairness.test.js) fails loudly if
+// vertical density drifts toward the horizontal norm and the class reopens.
 const GAUNTLET_MIN_BODIES = 3;
 
 // Spawn->portal articulation cells in the movement-model graph: cells on
@@ -3503,9 +3516,10 @@ export class Level {
         // site is kept unless its deployment COMPLETES a gauntlet config
         // (must-pass neighborhood with zero uncovered pockets and >=3
         // sweeping bodies); the last body that walls the traverse goes, the
-        // earlier ones keep their patrol. Vertical maps skip the pass (the
-        // model graph cannot see shaft rides; one-marker-per-shelf already
-        // caps their stacks — see the constant header).
+        // earlier ones keep their patrol. Vertical maps skip the pass — the
+        // exemption's shaft-blind exposure was MEASURED zero 2026-11-06
+        // (see the GAUNTLET_MIN_BODIES header + the pin in
+        // tests/unit/enemy_shaft_gauntlet_fairness.test.js).
         let deploySpawns = legalSpawns;
         if (this.direction !== 'vertical' && this.portalTile &&
             legalSpawns.length >= GAUNTLET_MIN_BODIES) {

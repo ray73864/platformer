@@ -119,7 +119,7 @@ test("stream discipline: dropping happens BEFORE the kind roll", () => {
         expect(mixed.length).toBe(1);
         expect(mixed[0].kind).toBe(alone[0].kind);
     }
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~3.2s solo (reviewer-reproduced 5.27s timeout under parallel load)
 
 test("named repros (one per pre-fix leak class): no vibrating deployments", () => {
     // Captured from the pre-fix sweep at HEAD f18725e:

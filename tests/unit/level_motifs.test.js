@@ -99,7 +99,7 @@ test("L1..7 ship byte-identical maps (golden fingerprint pin)", () => {
         expect(fingerprint(level), `L${lvl} seed ${lvl * 1000 + s}`)
             .toBe(hash);
     }
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~3.6s solo brushes bun's 5s default under parallel load
 
 // --- Selection semantics ------------------------------------------------------
 
@@ -427,7 +427,7 @@ test("canyon canopies: rock on every map, corridor headroom 2..3, clean rock", (
             }
         }
     }
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~3.1s solo brushes bun's 5s default under parallel load
 
 test("pillar maps always ship tower flanks (pre-seeded cluster bites)", () => {
     // Pre-tune: 43.8% of pillar maps flat (spread ≤1), 50% without a single

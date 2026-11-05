@@ -157,7 +157,7 @@ describe("audio lifecycle under fake AudioContext", () => {
         g.destroy();
         expect(contextsClosed).toBe(contextsCreated); // nothing left open
         expect(liveIntervals.size).toBe(0);
-    });
+    }, 30_000); // suite-timeout hygiene 2026-11-06: ~3.5s solo (sleep-bound) brushes bun's 5s default under parallel load
 
     test("long tab suspension rebases instead of burst-scheduling", () => {
         mountFixture();

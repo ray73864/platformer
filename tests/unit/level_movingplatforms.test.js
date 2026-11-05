@@ -124,7 +124,7 @@ test("levels below 8 ship no decks and no corridors", () => {
             expect(level.bridgeGap, `L${lvl} seed ${s}`).toBe(null);
         }
     }
-});
+}, 30_000); // suite-timeout hygiene 2026-11-06: ~4s solo brushes bun's 5s default under parallel load
 
 test("same seed replays the identical deck set including dwell and phase", () => {
     for (const [lvl, s] of [[8, 11], [27, 44], [40, 77], [60, 99], [95, 66]]) {
