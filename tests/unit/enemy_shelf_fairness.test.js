@@ -123,7 +123,7 @@ test("named repros (2026-11-03 screenshot ruling): narrow shelves hold no hostil
     }
 });
 
-test("structural sweep L10..L40 x 10 seeds: ZERO hostiles on runW <= 3 shelves", () => {
+test("structural sweep L10..L40 x 10 seeds: ZERO hostiles on runW <= 3 shelves", { timeout: 60000 }, () => {
     // Regression pin for the ruling (baseline measured 73/255 = 29% hostile
     // deployments on runs <= 3 tiles across L10-30 x 20 seeds).
     let checked = 0;

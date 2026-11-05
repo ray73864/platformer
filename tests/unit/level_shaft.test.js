@@ -166,7 +166,7 @@ test("L13..97 vertical sweep: shaft invariants hold on every hosted map", () => 
     expect(frac).toBeLessThan(0.7);
 });
 
-test("no cabins below the gate and none on horizontal maps (L1..97)", () => {
+test("no cabins below the gate and none on horizontal maps (L1..97)", { timeout: 60000 }, () => {
     for (let lvl = 1; lvl <= 97; lvl++) {
         for (const s of [7, 13]) {
             const level = new Level(lvl, T, lvl * 313 + s);

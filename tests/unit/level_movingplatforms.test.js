@@ -114,7 +114,7 @@ test("L8..100 x 10 seeds: every bridge legal, plain BFS refuses the gap", () => 
     const frac = withBridge / horizMaps;
     expect(frac).toBeGreaterThan(0.28);
     expect(frac).toBeLessThan(0.48);
-}, 20000); // cold-start build cost (physics route gate warms up here)
+}, 150000); // cold-start build cost (physics route gate warms up here; raised for the generalized routeFair() gate, 2026-11-05)
 
 test("levels below 8 ship no decks and no corridors", () => {
     for (let lvl = 1; lvl <= 7; lvl++) {

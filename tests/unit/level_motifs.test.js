@@ -42,6 +42,18 @@ const T = 32;
 // clamp predictor is a provable no-op there (shaftGap is null), and the
 // one-marker-per-support-run pass only fires on vertical maps. If this pin
 // fails on an L1..6 row, that IS drift.
+// RECAPTURED for the soft-lock fairness fix of 2026-11-05 (R1' spike wall in
+// computeReachable + generalized routeFair() acceptance gate): 10 of 56 rows
+// intentionally changed — six L5 and four L6 maps, the first spike-bearing
+// horizontals, where the tightened reachability model reshapes spike sites /
+// portal choice or the physics gate rejects an earlier construction and the
+// stream replants. L1..4 stay byte-identical (no spikes below L5 and their
+// routes pass the gate untouched — verified against HEAD), and L7 too — but
+// for an honest reason: L7's verticals carry no spike adjacencies, so the
+// shared R1' spike-wall clause is inert there. (The routeFair physics gate IS
+// vertical-exempt, yet R1' applies to ALL directions: spiked verticals from
+// ~L28 legitimately reshuffle — conservative edge removal, determinism
+// intact.) If this pin fails on an L1..4 or L7 row, that IS drift.
 const GOLDEN_L1_7 = [
     [1, 11, "43dc716b"], [1, 22, "e568e737"], [1, 33, "85137246"], [1, 44, "82be8d9a"],
     [1, 55, "49f57ede"], [1, 66, "af5cd10e"], [1, 77, "20272d24"], [1, 88, "adc51e8a"],
@@ -51,10 +63,10 @@ const GOLDEN_L1_7 = [
     [3, 55, "638439fd"], [3, 66, "0ec11564"], [3, 77, "52da8cbf"], [3, 88, "aad03405"],
     [4, 11, "bc858548"], [4, 22, "b2dfcd1d"], [4, 33, "59ed6382"], [4, 44, "3a42f034"],
     [4, 55, "53bc22c7"], [4, 66, "1d0aad41"], [4, 77, "92557e86"], [4, 88, "c7657f2a"],
-    [5, 11, "32da2172"], [5, 22, "662c56b0"], [5, 33, "88cbf158"], [5, 44, "065c9c7a"],
-    [5, 55, "493c36cc"], [5, 66, "b3fdc651"], [5, 77, "4596d13b"], [5, 88, "b47ed851"],
-    [6, 11, "e0bd7866"], [6, 22, "b99279f0"], [6, 33, "8e97045a"], [6, 44, "5cc1b713"],
-    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "20f3b6fc"], [6, 88, "0e67c32d"],
+    [5, 11, "126423c7"], [5, 22, "81073b13"], [5, 33, "71505252"], [5, 44, "861d19d3"],
+    [5, 55, "493c36cc"], [5, 66, "1c9edcef"], [5, 77, "a8cd5a59"], [5, 88, "b47ed851"],
+    [6, 11, "e0bd7866"], [6, 22, "b99279f0"], [6, 33, "46e31bb0"], [6, 44, "bade056d"],
+    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "703e5856"], [6, 88, "f61b2279"],
     [7, 11, "f22b14bd"], [7, 22, "f42ccc32"], [7, 33, "333006fe"], [7, 44, "bc32302d"],
     [7, 55, "f136f4c3"], [7, 66, "ef5e92fe"], [7, 77, "285c6abb"], [7, 88, "8f0b1f69"]
 ];
@@ -238,7 +250,7 @@ for (const name of ["hills", "terraces", "archipelago", "canyon", "pillars",
 
 // --- Fairness geometry under motifs -------------------------------------------
 
-test("no standable cell gains a ceiling within two rows (all horizontal motifs)", () => {
+test("no standable cell gains a ceiling within two rows (all horizontal motifs)", { timeout: 60000 }, () => {
     // The horizontal movement model does NOT run requireOpenHead, so the
     // generator owns this clearance (32px body + ~62.5px jump needs two free
     // rows). Canyon ceilings are the new threat: they must respect it, and

@@ -97,7 +97,11 @@ function probeGraph(level) {
                     if (solid(midX, y)) { blocked = true; break; }
                     if (hazard(midX, y)) {
                         hazardRun++;
-                        if (hazardRun >= 3) { blocked = true; break; }
+                        // R1' spike wall (2026-11-05 soft-lock fix): a hazard
+                        // at the FIRST intermediate column blocks — takeoff
+                        // cannot rise over teeth one cell out; mirrors
+                        // computeReachable in js/level.js.
+                        if (m === 1 || hazardRun >= 3) { blocked = true; break; }
                     } else hazardRun = 0;
                 }
                 if (blocked) continue;
@@ -278,7 +282,10 @@ test("structural sweep: every deployed coin is in the safe hub (L5..60 x 10)", (
     }
     expect(checkedMaps).toBe(560);
     expect(checkedCoins).toBeGreaterThan(10000);
-}, 60_000);
+    // Timeout raised 60s→120s (2026-11-05 soft-lock fix): routeFair() makes
+    // each construction ~50-80 ms slower, and this sweep builds 560 maps plus
+    // the mirror probe; assertions unchanged.
+}, 120_000);
 
 // ---------------------------------------------------------------------------
 // Coin-count regression: the hub restriction must not collapse the realized
@@ -315,7 +322,7 @@ test("per-decade mean coin counts stay within tolerance of the pre-fix baseline"
         expect(mean, `decade ${dec} mean=${mean.toFixed(2)} baseline=${base}`)
             .toBeLessThanOrEqual(base + 2.0);
     }
-}, 60_000);
+}, 150_000);
 
 // Determinism: same seed twice => identical coin lists (and enemy rosters).
 test("same-seed rebuilds replay identical coin layouts and enemies", () => {

@@ -253,7 +253,7 @@ function kindsAt(levelNumber, seed) {
     return level.getEnemyManager().enemies.map(e => e.kind);
 }
 
-test("spinies never deploy below level 10; chargers never below level 20", () => {
+test("spinies never deploy below level 10; chargers never below level 20", { timeout: 30000 }, () => {
     for (let lvl = 5; lvl <= 19; lvl++) {
         for (let s = 1; s <= 10; s++) {
             for (const kind of kindsAt(lvl, lvl * 1000 + s)) {
@@ -279,7 +279,7 @@ test("both gated kinds actually appear once past their gates", () => {
     expect(sawCharger).toBe(true);
 });
 
-test("spiny count never exceeds ceil(enemies/3) on any map", () => {
+test("spiny count never exceeds ceil(enemies/3) on any map", { timeout: 150000 }, () => {
     for (let lvl = 10; lvl <= 45; lvl++) {
         for (let s = 1; s <= 25; s++) {
             const kinds = kindsAt(lvl, lvl * 1000 + s);
@@ -325,7 +325,7 @@ test("deployed risky kinds ride legal sites: bounds inside the level, states pat
     expect(checked).toBeGreaterThan(0);
 });
 
-test("generation health sweep L10..L30 x 25 seeds: zero throws with kinds live", () => {
+test("generation health sweep L10..L30 x 25 seeds: zero throws with kinds live", { timeout: 90000 }, () => {
     // Kind assignment consumes rng only AFTER geometry/marker/coin streams
     // finish, so it must not perturb generation acceptance at all.
     for (let lvl = 10; lvl <= 30; lvl++) {

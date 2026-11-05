@@ -17,16 +17,32 @@ const DT = 1 / 60;
 // Deterministic scan for a (level, seed) whose map hosts at least one
 // HORIZONTAL deck. Vertical maps from L13 can host elevator cabins (axis
 // 'v'), which these gap-ride fixtures do not model — filter by axis so the
-// probe stays on bridge maps. Roughly half of host-capable maps do, so this
-// lands within a few probes.
+// probe stays on bridge maps.
+// MEMOIZED + PINNED (2026-11-05 soft-lock fix): the routeFair() acceptance
+// gate costs ~35 ms per construction, and this formula's first h-deck hit
+// sits deep in the scan (build #3601, L26 s205901 — identical pre- and
+// post-fix; only the per-build cost changed), so five tests re-running the
+// raw scan burned 10+ minutes. The pinned candidate is verified against the
+// current generator; if drift ever invalidates it, the original scan runs
+// once and its result is cached.
+let deckMapCache = null;
 function findDeckMap() {
+    if (deckMapCache) return deckMapCache;
+    const PINNED = { lvl: 26, seed: 205901 };
+    const hostsHDeck = (lvl, seed) => {
+        const decks = new Level(lvl, T, seed).getMovingPlatforms();
+        return decks.length > 0 && decks.every(d => d.axis === 'h');
+    };
+    if (hostsHDeck(PINNED.lvl, PINNED.seed)) {
+        deckMapCache = PINNED;
+        return deckMapCache;
+    }
     for (let lvl = 8; lvl <= 30; lvl++) {
         for (let s = 0; s < 200; s++) {
             const seed = (lvl * 7919 + s * 131 + 7) >>> 0;
-            const level = new Level(lvl, T, seed);
-            const decks = level.getMovingPlatforms();
-            if (decks.length > 0 && decks.every(d => d.axis === 'h')) {
-                return { lvl, seed };
+            if (hostsHDeck(lvl, seed)) {
+                deckMapCache = { lvl, seed };
+                return deckMapCache;
             }
         }
     }

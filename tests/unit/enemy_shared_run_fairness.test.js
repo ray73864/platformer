@@ -204,4 +204,4 @@ test("structural sweep L5..L60 x 10 seeds: ZERO shared-run hostile pairs", () =>
     }
     // Non-vacuous: legal single hostiles still deploy widely.
     expect(checkedHostiles).toBeGreaterThan(50);
-}, 30000);
+}, 120000); // raised from 30000: routeFair() gate build cost (2026-11-05 soft-lock fix)

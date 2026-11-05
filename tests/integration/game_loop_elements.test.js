@@ -388,7 +388,7 @@ test("level advance keeps currentLevel and LEVEL_COMPLETE intact when generation
 // S1: the transition retry is bounded — persistent failure hands off to MENU
 // on the same terms as loop-error recovery, instead of rebuilding every
 // frame forever (a frozen tab, silent after one log line).
-test("a persistently failing level transition hands off to MENU after the stall cap", () => {
+test("a persistently failing level transition hands off to MENU after the stall cap", { timeout: 30000 }, () => {
     const game = startPlaying();
     clearGeneratedThreats(game);
     hideOverlays(game);

@@ -489,7 +489,7 @@ const SHAFT_BOTTOM_MAX_ROW = 18;
 //     enemies +2.5) despite the float retune.
 //   * canyon SOFT-LOCKS killed (physics sweep found capped-route maps):
 //     canopies keep off pit mouths plus one launch column each side, and
-//     canyonRouteFair() re-validates every ACCEPTED construction by RUNNING
+//     routeFair() re-validates every ACCEPTED construction by RUNNING
 //     THE SHIPPED Player/Physics over the route graph (edgecheck's
 //     harvest-aware soft-lock semantics inside the accept loop) — routes
 //     that die on spike cores or truncated arcs now reject instead of
@@ -522,7 +522,7 @@ const SHAFT_BOTTOM_MAX_ROW = 18;
 //     route validity stays BFS-verified per attempt, zero throws measured.
 
 // ---------------------------------------------------------------------------
-// Route physics simulation (canyonRouteFair support; see its comment on the
+// Route physics simulation (routeFair support; see its comment on the
 // Level class). Two module-local helpers, kept out of the class to hold the
 // simulation surface small and dependency-free (Player/Physics are shipped
 // runtime modules — the gate exercises the SAME code the game runs).
@@ -588,9 +588,11 @@ function routeModelEdges(level, blocked = null) {
                 for (let m = 1; m < dist; m++) {
                     const midX = x + dir * m;
                     if (solid(midX, y) || blk(midX, y)) { blocked = true; break; }
+                    // Mirror of computeReachable's spike wall (soft-lock wave
+                    // 2026-11-05): tooth directly ahead or a >=3 run blocks.
                     if (hazard(midX, y)) {
                         hazardRun++;
-                        if (hazardRun >= 3) { blocked = true; break; }
+                        if (m === 1 || hazardRun >= 3) { blocked = true; break; }
                     } else hazardRun = 0;
                 }
                 if (blocked) continue;
@@ -689,7 +691,15 @@ function simTransition(e, pol, ctx) {
         }
         if (player.y > pitY + 100) return fail();
         if (player.grounded) {
-            const cx = Math.floor((player.x + player.width / 2) / T);
+            // OOB harvest clamp (soft-lock wave 2026-11-05): a body half off
+            // the map edge still overlaps edge-column support and grounds
+            // with center column -1 or w; keying that into bodyRow*w+cx
+            // aliases the opposite edge column (26*40-1 === (39,25)) — the
+            // phantom foothold that made routeFair accept soft-locked
+            // L83 s1514804096. A half-off stance is support-equivalent to the
+            // edge column, so CLAMP it; never credit an off-grid cell.
+            const cx = Math.max(0, Math.min(w - 1,
+                Math.floor((player.x + player.width / 2) / T)));
             const bodyRow = Math.floor((player.y + player.height - 0.001) / T);
             if (cx === e.bx && bodyRow === e.by) {
                 return { ok: true, harvests };
@@ -912,31 +922,43 @@ function shuffle(items, rng = Math.random) {
 //     column must be passable at the current row;
 //   - jump up exactly one tile onto a step, straight across or over a gap of
 //     one intermediate column.
-// Out-of-bounds: side walls are solid, the sky is open, and falling below the
-// grid bottom (a pit with no floor) kills, so it offers no landing.
+// Out-of-bounds columns: modelled as SOLID for scan purposes. Shipped physics
+// has no x walls — walking off the left/right edge commits the player to pit
+// death (death is y-only, main.js checkPitFall) — so a side-exit-to-void is a
+// real DEATH edge, never a safe route edge: refusing every edge that crosses
+// the boundary is exactly right, and no survivable route ever needs one. The
+// convention must NOT leak into foothold bookkeeping though: off-grid stances
+// exist in simulation (a body half off the map edge still overlaps edge-
+// column support), and keying cx=-1 into row*w+x aliases column w-1 — the
+// phantom foothold that fooled the acceptance gate on L83 s1514804096. See
+// simTransition's harvest clamp. Sky above is open; falling below the grid
+// bottom (a pit with no floor) kills, so it offers no landing.
 //
 // Spike tiles (type 2) are treated conservatively as death, never as terrain:
 // they are NOT standable, they provide no support (standing on a spike tip
 // is impossible), and they terminate downward landing scans (falling into a
 // spike column kills rather than passing through). Aerial pass-through is
-// bounded by simulation against Physics + Hazards, not assumed: the inset
-// 24px lethal core of a ground-level spike forces feet ≥28px above the launch
-// row, leaving ~0.54s of hang time ≈ 108px at speed 200 — enough to cross ONE
-// core (32px body + 24px core = 56px sweep) with margin, and two adjacent
-// cores only barely; three or more consecutive spikes cannot be crossed at
-// all. So a flat jump may arc over strips of at most two adjacent surface
-// spikes but never rests on or inside one, and a run of ≥3 adjacent spikes is
-// modelled as a wall. A spike CAPPING a riser (sitting on a column whose top
-// is one tile above the launch row) is worse: its core then forces feet ≥60px
-// above launch — with max rise ~62.5px that leaves only ~28.6px of travel,
-// less than the 56px sweep, so the crossing is physically impossible in every
-// takeoff/timing combination (simulated: 0/4539 survived). Such capped risers
-// are modelled as full wall height for step-up jumps. Generation keeps spikes
-// ≥2 columns apart, so these stricter rules cost no accepted layouts; they
-// only stop the BFS from validating routes the shipped physics cannot fly.
-// Consequence: reachability of coins, portal, and enemy spawns never routes
-// THROUGH death. Grids without type-2 tiles behave bit-identically to the
-// pre-hazard model (hazard() is constant false there).
+// bounded by simulation against Physics + Hazards, tightened by the soft-lock
+// wave 2026-11-05 into two wall clauses: (1) a tooth DIRECTLY AHEAD of the
+// launch cell walls any walk/fall crossing — from an adjacent stance the inset
+// core engages within ~4px of travel while the arc needs ~17px (0.083s at
+// speed 200) to rise the required 28px, and every simulated policy dies (old
+// failure census: 0 landings across the mid-tooth classes, ~75k attempts);
+// (2) runs of >=3 consecutive teeth stay a wall (descent re-entry beyond hang
+// time). Backed crossings (>=1 free column between launch and tooth) remain
+// modelled: continuous-time clearance holds there and the old sweep landed
+// them — but with single-digit-pixel margins that flight-path rock can erase
+// (a head-bonk zeroes vy mid-rise and drops the body onto the teeth: canyon
+// L83 s1514804096, proven dead under the shipped Player/Physics with an action
+// set incl. jump-cut and Shift-walk), so routeFair() physics-executes EVERY
+// accepted horizontal route as the second line of defence. A spike CAPPING a
+// riser (sitting on a column whose top is one tile above the launch row) is
+// full wall for step-ups (core forces feet ≥60px above launch vs max rise
+// ~62.5px: 0/4539 survived). Generation keeps spikes ≥2 columns apart; the
+// adjacency clause costs measured attempt economy (soft-lock wave report),
+// never correctness: reachability of coins, portal, and enemy spawns never
+// routes THROUGH death. Grids without type-2 tiles behave bit-identically to
+// the pre-hazard model (hazard() is constant false there).
 //
 // requireOpenHead (used by the vertical validation): additionally reject any
 // standable cell with a solid tile directly overhead. The 32x32 body fills a
@@ -1119,14 +1141,31 @@ export function computeReachable(
                         blocked = true;
                         break;
                     }
-                    // Physics-verified boundary (see header): three or more
-                    // adjacent surface spikes cannot be cleared by a grounded
-                    // jump, so the strip is a wall to this scan. Generation
-                    // keeps spikes ≥2 columns apart; this only models what
-                    // simulation showed, never rejecting generated layouts.
+                    // Physics-verified spike wall (see header; soft-lock wave
+                    // 2026-11-05). Two clauses:
+                    //  - a tooth DIRECTLY AHEAD (m=1) walls the scan: from an
+                    //    adjacent stance the inset core engages within ~4px of
+                    //    travel while the arc needs ~17px to rise the required
+                    //    28px. A faithful late-steer policy CAN still thread it
+                    //    with ~23px clearance (review measurement, stable
+                    //    1/30..1/240 dt), so this is a deliberate CONSERVATIVE
+                    //    wall — pixel-perfect apex control is not a fairness
+                    //    contract. (The earlier 'every policy dies / 0 of 75k
+                    //    attempts' census predated the faithful validator and
+                    //    lacked deep takeoff policies; superseded.)
+                    //  - runs of >=3 consecutive teeth stay a wall (descent
+                    //    re-entry beyond hang time, the pre-existing rule).
+                    // Backed crossings (first free column between launch and
+                    // tooth) keep their old modelling because simulation lands
+                    // them — measured clearance ~23-24px across dt 1/30..1/240
+                    // — but flight-path rock can truncate the apex onto the
+                    // teeth (L83 s1514804096), so routeFair() physics-executes
+                    // EVERY accepted horizontal route as the second line of
+                    // defence. Gate sims run fixed dt=1/60; the backed-crossing
+                    // class is dt-insensitive per fixture evidence above.
                     if (hazard(midX, y)) {
                         hazardRun++;
-                        if (hazardRun >= 3) {
+                        if (m === 1 || hazardRun >= 3) {
                             blocked = true;
                             break;
                         }
@@ -1271,7 +1310,7 @@ export function computeReachable(
 // from the hub even though a skilled player could leave, costing coin count,
 // never fairness. It can only lie optimistically where the model over-claims
 // an edge physics fails (~2.4% of claimed edges per the edgecheck sweep,
-// mostly long fall arcs); canyonRouteFair physics-verifies the spawn->portal
+// mostly long fall arcs); routeFair physics-verifies the spawn->portal
 // route, and coin cells sit on or beside validated route surface, so residual
 // trap risk beyond this guard stays small.
 export function computeCoinSafeHub(width, goalTile, reachable, transitions) {
@@ -1359,14 +1398,16 @@ export class Level {
 
         let attempt = 0;
         let valid = false;
-        // Canyon post-deployment fairness (see canyonRouteFair): an accepted
+        // Post-deployment fairness (see routeFair): an accepted horizontal
         // construction whose SHIPPED grid fails the physics-executed route
         // check regenerates. Retry tiers, cheapest first:
-        //   1) main-stream REWIND (same terrain, hazard and enemy economy
-        //      rebuilt identically) while the canopy side stream advances
-        //      via _canopyCalls — each retry re-rolls only ceiling placement;
-        //   2) after REWIND_BUDGET unfair repeats, genuinely new terrain via
-        //      an attempt-seeded stream root.
+        //   1) canyon ONLY — main-stream REWIND (same terrain, hazard and
+        //      enemy economy rebuilt identically) while the canopy side
+        //      stream advances via _canopyCalls — each retry re-rolls only
+        //      ceiling placement; non-canyon maps have no side stream, so a
+        //      rewind would replay byte-identical terrain and re-reject: they
+        //      jump straight to tier 2 on their first physics rejection;
+        //   2) genuinely new terrain via an attempt-seeded stream root.
         // Seeds the gate never bites keep the ORIGINAL pre-gate stream
         // semantics exactly (invalid attempts simply continue consuming),
         // so byte identity holds for every construction accepted without a
@@ -1432,17 +1473,25 @@ export class Level {
             }
             attempt++;
             if (valid) {
-                if (this.canyonRouteFair()) {
+                if (this.routeFair()) {
                     fair = true; // shipped grid walks clean
                 } else {
                     valid = false;
                     physRejects++;
                     gateEngaged = true;
-                    if (physRejects <= REWIND_BUDGET) {
+                    if (this.motif === 'canyon' &&
+                        physRejects <= REWIND_BUDGET) {
                         // Tier 1: same terrain, next canopy variant. The
                         // side-stream ordinal (_canopyCalls) intentionally
                         // survives the rewind so ceiling placement re-rolls.
                         this.rng = makeRng(this.seedResolved);
+                    } else if (this.motif !== 'canyon') {
+                        // Non-canyon rejection: no side stream exists, so a
+                        // rewind would replay byte-identical terrain and
+                        // re-reject it — draw a fresh stream root at once.
+                        this.rng = makeRng((this.seedResolved ^ Math.imul(
+                            attempt + 1, 0x01000193)) >>> 0);
+                        physRejects = 0;
                     }
                 }
             } else if (gateEngaged && physRejects > REWIND_BUDGET) {
@@ -2343,7 +2392,7 @@ export class Level {
         // STARVED the motif: canyon terrain is pit-dense (~21% of columns),
         // ±2 exclusion lifted zero-roof maps to 8.3%, ±4 to 31.3%. The
         // shipped rule keeps rock off the fall itself (void columns) plus
-        // one launch column either side, and canyonRouteFair() rejects
+        // one launch column either side, and routeFair() rejects
         // any construction whose accepted route still crosses under a roof
         // that a headroom-aware walk cannot pass — geometry-checked, not
         // margin-guessed. Open mouths read as canyon entrances; canopies
@@ -2473,7 +2522,7 @@ export class Level {
     // walkable under open-sky rules; anything else rejects the construction
     // and the retry loop regenerates. Ceilings never add floor, so this gate
     // cannot demand geometry the terrain does not have. The authoritative
-    // call site is canyonRouteFair below — post-deployment, on the shipped
+    // call site is routeFair below — post-deployment, on the shipped
     // grid — because spike/marker removals re-open cells the pre-placement
     // walk could not use; validateCanyonRoute stays as the reusable
     // primitive for tests and diagnostics.
@@ -2488,18 +2537,21 @@ export class Level {
             this.portalTile.y * this.width + this.portalTile.x);
     }
 
-    // Post-deployment fairness check for canyon constructions (see
-    // validateCanyonRoute). The pre-placement gate above runs BEFORE spikes
-    // and markers land; their removals re-open cells (a spike tile is not
-    // standable to the strict walk) that the shipped grid's route later
-    // walks as a flat fall — L48 s48001 carried exactly such a construction
-    // whose pre-placement gates ALL passed while every physical crossing of
-    // the pit at 7..9 died in void or on the spike at 15,19. So the
-    // authoritative verdict runs once per accepted construction, after
-    // deployment, here: fail => clear the board and regenerate (attempts
-    // consume the same streams, so terrain stays deterministic per attempt
-    // ordinal). Two tiers:
-    //   1) geometry — headroom-aware walk must reach the portal;
+    // Post-deployment fairness check for HORIZONTAL constructions (renamed
+    // from canyonRouteFair by the soft-lock wave 2026-11-05: three shipped
+    // soft-locks L32/32010, L44/44019, L83/1514804096 were canyon-class, but
+    // the lie it guards against — a model route physics cannot fly — is not
+    // canyon-specific, and the OOB phantom foothold that fooled the old early
+    // return for non-canyon motifs proves narrower scope buys nothing).
+    // The authoritative verdict runs once per accepted construction, AFTER
+    // deployment, because the pre-placement gates run before spikes/markers
+    // land and their removals re-open cells the shipped route later walks as
+    // a flat fall — L48 s48001 carried exactly such a construction whose pre-
+    // placement gates ALL passed while every physical crossing of the pit at
+    // 7..9 died in void or on the spike at 15,19. Fail => clear the board and
+    // regenerate (attempts consume the same streams, so terrain stays
+    // deterministic per attempt ordinal). Two tiers:
+    //   1) geometry (canyon) — headroom-aware walk must reach the portal;
     //   2) physics (when Level.physRoute is injected by the verification
     //      harness) — the portal must be reachable using ONLY edges the
     //      shipped player/physics simulation lands, deck/lift crossings
@@ -2507,11 +2559,21 @@ export class Level {
     //      edgecheck's soft-lock cross-check moved inside the accept loop;
     //      runtime play never injects it (zero-dependency rule), and the
     //      sweeps prove zero soft-locks ship.
-    canyonRouteFair() {
-        if (this.motif !== 'canyon' || this.direction === 'vertical') {
-            return true;
+    // Vertical maps stay exempt from THIS GATE, honestly documented: their
+    // BFS is already headroom-aware, shaft rides are trusted edges validated
+    // by the rider suites, and the reduced battery below was never calibrated
+    // against climb geometry — extending it blind risks attempt-economy
+    // collapse without a measured soft-lock class to justify it (fresh-
+    // catalog sweep found none vertical, pre or post fix). NOTE (review):
+    // the exemption covers ONLY this physics gate — the R1' spike-wall clause
+    // lives in the SHARED computeReachable scan and conservatively reshapes
+    // spiked verticals (~8% of sampled climbs >=L28 drift vs older builds;
+    // edge-removal only, determinism intact, no fairness hole).
+    routeFair() {
+        if (this.direction === 'vertical') return true;
+        if (this.motif === 'canyon' && !this.validateCanyonRoute()) {
+            return false;
         }
-        if (!this.validateCanyonRoute()) return false;
         if (Level.physRoute) {
             return Level.physRoute(this);
         }
@@ -3973,7 +4035,7 @@ export class Level {
     }
 }
 
-// Verification-harness hook for canyonRouteFair (see its comment): sweeps
+// Verification-harness hook for routeFair (see its comment): sweeps
 // assign a function (level) => boolean that answers "is the portal reachable
 // from spawn using ONLY physics-simulated landed edges (plus trusted deck /
 // lift crossings and harvested grounded landings)?" Runtime play leaves it

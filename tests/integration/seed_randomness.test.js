@@ -151,7 +151,7 @@ test("same runSeed replays the identical guarded seed sequence", () => {
     expect(C.seeds).not.toEqual(A.seeds);
 });
 
-test("in-run layouts stay dissimilar: no comparable pair reaches 0.7 IoU", () => {
+test("in-run layouts stay dissimilar: no comparable pair reaches 0.7 IoU", { timeout: 60000 }, () => {
     // Three fixed runs x 40 levels. Baseline (unguarded, scratch sweep):
     // worst pair per 100-level run averaged 0.815 surface IoU and 85% of
     // runs held some pair >= 0.7. Post-guard the whole population sits

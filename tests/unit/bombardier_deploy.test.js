@@ -47,7 +47,7 @@ function kindsAt(levelNumber, seed) {
         .enemies.map(e => e.kind);
 }
 
-test("bombardiers never deploy below L40 (boundary sweep L30..39)", () => {
+test("bombardiers never deploy below L40 (boundary sweep L30..39)", { timeout: 30000 }, () => {
     for (let lvl = 30; lvl <= 39; lvl++) {
         for (let s = 1; s <= 10; s++) {
             for (const kind of kindsAt(lvl, lvl * 1000 + s)) {

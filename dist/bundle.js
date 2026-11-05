@@ -1286,7 +1286,7 @@
             }
             if (hazard(midX, y)) {
               hazardRun++;
-              if (hazardRun >= 3) {
+              if (m === 1 || hazardRun >= 3) {
                 blocked = true;
                 break;
               }
@@ -1421,7 +1421,7 @@
       if (player.y > pitY + 100)
         return fail();
       if (player.grounded) {
-        const cx = Math.floor((player.x + player.width / 2) / T);
+        const cx = Math.max(0, Math.min(w - 1, Math.floor((player.x + player.width / 2) / T)));
         const bodyRow = Math.floor((player.y + player.height - 0.001) / T);
         if (cx === e.bx && bodyRow === e.by) {
           return { ok: true, harvests };
@@ -1646,7 +1646,7 @@
             }
             if (hazard(midX, y)) {
               hazardRun++;
-              if (hazardRun >= 3) {
+              if (m === 1 || hazardRun >= 3) {
                 blocked = true;
                 break;
               }
@@ -1790,14 +1790,17 @@
         }
         attempt++;
         if (valid) {
-          if (this.canyonRouteFair()) {
+          if (this.routeFair()) {
             fair = true;
           } else {
             valid = false;
             physRejects++;
             gateEngaged = true;
-            if (physRejects <= REWIND_BUDGET) {
+            if (this.motif === "canyon" && physRejects <= REWIND_BUDGET) {
               this.rng = makeRng(this.seedResolved);
+            } else if (this.motif !== "canyon") {
+              this.rng = makeRng((this.seedResolved ^ Math.imul(attempt + 1, 16777619)) >>> 0);
+              physRejects = 0;
             }
           }
         } else if (gateEngaged && physRejects > REWIND_BUDGET) {
@@ -2340,12 +2343,12 @@
       const strict = computeReachable(this.tiles, this.width, this.height, this.spawnTile, true, this.bridgeGap, this.shaftGap);
       return strict.has(this.portalTile.y * this.width + this.portalTile.x);
     }
-    canyonRouteFair() {
-      if (this.motif !== "canyon" || this.direction === "vertical") {
+    routeFair() {
+      if (this.direction === "vertical")
         return true;
-      }
-      if (!this.validateCanyonRoute())
+      if (this.motif === "canyon" && !this.validateCanyonRoute()) {
         return false;
+      }
       if (Level.physRoute) {
         return Level.physRoute(this);
       }

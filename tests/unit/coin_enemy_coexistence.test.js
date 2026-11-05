@@ -49,7 +49,7 @@ test("runtime: an enemy patrolling THROUGH a coin never collects it", () => {
     expect(collectibles.getCoins()[0].collected).toBe(true);
 });
 
-test("generation: coins really place inside patrol spans (exclusion removed)", () => {
+test("generation: coins really place inside patrol spans (exclusion removed)", { timeout: 60000 }, () => {
     let enemyMaps = 0, mapsWithCoinOnPatrol = 0, coinsOnPatrol = 0;
     for (let lvl = 5; lvl <= 40; lvl++) {
         for (let s = 1; s <= 8; s++) {

@@ -766,7 +766,7 @@ test("fall-death threshold tracks level height on vertical levels", () => {
     expect(hazards.checkPitFall({ y: 15 * 32 + 101 }, worldHeightPx)).toBe(false);
 });
 
-test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
+test("phase-2 generation never exhausts retries (R26/I2 stress)", { timeout: 120000 }, () => {
     // Regression guard for the R26 defect: before the keep-if-harmless spike
     // gate and the no-rise-after-wide-gap rule, ~37% of level-15
     // constructions threw "no reachable portal position" after
@@ -774,9 +774,12 @@ test("phase-2 generation never exhausts retries (R26/I2 stress)", () => {
     // vertical tier (7, 10, 13) was omitted here while the branch retired
     // startLevelRetrying on the claim that "R26 pins generation reliability"
     // — a claim false for vertical level 13 (~5-7% exhaustion until the spike
-    // gate gained marker-site survival). Constructions now succeed in ~1ms
-    // with zero measured throws (0/800 at L13); 30 consecutive builds per
-    // phase-2 level must all validate. A throw surfaces as a test failure.
+    // gate gained marker-site survival). Zero measured throws (0/800 at L13);
+    // 30 consecutive builds per phase-2 level must all validate. A throw
+    // surfaces as a test failure. Timeout raised 5s→120s (2026-11-05 soft-lock
+    // fix): the generalized routeFair() physics gate runs on every horizontal
+    // construction (~50-80 ms/build plus extra rejections), so 930 builds no
+    // longer fit the default budget; the assertion itself is unchanged.
     // Phase 3 extension: every tier contributes horizontal + vertical
     // representatives (direction cycles right/left/vertical from level 5),
     // so the plateau caps and new tier sizes are pinned against throws too.
