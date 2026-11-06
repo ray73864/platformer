@@ -1,24 +1,67 @@
 # Procedural Platformer
 
-A procedurally generated 2D platformer game built with vanilla JavaScript.
+A procedurally generated 2D platformer built with pure vanilla JavaScript —
+no frameworks, no runtime dependencies, no build required to play.
+
+**Play it:** double-click `index.html`. That's it. The game runs straight
+from the filesystem.
 
 ## Features
 
-- Procedural level generation with BFS-verified portal reachability
-- Variable travel direction: levels 1-4 run right, then levels cycle right / left / vertical climb from level 5
-- Physics-based player movement
-- Level progression with increasing platform difficulty
-- Score tracking and level progression
-- **Phase 2:** coins, spike hazards, and patrolling enemies
-- **Phase 3:** a 60-second run clock from level 5, difficulty tiers, a hidden portal unlocked by collecting every coin, an arrow-navigable pause menu, and a 15-level run ending in a game-complete screen with a saved high score
+- **100-level runs** with a saved high score (`localStorage`)
+- **Procedural generation with a fairness contract** — every shipped level
+  passes BFS reachability *and* physics-executed route validation before it
+  can spawn you (see [Fairness](#fairness))
+- **Seeded runs**: each run rolls a seed; the current level's seed is shown
+  in the bottom-right corner so a layout can be reproduced exactly
+- **Retry replays the exact map you died on** (stored-seed ledger), and
+  coins you collected stay collected — dying never refunds or re-collects,
+  so progress converges across attempts
+- **In-run anti-repetition guard**: candidate seeds whose exposed terrain is
+  too similar to earlier levels in the same run are rejected, so a 100-level
+  run doesn't feel like the same level twice
+- Three travel modes: right-bound, left-bound, and vertical climbs
+  (cycling from level 5), plus **deck bridges** over too-wide pits (level 8+)
+  and **elevator shafts** on most vertical climbs
+- Four enemy kinds with escalating threat grammar:
+  | Kind | From | Behavior |
+  |---|---|---|
+  | Walker | L5 | Patrols its shelf; stompable, dodgeable |
+  | Spiny | L10 | Stomp-immune shell — jump over it, never land on it |
+  | Charger | L20 | Wind-up then dash — read the tell, leave the lane |
+  | Bombardier | L40 | Patrolled gun — drops projectiles along its lane |
+- Coins unlock the portal (all of them), spikes kill (inset hitboxes keep
+  edge brushes fair), a run-wide 60-second clock (from level 5) carries over
+  between levels and gains +2 s per coin
+- Variable jump height, coyote time, jump buffering, stomps, deck riding,
+  particle feedback, chiptune-style adaptive audio, pause menu
 
 ## Controls
 
-- **Arrow Left / A**: Move left
-- **Arrow Right / D**: Move right
-- **Space**: Jump
-- **Escape**: Pause / resume (on the game-over or game-complete screen, Escape returns to the menu)
-- **While paused**: arrow keys select a menu option (Resume Game / Restart Level / Quit to Menu), Enter or Space activates the highlighted one
+| Key | Action |
+|---|---|
+| ← / → (or A / D) | Move |
+| Space | Jump (hold higher, tap shorter) |
+| Shift | Walk (caps ground speed — useful at edges) |
+| Esc | Pause / resume (on game-over or completion screens: back to menu) |
+| Arrows + Enter/Space while paused | Navigate the pause menu |
+
+## Fairness
+
+The generator treats unfairness as a defect class with regression tests.
+Shipped guarantees, each pinned by structural sweeps over thousands of
+fresh-seed maps:
+
+- Every level's route is validated by executing real physics against it —
+  claimed fall-edges around spike shelves that a player could not survive
+  reject the construction
+- Coins only spawn where a survivable return path exists (safe-hub model)
+- No stacked-patrol gauntlets: hostiles may not wall a mandatory crossing
+  with zero safe pockets
+- One hostile kind per support run; stomp-immune kinds debut on graduated,
+  wider shelves
+- Soft-lockable maps cannot ship; if generation somehow produces a broken
+  state mid-run, the game rebuilds the level rather than trapping you
 
 ## Development
 
@@ -95,104 +138,52 @@ Hard gate driven by [`assets/manifest.json`](assets/manifest.json). Each entry d
 
 ```
 game/
-├── index.html              # Entry point
+├── index.html              # Entry point (loads dist/bundle.js)
 ├── bunfig.toml             # Bun test configuration
 ├── eslint.config.js        # Linting configuration
 ├── css/
-│   └── style.css          # Game styling
+│   └── style.css           # Game styling
 ├── js/
-│   ├── main.js            # Game loop and state management
-│   ├── input.js           # Input handling
-│   ├── physics.js         # Physics engine
-│   ├── player.js          # Player entity
-│   ├── level.js           # Level generation
-│   ├── entities.js        # Base entity class
-│   ├── camera.js          # Camera tracking
-│   ├── ui.js              # UI management
-│   ├── enemies.js         # Patrolling enemy AI (Phase 2)
-│   ├── collectibles.js    # Coin collection and scoring (Phase 2)
-│   ├── hazards.js         # Spike hazard detection (Phase 2)
-│   ├── timer.js           # Run clock with coin bonus (Phase 3)
-│   ├── difficulty.js      # Difficulty tiers: size, enemy caps, timer flag (Phase 3)
-│   ├── sprites.js         # Kenney sheet sprite layer (fallback-safe)
-│   └── particles.js       # Coin/death particle bursts (game feel)
+│   ├── main.js             # Game loop, states, seeds, run flow
+│   ├── input.js            # Input handling
+│   ├── physics.js          # Physics engine
+│   ├── player.js           # Player entity (coyote, buffer, variable jump)
+│   ├── level.js            # Generator + fairness gates (reachability, routes)
+│   ├── entities.js         # Base entity class
+│   ├── camera.js           # Camera tracking
+│   ├── ui.js               # UI management
+│   ├── enemies.js          # Walker/spiny/charger/bombardier AI
+│   ├── projectiles.js      # Bombardier shells
+│   ├── movingplatforms.js  # Deck bridges and elevator shafts
+│   ├── collectibles.js     # Coins and scoring
+│   ├── hazards.js          # Spike hazard detection
+│   ├── timer.js            # Run clock with coin bonus
+│   ├── difficulty.js       # Difficulty tiers: size, caps, timer flag
+│   ├── sprites.js          # Kenney sheet sprite layer (fallback-safe)
+│   ├── particles.js        # Coin/death particle bursts (game feel)
+│   └── audio.js            # Adaptive chiptune audio (WebAudio)
 ├── tests/
-│   ├── setup/             # Test setup helpers
-│   ├── unit/              # Unit tests
-│   ├── integration/       # Integration tests
-│   └── e2e/               # E2E tests
-├── assets/                # Game assets (declared in manifest.json)
+│   ├── setup/              # Test setup helpers
+│   ├── unit/               # Unit tests (incl. generator fairness sweeps)
+│   ├── integration/        # Integration tests
+│   └── e2e/                # Browser E2E tests
+├── assets/                 # Game assets (declared in manifest.json)
 │   ├── kenney_pixel-platformer/  # Shipped CC0 sheets + LICENSE.txt
-│   ├── fonts/             # Press Start 2P (OFL 1.1) + OFL.txt
-│   └── dropin/            # Optional local overrides (gitignored)
-└── scripts/               # Utility scripts
+│   ├── fonts/              # Press Start 2P (OFL 1.1) + OFL.txt
+│   └── dropin/             # Optional local overrides (gitignored)
+└── scripts/                # Utility scripts
 ```
 
-## Phase 2 Features
+## Scoring
 
-### Collectibles
-
-- Coins appear on every level (at least 5, scaling with level number)
-- Placement is restricted to BFS-reachable tiles, so every coin is collectible
-- 10 points per coin; re-collecting an already-taken coin never scores twice
-
-### Hazards
-
-- Spikes kill the player on contact (from level 5 onward)
-- Collision uses an inset hitbox, so brushing a spike tile's decorative edge is fair
-- Falling off the bottom of the level kills the player
-
-### Enemies
-
-- Simple patrol AI (from level 5 onward; generation caps are 5 per level for levels 5-9 and 8 from level 10, with the actual count ramping with level number inside the cap)
-- Each enemy walks back and forth along bounds derived from the solid ground beneath it
-- Contact kills the player
-
-### Level sizing and direction
-
-- Horizontal levels are 20x15 tiles for levels 1-4, 24x18 from level 5, and 28x21 from level 10
-- Vertical levels are 15x24 climb layouts; the player starts at the bottom and reaches the portal band at the top
-- Every generated level — horizontal or vertical — is validated with a BFS reachability check before it ships
-
-### Scoring
-
-- Score accumulates across levels within a run
-- Retrying a level restores the score to what it was when that level started, so die-and-retry runs cannot farm coins
-
-## Phase 3 Features
-
-### Run clock
-
-- Levels 1-4 have no time limit; from level 5 a single 60-second clock ticks down
-- The clock is run-wide: remaining time carries over between levels
-- Each coin collected adds +2 seconds to the run clock — including coins taken before level 5: they are banked on the single run clock and already on it when the timer starts ticking
-- Running out of time ends the run; retrying a level resets the clock to 60 seconds
-
-### Difficulty tiers
-
-- Levels 1-4 (basic): 20x15 horizontal tiles, no enemies
-- Levels 5-9 (intermediate): 24x18 horizontal tiles, enemies introduced
-- Levels 10+ (advanced): 28x21 horizontal tiles, higher enemy cap
-- Vertical levels keep the 15x24 climb layout at every tier
-- The enemy caps (0 / 5 / 8) are generation ceilings; the actual count ramps with level number inside the cap
-
-### Hidden portal
-
-- The portal stays ghosted and inert until every coin in the level is collected (owner ruling 2026-11-03, superseding the spec's original 70% threshold, which let a stray touch end the level with coins still on the map)
-- Reaching the unlocked portal completes the level
-
-### Pause
-
-- Escape pauses and resumes; the run clock freezes while paused
-- While paused, arrow keys cycle the pause menu (Resume Game / Restart Level / Quit to Menu) and Enter or Space activates the focused option; the player cannot move while paused
-- Restart Level rolls the score back to the level-start snapshot and re-arms the run clock, same contract as Retry on the game-over screen
-- Escape on the game-over or game-complete screen returns to the menu instead of pausing
-- If the game loop fails repeatedly during a run, the current level is rebuilt and a notice is shown; persistent failures return to the menu
-
-### Run completion and high score
-
-- A run is 15 levels; finishing level 15 shows the game-complete screen rather than generating another level
-- The final score is compared against a high score persisted in `localStorage` (key `platformerHighScore`)
+- Coins: 10 points each; stomping a walker scores 25 (a charger or
+  bombardier, where legal, 40); dodging a hostile's threat pays a small
+  bonus; clearing a level pays 100 plus 10 per difficulty tier crossed —
+  any death on the attempt series cuts that clear bonus to 40%
+- Score accumulates across levels within a run; the final score competes
+  with a high score persisted in `localStorage` (key `platformerHighScore`)
+- Retrying keeps the coins you banked on that level (they neither refund nor
+  re-collect on the replayed identical map)
 
 ## License
 
