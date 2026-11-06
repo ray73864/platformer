@@ -89,6 +89,44 @@ const BOMBARDIER_CAP_DIVISOR = 4;
 // through a gauntlet you can only outrun): cap spinies at ceil(n/3) of the
 // deployed enemies per map.
 const SPINY_CAP_DIVISOR = 3;
+// --- Spiny debut on-ramp (difficulty-curve wave 2026-11-06) -----------------
+// During the debut window [SPINY_FIRST_LEVEL .. SPINY_ONRAMP_LAST_LEVEL]
+// hostile rolls face an escalated shelf-width bar: HOSTILE_MIN_RUN_ONRAMP
+// generally, HOSTILE_ROUTE_MIN_RUN_ONRAMP when the body's final span sweeps
+// a MUST-PASS cell (routeModelEdges articulation cells — same computation as
+// the gauntlet gate, shared here). Demotion to walker follows every existing
+// no-re-roll discipline: terrain byte-identical, enemy COUNT per map
+// unchanged (lethality swaps to spectacle), kinds never re-rolled — no
+// promotions beyond the pre-existing cap-slot/run-key release semantics
+// (level.js demotion block), which can flip a WALKER into a hostile slot
+// only after it passes these same stricter bars (observed 0/1040 review
+// sample; self-limiting by construction).
+// WHY (measured, fresh disjoint band s=lvl*40000+24601+i, L5..30 x 10 seeds):
+// the round-2/round-3 browser curve reproduces a decade-2 wall (L11-20
+// clears 1/10 r2 + 2/10 r3 vs 6/10 in decade 1), and the node-bot A/B at HEAD
+// reproduces low teen win rates (horizontal first-try 12/70 vs decade-1
+// 12/40). Attribution refuted the strong spiny hypothesis — first-death
+// classes are spike 61% / walker-contact 36% / void 13% / spiny 4%, mostly
+// OFF the must-pass route, and both spiny-dominant browser caps (r3 L15
+// s3872247221, r2 L18 s3738974344) sat on runs 11/13 WITH waiting pockets
+// (driver skill ceiling, not generator morphology). What DID confirm: every
+// single spiny deployed in-window (15/15 over L10..16 x 30 seeds) stands on
+// the mandatory traverse, and half of them on support runs < 6 — a stomp-
+// immune debut guarding geometry the player cannot skip, at the exact tier
+// step where enemy presence jumps 1.68 -> 2.95 -> 3.38 hostiles/map
+// (L9/L10 -> L11 -> L12+, attribution table). The two pocket-based
+// alternatives were MEASURED DEAD (zero-pocket approach configs: 0 hits;
+// off-route-only would ship zero debut spinies because the marker economy
+// rides routes). This window is the minimum that graduates debut exposure:
+// post-rule, sampled in-window spinyOnMP drops from 100% to 53% and every
+// surviving route guard sits on >= 8 columns (double the steady-state pass-
+// by arc). Window end 18 covers the measured tail (node patrol:spiny deaths
+// at L17, r2 cap at L18); past it the linear chance ramp continues untouched.
+// Honest limit: this smooths the DEBUT MORPHOLOGY, not the density step —
+// the latter is protected by the decade-2 presence floor (±15%) ruling.
+const SPINY_ONRAMP_LAST_LEVEL = 18;
+const HOSTILE_MIN_RUN_ONRAMP = 6;      // was HOSTILE_MIN_RUN (4) in-window
+const HOSTILE_ROUTE_MIN_RUN_ONRAMP = 8; // route-sweeping hostiles in-window
 // Hostile kinds (spiny, charger) may only stand on shelves whose SOLID RUN
 // beneath the spawn is at least this many tiles wide (screenshot ruling
 // 2026-11-03: a staircase of narrow pillars whose ONE mandatory landing
@@ -3520,26 +3558,35 @@ export class Level {
         // exemption's shaft-blind exposure was MEASURED zero 2026-11-06
         // (see the GAUNTLET_MIN_BODIES header + the pin in
         // tests/unit/enemy_shaft_gauntlet_fairness.test.js).
-        let deploySpawns = legalSpawns;
+        // Route articulation cells, hoisted so BOTH post-roll consumers
+        // share one computation (no rng involved): the stacked-patrol
+        // gauntlet gate below (>=GAUNTLET_MIN_BODIES sites) and the spiny
+        // debut on-ramp demotion in the roll loop (SPINY_ONRAMP_LAST_LEVEL).
+        const inOnrampWindow = this.levelNumber >= SPINY_FIRST_LEVEL &&
+            this.levelNumber <= SPINY_ONRAMP_LAST_LEVEL;
+        let routeMustPass = null;
         if (this.direction !== 'vertical' && this.portalTile &&
-            legalSpawns.length >= GAUNTLET_MIN_BODIES) {
-            const mustPass = computeMustPassCells(
+            (legalSpawns.length >= GAUNTLET_MIN_BODIES || inOnrampWindow)) {
+            routeMustPass = computeMustPassCells(
                 this.tiles, this.width, this.height,
                 this.spawnTile, this.portalTile, this.bridgeGap);
-            if (mustPass && mustPass.size > 0) {
-                const kept = [];
-                for (const s of legalSpawns) {
-                    kept.push(s);
-                    const probe = kept.map(k => ({
-                        col: k.x, row: k.y, left: k.left, right: k.right
-                    }));
-                    if (gauntletViolations(this.tiles, this.width, this.height,
-                        probe, mustPass, this.reachableTiles).length > 0) {
-                        kept.pop();
-                    }
+        }
+        let deploySpawns = legalSpawns;
+        if (routeMustPass && routeMustPass.size > 0 &&
+            legalSpawns.length >= GAUNTLET_MIN_BODIES) {
+            const mustPass = routeMustPass;
+            const kept = [];
+            for (const s of legalSpawns) {
+                kept.push(s);
+                const probe = kept.map(k => ({
+                    col: k.x, row: k.y, left: k.left, right: k.right
+                }));
+                if (gauntletViolations(this.tiles, this.width, this.height,
+                    probe, mustPass, this.reachableTiles).length > 0) {
+                    kept.pop();
                 }
-                deploySpawns = kept;
             }
+            deploySpawns = kept;
         }
 
         // Kind assignment rides the SAME marker sites/spans as walkers —
@@ -3585,7 +3632,9 @@ export class Level {
             // Shelf fairness gate (see HOSTILE_MIN_RUN): a hostile roll on a
             // narrow pillar demotes to walker — stomp-immune patrols on runs
             // <= 3 tiles make mandatory landings unwinnable (screenshot
-            // ruling 2026-11-03). Demotion follows the SAME no-re-roll
+            // ruling 2026-11-03). During the debut window the floor rises to
+            // HOSTILE_MIN_RUN_ONRAMP for first-contact headroom (see the
+            // SPINY_ONRAMP header). Demotion follows the SAME no-re-roll
             // discipline as cap overflow below: one consumed draw per
             // enemy, so rng stream ORDER stays identical; legal-site
             // kinds may still shift because the spiny cap counts
@@ -3594,9 +3643,33 @@ export class Level {
             // Bombardiers inherit this gate in full: they ARE hostile
             // (stomp-immune contact death like a spiny's body threat, dash
             // like a charger's) plus a gun on top.
-            if (kind !== 'walker' && solidRunWidth(
-                this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+            const hostileMinRun = inOnrampWindow
+                ? HOSTILE_MIN_RUN_ONRAMP : HOSTILE_MIN_RUN;
+            const runW = solidRunWidth(
+                this.tiles, this.width, s.x, s.y + 1);
+            if (kind !== 'walker' && runW < hostileMinRun) {
                 kind = 'walker';
+            }
+            // Spiny debut on-ramp, route clause (see SPINY_ONRAMP_*):
+            // during the debut window a hostile sweeping a MUST-PASS cell
+            // needs the escalated shelf width — meeting the stomp-immune
+            // debut on the one traverse you cannot skip, on a shelf with
+            // sub-double pass-by room, is the morphology the curve wave
+            // measured (every sampled debut spiny stood on the mandatory
+            // traverse; half sat on runs < 6). Runs BEFORE the shared-run
+            // gate so a stand-down never claims the run key; vertical maps
+            // skip it with the gauntlet gate's shaft-blind exemption.
+            if (kind !== 'walker' && inOnrampWindow && routeMustPass &&
+                routeMustPass.size > 0) {
+                let sweepsRoute = false;
+                for (let c = s.left; c <= s.right; c++) {
+                    if (routeMustPass.has(s.y * this.width + c)) {
+                        sweepsRoute = true; break;
+                    }
+                }
+                if (sweepsRoute && runW < HOSTILE_ROUTE_MIN_RUN_ONRAMP) {
+                    kind = 'walker';
+                }
             }
             // Firing-lane gate (bombardier only): the site needs >= 2 open
             // walk-row cells in FRONT of at least ONE heading so it can't

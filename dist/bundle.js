@@ -1046,6 +1046,9 @@
   var BOMBARDIER_CHANCE_MAX = 0.15;
   var BOMBARDIER_CAP_DIVISOR = 4;
   var SPINY_CAP_DIVISOR = 3;
+  var SPINY_ONRAMP_LAST_LEVEL = 18;
+  var HOSTILE_MIN_RUN_ONRAMP = 6;
+  var HOSTILE_ROUTE_MIN_RUN_ONRAMP = 8;
   var HOSTILE_MIN_RUN = 4;
   var ENEMY_MIN_RUN = 2;
   var GAUNTLET_MIN_BODIES = 3;
@@ -2897,25 +2900,28 @@
       this.enemyManager.clear();
       const spawns = this.deriveEnemySpawns();
       const legalSpawns = spawns.filter((s) => solidRunWidth(this.tiles, this.width, s.x, s.y + 1) >= ENEMY_MIN_RUN && (s.right - s.left + 1) * this.tileSize - ENEMY_WIDTH >= this.tileSize);
+      const inOnrampWindow = this.levelNumber >= SPINY_FIRST_LEVEL && this.levelNumber <= SPINY_ONRAMP_LAST_LEVEL;
+      let routeMustPass = null;
+      if (this.direction !== "vertical" && this.portalTile && (legalSpawns.length >= GAUNTLET_MIN_BODIES || inOnrampWindow)) {
+        routeMustPass = computeMustPassCells(this.tiles, this.width, this.height, this.spawnTile, this.portalTile, this.bridgeGap);
+      }
       let deploySpawns = legalSpawns;
-      if (this.direction !== "vertical" && this.portalTile && legalSpawns.length >= GAUNTLET_MIN_BODIES) {
-        const mustPass = computeMustPassCells(this.tiles, this.width, this.height, this.spawnTile, this.portalTile, this.bridgeGap);
-        if (mustPass && mustPass.size > 0) {
-          const kept = [];
-          for (const s of legalSpawns) {
-            kept.push(s);
-            const probe = kept.map((k) => ({
-              col: k.x,
-              row: k.y,
-              left: k.left,
-              right: k.right
-            }));
-            if (gauntletViolations(this.tiles, this.width, this.height, probe, mustPass, this.reachableTiles).length > 0) {
-              kept.pop();
-            }
+      if (routeMustPass && routeMustPass.size > 0 && legalSpawns.length >= GAUNTLET_MIN_BODIES) {
+        const mustPass = routeMustPass;
+        const kept = [];
+        for (const s of legalSpawns) {
+          kept.push(s);
+          const probe = kept.map((k) => ({
+            col: k.x,
+            row: k.y,
+            left: k.left,
+            right: k.right
+          }));
+          if (gauntletViolations(this.tiles, this.width, this.height, probe, mustPass, this.reachableTiles).length > 0) {
+            kept.pop();
           }
-          deploySpawns = kept;
         }
+        deploySpawns = kept;
       }
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
@@ -2935,8 +2941,22 @@
         } else if (roll >= spinyChance + chargerChance && roll < spinyChance + chargerChance + bombardierChance && bombardiers < bombardierCap) {
           kind = "bombardier";
         }
-        if (kind !== "walker" && solidRunWidth(this.tiles, this.width, s.x, s.y + 1) < HOSTILE_MIN_RUN) {
+        const hostileMinRun = inOnrampWindow ? HOSTILE_MIN_RUN_ONRAMP : HOSTILE_MIN_RUN;
+        const runW = solidRunWidth(this.tiles, this.width, s.x, s.y + 1);
+        if (kind !== "walker" && runW < hostileMinRun) {
           kind = "walker";
+        }
+        if (kind !== "walker" && inOnrampWindow && routeMustPass && routeMustPass.size > 0) {
+          let sweepsRoute = false;
+          for (let c = s.left;c <= s.right; c++) {
+            if (routeMustPass.has(s.y * this.width + c)) {
+              sweepsRoute = true;
+              break;
+            }
+          }
+          if (sweepsRoute && runW < HOSTILE_ROUTE_MIN_RUN_ONRAMP) {
+            kind = "walker";
+          }
         }
         if (kind === "bombardier" && s.x - s.left < 2 && s.right - s.x < 2) {
           kind = "walker";
