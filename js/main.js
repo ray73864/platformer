@@ -17,7 +17,13 @@ export const TILE_SIZE = 32;
 
 // Ambient drifting motes per level (dust/fireflies by theme). Deliberately
 // far below MAX_MOTES: ambience should never read as noise.
-const MOTE_COUNT = 18;
+// Ambient field size (look-A): 22 drifting motes plus, on maps tall enough
+// to climb, 14 falling flecks — 36 live, under the hard MAX_MOTES cap of 40.
+const MOTE_COUNT = 22;
+const CLIMB_FLECKS = 14;
+// Collection sparkle inherits the coin's own gold, sampled from tiles.png
+// cell 151 (the dominant opaque hue) rather than an invented yellow.
+const COIN_BURST_COLOR = '#f4b41b';
 
 // Integer world zoom: on large displays the pixel art scales up to fill the
 // viewport instead of sitting small in the top-left. Target ~540 CSS px of
@@ -1010,7 +1016,9 @@ export class Game {
         // out on the GAME_OVER screen.
         this.sprites.advance(dt);
         stepParticles(this.particles, dt);
-        if (this.motes.length) {
+        // Ambient life pauses with the game pause (look-A): a frozen world
+        // behind the overlay reads as held time, not a rendering stall.
+        if (this.motes.length && this.state !== STATE.PAUSED) {
             stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
         }
         if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - dt);
@@ -1260,11 +1268,11 @@ export class Game {
             if (collectedCoins > 0) {
                 audio.playSfx('coin');
                 // Sparkle at the player: pickups read as events, not silent
-                // counter bumps. Gold matches the coin sprite.
+                // counter bumps. The burst inherits the coin sheet's gold.
                 spawnBurst(this.particles,
                     this.player.x + this.player.width / 2,
                     this.player.y + this.player.height / 2,
-                    '#ffd23f', 12);
+                    COIN_BURST_COLOR, 12);
                 this.score = Math.min(
                     this.score + collectedCoins * COIN_POINTS,
                     Number.MAX_SAFE_INTEGER
@@ -1396,14 +1404,18 @@ export class Game {
             const effW = viewW / zoom;
             const effH = viewH / zoom;
 
+            // Screen y of the world floor under the full transform:
+            // screen = (world + camera.y - effH/2) * zoom + viewH/2. Also
+            // drives the climb read (zenith overlay trigger in sprites.js,
+            // falling flecks below): >64 px past the viewport bottom means
+            // the camera is aloft on a vertical map.
+            const worldBottom = this.level.height * this.level.tileSize;
+            const worldBottomScreen =
+                (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
             if (sprites) {
-                // Screen y of the world floor under the full transform:
-                // screen = (world + camera.y - effH/2) * zoom + viewH/2.
-                const worldBottom = this.level.height * this.level.tileSize;
-                const worldBottomScreen =
-                    (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
                 sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x,
-                    viewW, viewH, worldBottomScreen);
+                    viewW, viewH, worldBottomScreen,
+                    this.level.seed === undefined ? null : this.level.seed);
             }
 
             // Death screen-shake: a decaying random offset on the camera
@@ -1457,16 +1469,22 @@ export class Game {
 
             // Ambient motes draw OUTSIDE the world transform: they live in
             // screen space with per-mote parallax against cameraX, rebuilt
-            // once per level instance from a level-derived seed.
+            // once per level instance from a hash of the LEVEL SEED (look-A).
+            // Firefly bands on night themes hover low; climb maps carry
+            // falling flecks that only render while the floor is out of view.
+            const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
             if (this._motesSource !== this.level) {
                 this._motesSource = this.level;
+                const climbMap = worldBottom > viewH / zoom + 64;
                 this.motes = createMotes(MOTE_COUNT,
-                    Math.imul(this.currentLevel, 0x9E3779B1) >>> 0, viewW, viewH);
+                    (Math.imul((this.level.seed ?? this.currentLevel) >>> 0,
+                        0x9E3779B1) ^ 0x51F3B6A1) >>> 0,
+                    viewW, viewH,
+                    { fireflies: amb.fireflies, flecks: climbMap ? CLIMB_FLECKS : 0 });
             }
             if (this.motes.length) {
-                const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
                 drawMotes(this.ctx, this.motes, this.camera.x, viewW,
-                    amb.mote, amb.fireflies);
+                    amb.mote, amb.fireflies, worldBottomScreen - viewH > 64);
             }
 
             // Foreground silhouette strip + vignette: the near side of the
@@ -1474,7 +1492,8 @@ export class Game {
             // the diagnostics text stays legible.
             if (sprites) {
                 sprites.drawForeground(this.ctx, this.currentLevel,
-                    this.camera.x, viewW, viewH);
+                    this.camera.x, viewW, viewH,
+                    this.level.seed === undefined ? null : this.level.seed);
                 sprites.drawVignette(this.ctx, this.currentLevel, viewW, viewH);
             }
 

@@ -3571,13 +3571,18 @@
       skyTop: "#7cc0da",
       skyBottom: "#e8faf7",
       zenith: "#3d7ba3",
-      disc: { x: 0.74, y: 0.14, r: 26, core: "#fff6cf", halo: "#ffeeae" },
+      disc: { x: 0.74, y: 0.18, r: 26, core: "#fff6cf", halo: "#ffeeae", kind: "sun" },
       cloud: "#ffffff",
       hillFar: "#aedbe1",
       hillNear: "#84c2cd",
       mote: "#fffbe0",
       fireflies: false,
+      stars: false,
+      starColor: "#ffffff",
+      starDensity: 0,
       rim: "rgba(255,255,255,0.28)",
+      rimSide: "rgba(255,246,214,0.34)",
+      aoDark: "rgba(24,14,6,",
       mood: "rgba(255,246,214,0.045)",
       haze: "#eafcff",
       portalGlow: "#b06cf0",
@@ -3593,13 +3598,18 @@
       skyTop: "#c76e79",
       skyBottom: "#fdd79b",
       zenith: "#6d2f4c",
-      disc: { x: 0.66, y: 0.46, r: 34, core: "#ffe7ad", halo: "#ffbf7a" },
+      disc: { x: 0.66, y: 0.18, r: 20, core: "#ffeeda", halo: "#ffd9b8", kind: "moon" },
       cloud: "#ffdcae",
       hillFar: "#b5727c",
       hillNear: "#93546a",
       mote: "#ffd9a8",
-      fireflies: false,
+      fireflies: true,
+      stars: true,
+      starColor: "#ffe9d0",
+      starDensity: 46,
       rim: "rgba(255,226,170,0.30)",
+      rimSide: "rgba(255,214,150,0.34)",
+      aoDark: "rgba(74,32,12,",
       mood: "rgba(255,120,54,0.11)",
       haze: "#ffd9a0",
       portalGlow: "#ef7fae",
@@ -3615,13 +3625,18 @@
       skyTop: "#1f9d79",
       skyBottom: "#9ff3c3",
       zenith: "#0b574a",
-      disc: { x: 0.78, y: 0.12, r: 22, core: "#f2fff5", halo: "#c9f7dd" },
+      disc: { x: 0.78, y: 0.16, r: 22, core: "#f2fff5", halo: "#c9f7dd", kind: "sun" },
       cloud: "#d9fce6",
       hillFar: "#4fbe93",
       hillNear: "#2f9c78",
       mote: "#d6ffa8",
       fireflies: true,
+      stars: false,
+      starColor: "#eaffea",
+      starDensity: 0,
       rim: "rgba(206,244,208,0.22)",
+      rimSide: "rgba(206,244,208,0.26)",
+      aoDark: "rgba(4,30,16,",
       mood: "rgba(24,104,66,0.12)",
       haze: "#b8ffd9",
       portalGlow: "#5fe8bc",
@@ -3658,7 +3673,11 @@
     { plate: "#b08a5a", plateDark: "#7d5c36", band: "#57402a", bolt: "#33261a", rim: "#e8c795" },
     { plate: "#6f9a80", plateDark: "#48705a", band: "#2f4c3e", bolt: "#182a22", rim: "#b9dcc4" }
   ];
-  var FLOWER_COLORS = ["#ffd7e8", "#fff3b0", "#ffffff"];
+  var BAND_PETALS = [
+    ["#ffd7e8", "#fff3b0", "#ffffff"],
+    ["#f2c9a8", "#e6cfe0"],
+    ["#f2b8c6", "#d9fce6"]
+  ];
   var HERO_PALETTE = {
     ".": null,
     o: "#2a2118",
@@ -3918,6 +3937,16 @@
     c.height = h;
     return c;
   }
+  var RASTER_OK = (() => {
+    try {
+      if (typeof document === "undefined")
+        return false;
+      const g = makeCanvas(1, 1).getContext("2d");
+      return !!g && typeof g.fillRect === "function";
+    } catch {
+      return false;
+    }
+  })();
   function buildCloudBand(rng, w, h, count, color, alpha) {
     const c = makeCanvas(w, h);
     const g = c.getContext("2d");
@@ -4135,6 +4164,165 @@
     g.fillRect(0, 0, 4, HAZE_H);
     return c;
   }
+  var DECOR_ART_W = {
+    tuft: 12,
+    flower: 7,
+    cactus: 12,
+    bones: 13,
+    pebbles: 12,
+    fern: 14,
+    mushroom: 12,
+    speck: 5,
+    vine: 8
+  };
+  var DECOR_VARIANTS = [
+    { tuft: 3, flower: 3, vine: 3, speck: 2 },
+    { cactus: 2, bones: 2, pebbles: 2, vine: 3, speck: 2 },
+    { fern: 2, mushroom: 2, flower: 2, vine: 3, speck: 2 }
+  ];
+  function buildDecorArt(themeIdx) {
+    const mk = (w, h, draw) => {
+      const c = makeCanvas(w, h);
+      const g = c.getContext("2d");
+      draw(g);
+      return c;
+    };
+    const bladeSet = (blades, dark, light) => mk(12, 8, (g) => {
+      blades.forEach(([bx, bh], i) => {
+        g.fillStyle = i % 2 ? light : dark;
+        g.fillRect(bx, 8 - bh, 2, bh);
+      });
+    });
+    const flower = (stem, petal) => mk(7, 12, (g) => {
+      g.fillStyle = stem;
+      g.fillRect(3, 6, 1, 6);
+      g.fillRect(4, 9, 2, 1);
+      g.fillStyle = petal;
+      g.fillRect(2, 2, 3, 3);
+    });
+    const speck = (stone) => mk(5, 4, (g) => {
+      g.fillStyle = stone;
+      g.fillRect(0, 1, 2, 2);
+      g.fillRect(3, 0, 1, 1);
+    });
+    const strand = (trunk, leaf, hasLeaves) => (len) => mk(8, Math.max(10, len * 32 - 6), (g) => {
+      g.fillStyle = trunk;
+      g.fillRect(3, 0, 2, len * 32 - 6);
+      if (hasLeaves) {
+        g.fillStyle = leaf;
+        for (let s = 8;s < len * 32 - 14; s += 12) {
+          const side = (s / 12 | 0) % 2 ? 4 : 0;
+          g.fillRect(side, s, 4, 2);
+        }
+      } else {
+        g.fillStyle = leaf;
+        for (let s = 10;s < len * 32 - 12; s += 14)
+          g.fillRect(1, s, 2, 2);
+      }
+    });
+    if (themeIdx === 0) {
+      const strands = [strand("#5d8a4e", "#7cc24e", true)];
+      return {
+        tuft: [
+          bladeSet([[0, 5], [4, 7], [8, 4]], "#3f7d31", "#4c8f3a"),
+          bladeSet([[1, 7], [5, 4], [9, 6]], "#3f7d31", "#4c8f3a"),
+          bladeSet([[0, 4], [3, 6], [7, 7], [10, 3]], "#4c8f3a", "#5aa03c")
+        ],
+        flower: BAND_PETALS[0].map((p) => flower("#3f7d31", p)),
+        speck: [speck("#9aa4ad"), speck("#b3bcac")],
+        vine: [1, 2, 3].map((len) => strands[0](len))
+      };
+    }
+    if (themeIdx === 1) {
+      const cactus = (armL, armR) => mk(12, 16, (g) => {
+        g.fillStyle = "#5d8a4e";
+        g.fillRect(4, 2, 4, 14);
+        if (armL) {
+          g.fillRect(0, 7, 4, 3);
+          g.fillRect(0, 3, 3, 5);
+        }
+        if (armR) {
+          g.fillRect(8, 9, 4, 3);
+          g.fillRect(9, 5, 3, 5);
+        }
+        g.fillStyle = "rgba(28,52,24,0.35)";
+        g.fillRect(5, 3, 1, 13);
+      });
+      return {
+        cactus: [cactus(true, false), cactus(true, true)],
+        bones: [
+          mk(13, 6, (g) => {
+            g.fillStyle = "#e8dcc0";
+            g.fillRect(0, 3, 13, 2);
+            g.fillRect(2, 0, 2, 4);
+            g.fillRect(6, 1, 2, 3);
+            g.fillRect(10, 0, 2, 4);
+          }),
+          mk(9, 5, (g) => {
+            g.fillStyle = "#ddd0b2";
+            g.fillRect(0, 2, 9, 2);
+            g.fillRect(1, 0, 2, 3);
+            g.fillRect(5, 1, 2, 3);
+          })
+        ],
+        pebbles: [
+          mk(12, 4, (g) => {
+            g.fillStyle = "#a5765a";
+            g.fillRect(0, 1, 6, 3);
+            g.fillRect(7, 2, 4, 2);
+            g.fillStyle = "rgba(255,226,178,0.35)";
+            g.fillRect(1, 1, 3, 1);
+          }),
+          mk(9, 3, (g) => {
+            g.fillStyle = "#9c6e52";
+            g.fillRect(0, 1, 5, 2);
+            g.fillRect(6, 0, 3, 3);
+          })
+        ],
+        speck: [speck("#a5765a"), speck("#8a5c40")],
+        vine: [1, 2, 3].map((len) => strand("#8a6238", "#a8794f", false)(len))
+      };
+    }
+    const fern = (lean) => mk(14, 14, (g) => {
+      g.fillStyle = "#3f8f52";
+      for (const l of [-lean, 0, lean]) {
+        g.beginPath();
+        g.moveTo(6, 14);
+        g.lineTo(6 + l, 1);
+        g.lineTo(9, 14);
+        g.closePath();
+        g.fill();
+      }
+      g.fillStyle = "rgba(16,56,32,0.35)";
+      g.fillRect(7, 4, 1, 10);
+    });
+    return {
+      fern: [fern(5), fern(3)],
+      mushroom: [
+        mk(12, 9, (g) => {
+          g.fillStyle = "#d8c9a8";
+          g.fillRect(2, 4, 3, 5);
+          g.fillRect(8, 6, 2, 3);
+          g.fillStyle = "#b06a4a";
+          g.fillRect(0, 1, 7, 4);
+          g.fillRect(6, 3, 6, 3);
+          g.fillStyle = "#f2e6cc";
+          g.fillRect(2, 2, 2, 1);
+        }),
+        mk(8, 7, (g) => {
+          g.fillStyle = "#d8c9a8";
+          g.fillRect(3, 3, 2, 4);
+          g.fillStyle = "#a05f42";
+          g.fillRect(1, 1, 6, 3);
+          g.fillStyle = "#eeddbb";
+          g.fillRect(2, 2, 2, 1);
+        })
+      ],
+      flower: BAND_PETALS[2].map((p) => flower("#2f6b3e", p)),
+      speck: [speck("#5d7263"), speck("#74877a")],
+      vine: [1, 2, 3].map((len) => strand("#2f6b3e", "#4c8f4e", true)(len))
+    };
+  }
   var PROP_H = 92;
   function buildPropArt(themeIdx) {
     const variants = [];
@@ -4201,9 +4389,10 @@
     const size = disc.r * 4;
     const c = makeCanvas(size, size);
     const g = c.getContext("2d");
+    const haloA = disc.kind === "moon" ? 0.4 : 0.55;
     const grad = g.createRadialGradient(size / 2, size / 2, disc.r * 0.5, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, withAlpha(disc.halo, 0.55));
-    grad.addColorStop(0.45, withAlpha(disc.halo, 0.22));
+    grad.addColorStop(0, withAlpha(disc.halo, haloA));
+    grad.addColorStop(0.45, withAlpha(disc.halo, haloA * 0.4));
     grad.addColorStop(1, withAlpha(disc.halo, 0));
     g.fillStyle = grad;
     g.fillRect(0, 0, size, size);
@@ -4211,7 +4400,37 @@
     g.beginPath();
     g.arc(size / 2, size / 2, disc.r, 0, Math.PI * 2);
     g.fill();
+    if (disc.kind === "moon") {
+      g.fillStyle = withAlpha(disc.halo, 0.55);
+      const r = disc.r;
+      g.fillRect(size / 2 - r * 0.45, size / 2 - r * 0.3, r * 0.34, r * 0.34);
+      g.fillRect(size / 2 + r * 0.1, size / 2 + r * 0.15, r * 0.5, r * 0.5);
+      g.fillRect(size / 2 - r * 0.15, size / 2 + r * 0.5, r * 0.26, r * 0.26);
+    }
     return c;
+  }
+  var STARS_W = 1024;
+  var STARS_H = 300;
+  function buildStars(rng, count, color) {
+    const pts = [];
+    for (let i = 0;i < count; i++) {
+      pts.push({
+        x: Math.floor(rng() * STARS_W),
+        y: Math.floor(rng() * STARS_H * 0.85),
+        s: rng() < 0.75 ? 1 : 2,
+        a: 0.5 + (rng() < 0.5 ? 0 : 0.3)
+      });
+    }
+    if (!RASTER_OK)
+      return { canvas: null, points: pts };
+    const c = makeCanvas(STARS_W, STARS_H);
+    const g = c.getContext("2d");
+    for (const p of pts) {
+      g.globalAlpha = p.a;
+      g.fillStyle = color;
+      g.fillRect(p.x, p.y, p.s, p.s);
+    }
+    return { canvas: c, points: pts };
   }
   function buildGlow(color) {
     const size = 64;
@@ -4241,6 +4460,12 @@
   function wrapOffset(scrollPx, w) {
     return -((scrollPx % w + w) % w);
   }
+  var COIN_SPIN_PERIOD = 1.2;
+  var COIN_GLINT_PERIOD = 3;
+  var COIN_GLINT_WINDOW = 0.12;
+  function coinGlintAt(clock, index) {
+    return (clock + index * 1.37) % COIN_GLINT_PERIOD < COIN_GLINT_WINDOW;
+  }
 
   class Sprites {
     constructor() {
@@ -4253,6 +4478,9 @@
       this._terrainArt = [null, null, null];
       this._foreArt = [null, null, null];
       this._propArt = [null, null, null];
+      this._decorArt = [null, null, null];
+      this._aoSource = null;
+      this._aoDepth = null;
       this._vigCache = [null, null, null];
       this._decor = [];
       this._decorSource = null;
@@ -4310,12 +4538,14 @@
       (this._zenithCache ??= {})[key] = { h: viewH, grad };
       return grad;
     }
-    _ensureBackdrop(levelNumber, themeIdx) {
-      if (this._backdrop && this._backdrop.levelNumber === levelNumber) {
+    _ensureBackdrop(levelNumber, themeIdx, seed = null) {
+      const seedKey = seed === null || seed === undefined ? Math.imul(levelNumber, 2654435761) >>> 0 : seed >>> 0;
+      if (this._backdrop && this._backdrop.levelNumber === levelNumber && this._backdrop.seedKey === seedKey) {
         return this._backdrop;
       }
       const theme = THEMES[themeIdx];
-      const rng = makeRng2(Math.imul(levelNumber, 2654435761) ^ 2709177233);
+      const rng = makeRng2(seedKey ^ 2709177233);
+      const discPos = { x: 0.12 + rng() * 0.76, y: 0.14 + rng() * 0.16 };
       const fore = [];
       const foreCount = 5 + Math.floor(rng() * 3);
       for (let i = 0;i < foreCount; i++) {
@@ -4327,20 +4557,26 @@
           k: 0.6 + rng() * 0.8
         });
       }
+      const stars = theme.stars ? buildStars(rng, theme.starDensity, theme.starColor) : null;
+      const bake = RASTER_OK;
       this._backdrop = {
         levelNumber,
-        disc: buildDisc(theme.disc),
-        cloudsFar: buildCloudBand(rng, 1024, 110, 5, theme.cloud, 0.5),
-        cloudsMid: buildCloudBand(rng, 1024, 130, 7, theme.cloud, 0.72),
-        cloudsLow: buildCloudBand(rng, 1024, 80, 6, theme.cloud, 0.45),
-        hills: buildHills(rng, 1024, 170, theme.hillFar, theme.hillNear),
-        nearBg: buildNearBg(rng, themeIdx),
+        seedKey,
+        disc: bake ? buildDisc(theme.disc) : null,
+        discPos,
+        cloudsFar: bake ? buildCloudBand(rng, 1024, 110, 5, theme.cloud, 0.5) : null,
+        cloudsMid: bake ? buildCloudBand(rng, 1024, 130, 7, theme.cloud, 0.72) : null,
+        cloudsLow: bake ? buildCloudBand(rng, 1024, 80, 6, theme.cloud, 0.45) : null,
+        hills: bake ? buildHills(rng, 1024, 170, theme.hillFar, theme.hillNear) : null,
+        nearBg: bake ? buildNearBg(rng, themeIdx) : null,
         fore,
-        haze: buildHaze(themeIdx)
+        stars,
+        haze: bake ? buildHaze(themeIdx) : null,
+        placements: { seedKey, discPos, fore, stars: stars ? stars.points : [] }
       };
       return this._backdrop;
     }
-    drawBackground(ctx, levelNumber, cameraX, viewW, viewH, worldBottomScreen = Infinity) {
+    drawBackground(ctx, levelNumber, cameraX, viewW, viewH, worldBottomScreen = Infinity, seed = null) {
       const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
       const theme = THEMES[themeIdx];
       ctx.fillStyle = this._skyGradient(ctx, themeIdx, viewH);
@@ -4352,16 +4588,22 @@
       }
       if (!this.images.backgrounds)
         return;
-      const bd = this._ensureBackdrop(levelNumber, themeIdx);
+      const bd = this._ensureBackdrop(levelNumber, themeIdx, seed);
       const groundH = 24 * 2;
       const bandY = Math.min(viewH - groundH, worldBottomScreen);
-      const disc = theme.disc;
-      ctx.drawImage(bd.disc, viewW * disc.x - cameraX * 0.02 - bd.disc.width / 2, viewH * disc.y - bd.disc.height / 2);
-      this._blitWrapped(ctx, bd.cloudsFar, cameraX * 0.1, viewH * 0.06, viewW);
-      this._blitWrapped(ctx, bd.cloudsMid, cameraX * 0.25, viewH * 0.2, viewW);
+      const rise = (k, cap) => Math.min(cap, Math.max(0, altPx * k));
+      if (bd.stars) {
+        ctx.save();
+        ctx.globalAlpha = 0.72 + 0.16 * Math.sin(this.clock * 0.7);
+        this._blitWrapped(ctx, bd.stars.canvas, cameraX * 0.02, rise(0.02, 40), viewW);
+        ctx.restore();
+      }
+      ctx.drawImage(bd.disc, viewW * bd.discPos.x - cameraX * 0.02 - bd.disc.width / 2, viewH * bd.discPos.y + rise(0.03, 50) - bd.disc.height / 2);
+      this._blitWrapped(ctx, bd.cloudsFar, cameraX * 0.05, viewH * 0.06 + rise(0.04, 60), viewW);
+      this._blitWrapped(ctx, bd.cloudsMid, cameraX * 0.12, viewH * 0.2 + rise(0.07, 80), viewW);
+      this._blitWrapped(ctx, bd.cloudsLow, cameraX * 0.25, bandY - bd.cloudsLow.height - 10 + rise(0.1, 44), viewW);
       this._blitWrapped(ctx, bd.hills, cameraX * 0.35, bandY - bd.hills.height + 12, viewW);
       ctx.drawImage(bd.haze, 0, bandY - HAZE_H, viewW, HAZE_H);
-      this._blitWrapped(ctx, bd.cloudsLow, cameraX * 0.4, bandY - bd.cloudsLow.height - 10, viewW);
       this._tileStrip(ctx, this.images.backgrounds, theme.x, 48, theme.w, 24, groundH, cameraX * 0.5, bandY, viewW);
       if (bandY + groundH < viewH) {
         ctx.fillStyle = theme.ground;
@@ -4388,9 +4630,9 @@
       ctx.fillStyle = theme.mood;
       ctx.fillRect(cameraX - 16, -cameraY - 16, effW + 32, effH + 32);
     }
-    drawForeground(ctx, levelNumber, cameraX, viewW, viewH) {
+    drawForeground(ctx, levelNumber, cameraX, viewW, viewH, seed = null) {
       const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
-      const bd = this._ensureBackdrop(levelNumber, themeIdx);
+      const bd = this._ensureBackdrop(levelNumber, themeIdx, seed);
       const art = this._foreArt[themeIdx] ?? buildForeArt(themeIdx);
       this._foreArt[themeIdx] = art;
       ctx.save();
@@ -4566,11 +4808,14 @@
         return false;
       };
       const KINDS = [
-        [["tuft", 0.5], ["flower", 0.3], ["pebble", 0.2]],
-        [["cactus", 0.4], ["pebbles", 0.35], ["bones", 0.25]],
-        [["mushroom", 0.4], ["fern", 0.35], ["pebble", 0.25]]
+        [["tuft", 0.75], ["flower", 0.25]],
+        [["cactus", 0.5], ["bones", 0.25], ["pebbles", 0.25]],
+        [["fern", 0.6], ["mushroom", 0.25], ["flower", 0.15]]
       ][themeIdx];
       const SIGNATURE = ["tree", "bigcactus", "bamboo"][themeIdx];
+      let flowerLastTx = -99;
+      let flowerRunCount = 0;
+      let prevEligibleTx = -99;
       for (let ty = 1;ty < level.height; ty++) {
         for (let tx = 0;tx < level.width; tx++) {
           if (level.tiles[ty][tx] !== 1 || level.tiles[ty - 1][tx] !== 0)
@@ -4579,7 +4824,12 @@
             continue;
           if (onCeiling(tx, ty))
             continue;
-          if (rng() <= 0.34) {
+          if (tx !== prevEligibleTx + 1) {
+            flowerLastTx = -99;
+            flowerRunCount = 0;
+          }
+          prevEligibleTx = tx;
+          if (rng() <= 0.2) {
             let roll = rng();
             let kind = KINDS[KINDS.length - 1][0];
             for (const [name, weight] of KINDS) {
@@ -4589,12 +4839,21 @@
               }
               roll -= weight;
             }
+            if (kind === "flower") {
+              if (tx - flowerLastTx < 4 || flowerRunCount >= 3) {
+                kind = KINDS[0][0];
+              } else {
+                flowerLastTx = tx;
+                flowerRunCount++;
+              }
+            }
+            const variants = DECOR_VARIANTS[themeIdx][kind];
             decor.push({
               tx,
               ty,
               kind,
-              ox: Math.floor(rng() * 18),
-              petal: Math.floor(rng() * FLOWER_COLORS.length),
+              v: Math.floor(rng() * variants),
+              ox: Math.floor(rng() * (32 - DECOR_ART_W[kind])),
               ph: rng() * Math.PI * 2
             });
           } else if (rng() <= 0.05 && openAbove(tx, ty, 3) && !spikeNear(tx, ty, 2)) {
@@ -4603,41 +4862,80 @@
               ty,
               kind: SIGNATURE,
               ox: 0,
-              petal: 0,
               v: Math.floor(rng() * 2),
               ph: rng() * Math.PI * 2
             });
           }
         }
       }
-      if (themeIdx === 2) {
-        const vrng = makeRng2((Math.imul(level.levelNumber, 1374926497) ^ 3017259506) + 1);
-        for (let ty = 0;ty < level.height - 1; ty++) {
-          for (let tx = 0;tx < level.width; tx++) {
-            if (level.tiles[ty][tx] !== 1 || level.tiles[ty + 1][tx] !== 0)
-              continue;
-            if (vrng() > 0.16 || spikeNear(tx, ty + 1, 1))
-              continue;
-            let len = 1 + Math.floor(vrng() * 3);
-            while (len > 0 && ty + 1 + len < level.height && level.tiles[ty + 1 + len][tx] !== 0)
-              len--;
-            if (len <= 0)
-              continue;
-            decor.push({
-              tx,
-              ty: ty + 1,
-              kind: "vine",
-              ox: 4 + Math.floor(vrng() * 20),
-              petal: 0,
-              len,
-              ph: vrng() * Math.PI * 2
-            });
-          }
+      const prng = makeRng2((Math.imul(level.levelNumber, 1374926497) ^ 3017259506) + 2);
+      for (let ty = 0;ty < level.height; ty++) {
+        for (let tx = 0;tx < level.width; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          const leftAir = tx === 0 || level.tiles[ty][tx - 1] !== 1;
+          const rightAir = tx === level.width - 1 || level.tiles[ty][tx + 1] !== 1;
+          if (!leftAir && !rightAir)
+            continue;
+          if (onCeiling(tx, ty))
+            continue;
+          if (prng() > 0.08 || spikeNear(tx, ty, 1))
+            continue;
+          decor.push({
+            tx,
+            ty,
+            kind: "speck",
+            v: Math.floor(prng() * 2),
+            side: leftAir && !rightAir ? -1 : rightAir && !leftAir ? 1 : prng() < 0.5 ? -1 : 1,
+            oy: 14 + Math.floor(prng() * 12)
+          });
+        }
+      }
+      const vrng = makeRng2((Math.imul(level.levelNumber, 1374926497) ^ 3017259506) + 1);
+      for (let ty = 0;ty < level.height - 1; ty++) {
+        for (let tx = 0;tx < level.width; tx++) {
+          if (level.tiles[ty][tx] !== 1 || level.tiles[ty + 1][tx] !== 0)
+            continue;
+          if (vrng() > 0.1 || spikeNear(tx, ty + 1, 1))
+            continue;
+          let len = 1 + Math.floor(vrng() * 3);
+          while (len > 0 && ty + 1 + len < level.height && level.tiles[ty + 1 + len][tx] !== 0)
+            len--;
+          if (len <= 0)
+            continue;
+          decor.push({
+            tx,
+            ty: ty + 1,
+            kind: "vine",
+            ox: 4 + Math.floor(vrng() * (32 - DECOR_ART_W.vine)),
+            len,
+            ph: vrng() * Math.PI * 2
+          });
         }
       }
       this._decorSource = level;
       this._decor = decor;
       return decor;
+    }
+    _ensureAo(level) {
+      if (this._aoSource === level)
+        return this._aoDepth;
+      const { width: w, height: h } = level;
+      const depth = new Uint8Array(w * h);
+      for (let tx = 0;tx < w; tx++) {
+        let run = 0;
+        for (let ty = 0;ty < h; ty++) {
+          if (level.tiles[ty][tx] === 1) {
+            depth[ty * w + tx] = Math.min(8, run);
+            run++;
+          } else {
+            run = 0;
+          }
+        }
+      }
+      this._aoSource = level;
+      this._aoDepth = depth;
+      return depth;
     }
     drawWorld(ctx, level, cameraX, cameraY, viewW, viewH) {
       this._level = level;
@@ -4683,7 +4981,9 @@
           ctx.fillRect(tx * size, ty * size, drawn, 2);
         }
       }
-      ctx.fillStyle = "rgba(10,16,32,0.10)";
+      const bd = this._ensureBackdrop(level.levelNumber, themeIdx, level.seed === undefined || level.seed === null ? null : level.seed);
+      const litRight = bd.discPos.x >= 0.5;
+      ctx.fillStyle = litRight ? "rgba(10,16,32,0.16)" : "rgba(10,16,32,0.10)";
       for (let ty = r0;ty <= r1; ty++) {
         for (let tx = c0;tx <= c1; tx++) {
           if (level.tiles[ty][tx] !== 1)
@@ -4693,7 +4993,7 @@
           ctx.fillRect(tx * size, ty * size, 3, drawn);
         }
       }
-      ctx.fillStyle = "rgba(10,16,32,0.16)";
+      ctx.fillStyle = litRight ? "rgba(10,16,32,0.10)" : "rgba(10,16,32,0.16)";
       for (let ty = r0;ty <= r1; ty++) {
         for (let tx = c0;tx <= c1; tx++) {
           if (level.tiles[ty][tx] !== 1)
@@ -4703,120 +5003,73 @@
           ctx.fillRect((tx + 1) * size - 3, ty * size, 3, drawn);
         }
       }
+      ctx.fillStyle = THEMES[themeIdx].rimSide;
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          const neighbour = litRight ? tx < level.width - 1 ? level.tiles[ty][tx + 1] : 0 : tx > 0 ? level.tiles[ty][tx - 1] : 0;
+          if (neighbour === 1)
+            continue;
+          ctx.fillRect(litRight ? (tx + 1) * size - 1 : tx * size, ty * size, 1, drawn);
+        }
+      }
+      const ao = this._ensureAo(level);
+      const aoTint = THEMES[themeIdx].aoDark;
+      ctx.fillStyle = aoTint + "0.10)";
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          if (ty > 0 && level.tiles[ty - 1][tx] === 1 && ao[ty * level.width + tx] <= 2) {
+            ctx.fillRect(tx * size, ty * size, drawn, 4);
+          }
+        }
+      }
+      ctx.fillStyle = aoTint + "0.05)";
+      for (let ty = r0;ty <= r1; ty++) {
+        for (let tx = c0;tx <= c1; tx++) {
+          if (level.tiles[ty][tx] !== 1)
+            continue;
+          if (ty > 0 && level.tiles[ty - 1][tx] === 1 && ao[ty * level.width + tx] > 2) {
+            ctx.fillRect(tx * size, ty * size, drawn, 4);
+          }
+        }
+      }
       this._drawDecor(ctx, this._ensureDecor(level), size, c0, c1, themeIdx);
     }
     _drawDecor(ctx, decor, size, c0, c1, themeIdx) {
+      const art = this._decorArt[themeIdx] ?? buildDecorArt(themeIdx);
+      this._decorArt[themeIdx] = art;
       const clock = this.clock;
-      const stone = ["#8f9aa3", "#a5765a", "#5d7263"][themeIdx];
       for (const d of decor) {
         if (d.tx < c0 || d.tx > c1)
           continue;
-        const x = d.tx * size + d.ox;
-        const y = d.ty * size;
         switch (d.kind) {
-          case "tuft":
-            ctx.fillStyle = "#3f7d31";
-            ctx.fillRect(x, y - 6, 2, 6);
-            ctx.fillRect(x + 3, y - 9, 2, 9);
-            ctx.fillRect(x + 6, y - 5, 2, 5);
+          case "speck":
+            ctx.drawImage(art.speck[d.v], d.tx * size + (d.side < 0 ? 1 : size - DECOR_ART_W.speck - 1), d.ty * size + d.oy);
             break;
-          case "flower": {
-            const rot = Math.sin(clock * 2.2 + d.ph) * 0.06;
-            ctx.save();
-            ctx.translate(x + 2, y);
-            ctx.rotate(rot);
-            ctx.fillStyle = "#3f7d31";
-            ctx.fillRect(-1, -7, 2, 7);
-            ctx.fillStyle = FLOWER_COLORS[d.petal];
-            ctx.fillRect(-2, -11, 5, 4);
-            ctx.restore();
+          case "vine":
+            ctx.drawImage(art.vine[d.len - 1], d.tx * size + d.ox, d.ty * size);
             break;
-          }
-          case "pebble":
-            ctx.fillStyle = stone;
-            ctx.fillRect(x, y - 3, 5, 3);
-            break;
-          case "cactus": {
-            const rot = Math.sin(clock * 1.1 + d.ph) * 0.02;
-            ctx.save();
-            ctx.translate(x + 2, y);
-            ctx.rotate(rot);
-            ctx.fillStyle = "#5d8a4e";
-            ctx.fillRect(-2, -12, 4, 12);
-            ctx.fillRect(-5, -8, 3, 3);
-            ctx.fillRect(3, -10, 3, 3);
-            ctx.fillStyle = "rgba(28,52,24,0.35)";
-            ctx.fillRect(-1, -11, 1, 11);
-            ctx.restore();
-            break;
-          }
-          case "pebbles":
-            ctx.fillStyle = stone;
-            ctx.fillRect(x, y - 3, 6, 3);
-            ctx.fillRect(x + 7, y - 2, 4, 2);
-            ctx.fillRect(x - 4, y - 2, 3, 2);
-            break;
-          case "bones":
-            ctx.fillStyle = "#e8dcc0";
-            ctx.fillRect(x, y - 2, 13, 2);
-            ctx.fillRect(x + 2, y - 5, 2, 4);
-            ctx.fillRect(x + 6, y - 5, 2, 4);
-            ctx.fillRect(x + 10, y - 4, 2, 3);
-            break;
-          case "mushroom":
-            ctx.fillStyle = "#d8c9a8";
-            ctx.fillRect(x + 1, y - 5, 3, 5);
-            ctx.fillRect(x + 7, y - 3, 2, 3);
-            ctx.fillStyle = "#b06a4a";
-            ctx.fillRect(x - 1, y - 8, 7, 4);
-            ctx.fillRect(x + 5, y - 5, 6, 3);
-            ctx.fillStyle = "#f2e6cc";
-            ctx.fillRect(x + 1, y - 7, 2, 1);
-            break;
-          case "fern": {
-            const rot = Math.sin(clock * 1.6 + d.ph) * 0.07;
-            ctx.save();
-            ctx.translate(x + 4, y);
-            ctx.rotate(rot);
-            ctx.fillStyle = "#3f8f52";
-            for (const lean of [-6, 0, 6]) {
-              ctx.beginPath();
-              ctx.moveTo(-1, 0);
-              ctx.lineTo(lean, -13);
-              ctx.lineTo(2, 0);
-              ctx.closePath();
-              ctx.fill();
-            }
-            ctx.restore();
-            break;
-          }
-          case "vine": {
-            const rot = Math.sin(clock * 1 + d.ph) * 0.03;
-            ctx.save();
-            ctx.translate(x + 1, y);
-            ctx.rotate(rot);
-            const L = d.len * size - 6;
-            ctx.fillStyle = "#2f6b3e";
-            ctx.fillRect(-1, 0, 2, L);
-            ctx.fillStyle = "#4c8f4e";
-            for (let s = 8;s < L - 2; s += 12) {
-              const side = (s / 12 | 0) % 2 ? 1 : -4;
-              ctx.fillRect(side, s, 5, 2);
-            }
-            ctx.restore();
-            break;
-          }
-          default: {
+          case "tree":
+          case "bigcactus":
+          case "bamboo": {
             const arts = this._propArt[themeIdx] ?? buildPropArt(themeIdx);
             this._propArt[themeIdx] = arts;
             const img = arts[d.v];
             const k = d.kind === "bamboo" ? 1.3 : d.kind === "tree" ? 0.9 : 1.1;
             const amp = d.kind === "bamboo" ? 0.02 : 0.012;
             ctx.save();
-            ctx.translate(d.tx * size + size / 2, y);
+            ctx.translate(d.tx * size + size / 2, d.ty * size);
             ctx.rotate(Math.sin(clock * k + d.ph) * amp);
             ctx.drawImage(img, -img.width / 2, -img.height + 2);
             ctx.restore();
+            break;
+          }
+          default: {
+            const img = art[d.kind][d.v];
+            ctx.drawImage(img, d.tx * size + d.ox, d.ty * size - img.height + 1);
           }
         }
       }
@@ -4913,13 +5166,15 @@
     drawCoins(ctx, coins) {
       const bobPhase = this.clock * 3;
       const glow = this._glowSprite("#ffd76a");
-      for (const coin of coins) {
+      const spinW = Math.PI * 2 / COIN_SPIN_PERIOD;
+      for (let i = 0;i < coins.length; i++) {
+        const coin = coins[i];
         if (coin.collected)
           continue;
-        const phase = coin.x * 0.11 + coin.y * 0.07;
+        const phase = i * 0.618;
         const cx = coin.x + coin.width / 2;
-        const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + phase) * 3;
-        const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * 4 + phase)));
+        const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + i * 0.9) * 3;
+        const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * spinW + phase)));
         const s = 26;
         ctx.globalAlpha = 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(bobPhase * 0.8 + phase));
         ctx.drawImage(glow, cx - 22, cy - 22, 44, 44);
@@ -4929,6 +5184,11 @@
         ctx.scale(spin, 1);
         this._drawSheet(ctx, "tiles", TILES.COIN, -s / 2, -s / 2, s, s);
         ctx.restore();
+        if (coinGlintAt(this.clock, i) && spin > 0.6) {
+          ctx.fillStyle = "rgba(255,255,255,0.9)";
+          ctx.fillRect(cx + 3, cy - 8, 2, 6);
+          ctx.fillRect(cx + 1, cy - 6, 6, 2);
+        }
       }
     }
     drawPortal(ctx, portal, unlocked) {
@@ -4940,12 +5200,24 @@
       const feetY = portal.y + PORTAL_CELL;
       const cx = portal.x + portal.width / 2;
       const cy = feetY - h / 2;
-      const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.8);
-      ctx.globalAlpha = unlocked ? 0.32 + 0.26 * pulse : 0.12;
+      const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.2);
       const themeIdx = (Math.max(1, this._level?.levelNumber ?? 1) - 1) % THEMES.length;
-      const glow = this._glowSprite(unlocked ? THEMES[themeIdx].portalGlow : "#8a7fa8");
-      const gs = 96 + 14 * pulse;
-      ctx.drawImage(glow, cx - gs / 2, cy - gs / 2, gs, gs);
+      const colour = unlocked ? THEMES[themeIdx].portalGlow : "#8a7fa8";
+      ctx.globalAlpha = unlocked ? 0.34 + 0.28 * pulse : 0.12;
+      const gs = (unlocked ? 124 : 92) + 16 * pulse;
+      ctx.drawImage(this._glowSprite(colour), cx - gs / 2, cy - gs / 2, gs, gs);
+      ctx.globalAlpha = 1;
+      const R = 30 + 3 * pulse;
+      const spin = this.clock * 0.9;
+      ctx.fillStyle = unlocked ? colour : "rgba(138,127,168,0.35)";
+      for (let i = 0;i < 7; i++) {
+        const a = spin + i * Math.PI * 2 / 7;
+        ctx.fillRect(Math.round(cx + Math.cos(a) * R) - 1, Math.round(cy + Math.sin(a) * R * 0.82) - 1, 2, 2);
+      }
+      ctx.globalAlpha = unlocked ? 0.5 + 0.3 * pulse : 0.16;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10 + 3 * pulse, 0, Math.PI * 2);
+      ctx.fill();
       ctx.globalAlpha = 1;
       ctx.save();
       if (!unlocked)
@@ -5394,7 +5666,7 @@
     }
     ctx.globalAlpha = 1;
   }
-  var MAX_MOTES = 20;
+  var MAX_MOTES = 40;
   function makeRng3(seed) {
     let s = seed >>> 0;
     return function() {
@@ -5405,20 +5677,35 @@
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
   }
-  function createMotes(count, seed, viewW, viewH) {
+  function createMotes(count, seed, viewW, viewH, opts = {}) {
     const rng = makeRng3(seed);
     const motes = [];
-    const n = Math.min(count, MAX_MOTES);
+    const n = Math.min(count, MAX_MOTES - (opts.flecks || 0));
     for (let i = 0;i < n; i++) {
+      const fly = !!opts.fireflies;
+      motes.push({
+        x: rng() * viewW,
+        y: fly ? viewH * (0.58 + rng() * 0.34) : rng() * viewH,
+        vx: 4 + rng() * 10,
+        vy: fly ? -(1 + rng() * 3) : -(2 + rng() * 6),
+        size: 1.5 + rng() * 2,
+        phase: rng() * Math.PI * 2,
+        wobble: fly ? 0.25 + rng() * 0.3 : 0.4 + rng() * 0.8,
+        par: 0.1 + rng() * 0.3
+      });
+    }
+    const fleckRoom = Math.min(opts.flecks || 0, MAX_MOTES - motes.length);
+    for (let i = 0;i < fleckRoom; i++) {
       motes.push({
         x: rng() * viewW,
         y: rng() * viewH,
-        vx: 4 + rng() * 10,
-        vy: -(2 + rng() * 6),
-        size: 1.5 + rng() * 2,
+        vx: -2 + rng() * 4,
+        vy: 26 + rng() * 30,
+        size: 1,
         phase: rng() * Math.PI * 2,
-        wobble: 0.4 + rng() * 0.8,
-        par: 0.1 + rng() * 0.3
+        wobble: 0.5 + rng() * 0.5,
+        par: 0.15 + rng() * 0.25,
+        fleck: true
       });
     }
     return motes;
@@ -5433,10 +5720,19 @@
     }
     return list;
   }
-  function drawMotes(ctx, list, cameraX, viewW, color, fireflies = false) {
+  function drawMotes(ctx, list, cameraX, viewW, color, fireflies = false, climbing = false) {
     for (const m of list) {
+      if (m.fleck) {
+        if (!climbing)
+          continue;
+        const fx = ((m.x - cameraX * m.par) % viewW + viewW) % viewW;
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = color;
+        ctx.fillRect(fx, m.y, 1, 3);
+        continue;
+      }
       const sx = ((m.x - cameraX * m.par) % viewW + viewW) % viewW;
-      const twinkle = 0.55 + 0.45 * Math.sin(m.phase * 2.3);
+      const twinkle = fireflies ? 0.5 + 0.5 * Math.sin(m.phase * 1.1) : 0.55 + 0.45 * Math.sin(m.phase * 2.3);
       ctx.globalAlpha = twinkle * (fireflies ? 0.85 : 0.45);
       ctx.fillStyle = color;
       ctx.beginPath();
@@ -6030,7 +6326,9 @@
 
   // js/main.js
   var TILE_SIZE = 32;
-  var MOTE_COUNT = 18;
+  var MOTE_COUNT = 22;
+  var CLIMB_FLECKS = 14;
+  var COIN_BURST_COLOR = "#f4b41b";
   function computeZoom(viewportHeight) {
     return Math.max(1, Math.min(3, Math.round(viewportHeight / 540)));
   }
@@ -6521,7 +6819,7 @@
     update(dt) {
       this.sprites.advance(dt);
       stepParticles(this.particles, dt);
-      if (this.motes.length) {
+      if (this.motes.length && this.state !== STATE.PAUSED) {
         stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
       }
       if (this.shakeTime > 0)
@@ -6649,7 +6947,7 @@
         const collectedCoins = this.collectibles.checkCollection(this.player);
         if (collectedCoins > 0) {
           playSfx("coin");
-          spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ffd23f", 12);
+          spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, COIN_BURST_COLOR, 12);
           this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
           this.levelCoinPoints += collectedCoins * COIN_POINTS;
           for (let i = 0;i < collectedCoins; i++)
@@ -6711,10 +7009,10 @@
         const zoom = this.zoom;
         const effW = viewW / zoom;
         const effH = viewH / zoom;
+        const worldBottom = this.level.height * this.level.tileSize;
+        const worldBottomScreen = (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
         if (sprites) {
-          const worldBottom = this.level.height * this.level.tileSize;
-          const worldBottomScreen = (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
-          sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottomScreen);
+          sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, worldBottomScreen, this.level.seed === undefined ? null : this.level.seed);
         }
         let shakeX = 0;
         let shakeY = 0;
@@ -6742,16 +7040,17 @@
         if (this.particles.length)
           drawParticles(this.ctx, this.particles);
         this.ctx.restore();
+        const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
         if (this._motesSource !== this.level) {
           this._motesSource = this.level;
-          this.motes = createMotes(MOTE_COUNT, Math.imul(this.currentLevel, 2654435761) >>> 0, viewW, viewH);
+          const climbMap = worldBottom > viewH / zoom + 64;
+          this.motes = createMotes(MOTE_COUNT, (Math.imul((this.level.seed ?? this.currentLevel) >>> 0, 2654435761) ^ 1374926497) >>> 0, viewW, viewH, { fireflies: amb.fireflies, flecks: climbMap ? CLIMB_FLECKS : 0 });
         }
         if (this.motes.length) {
-          const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
-          drawMotes(this.ctx, this.motes, this.camera.x, viewW, amb.mote, amb.fireflies);
+          drawMotes(this.ctx, this.motes, this.camera.x, viewW, amb.mote, amb.fireflies, worldBottomScreen - viewH > 64);
         }
         if (sprites) {
-          sprites.drawForeground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH);
+          sprites.drawForeground(this.ctx, this.currentLevel, this.camera.x, viewW, viewH, this.level.seed === undefined ? null : this.level.seed);
           sprites.drawVignette(this.ctx, this.currentLevel, viewW, viewH);
         }
         if (this.level && this.level.seed !== null) {

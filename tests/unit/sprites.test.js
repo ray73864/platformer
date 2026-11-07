@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE } from "../../js/sprites.js";
+import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE, coinGlintAt, COIN_GLINT_PERIOD, COIN_GLINT_WINDOW, COIN_SPIN_PERIOD } from "../../js/sprites.js";
 import { Level, motifForLevel } from "../../js/level.js";
 
 // Frame-map integrity: every index referenced by the renderer must exist
@@ -230,20 +230,24 @@ test("moving platform decks draw deterministic vector art with a speed cue", () 
     expect(dusk.ops).not.toEqual(jungle.ops);
 });
 
-test("only jungle levels grow ceiling vines", () => {
+// Look-A promoted hanging strands from a jungle-exclusive to an every-band
+// stratum (jungle leafy vines, day tendrils, dusk dry ropes — kind stays
+// 'vine', art varies per band). The old test pinned the jungle-only rule;
+// this adapted version keeps the same strength of guarantee on the new
+// contract: deterministic per band, and dense ceilings DO grow strands.
+test("hanging strands grow under shelf faces on every band", () => {
     const sprites = new Sprites();
-    // A dense ceiling row gives the vine pass plenty of candidate undersides.
+    // A dense ceiling row gives the strand pass plenty of candidate
+    // undersides; the roll is fixed-quantity 10% per underside so a 18-cell
+    // ceiling lands at least one hit on every band's derived stream.
     const withCeiling = (n) => {
         const level = fakeLevel(n);
         for (let tx = 2; tx < 20; tx++) level.tiles[3][tx] = 1;
         return sprites._ensureDecor(level).some(d => d.kind === 'vine');
     };
-    // Deterministic per level number (fixed derived seed), so these are hard
-    // assertions: day (1) and dusk (8) bands NEVER grow vines regardless of
-    // geometry; jungle (6) does grow them when ledges exist.
-    expect(withCeiling(1)).toBe(false);
-    expect(withCeiling(8)).toBe(false);
-    expect(withCeiling(6)).toBe(true);
+    expect(withCeiling(1)).toBe(true);   // day tendrils
+    expect(withCeiling(8)).toBe(true);   // dusk dry ropes
+    expect(withCeiling(6)).toBe(true);   // jungle vines
 });
 
 // ---------------------------------------------------------------------------
@@ -478,4 +482,90 @@ test("canyon canopy rock hosts no surface growth (vines below stay)", () => {
         }
     }
     expect(maps).toBe(6);
+});
+
+// ---------------------------------------------------------------------------
+// Look-A (world look): seeded sky/hill backdrop, AO column profile, coin
+// life cadence, flower shelf budget. All pure-data contracts — they hold in
+// headless runs because the bakers skip pixels but never re-order rng draws.
+// ---------------------------------------------------------------------------
+test("backdrop placements are deterministic per level seed and differ across seeds", () => {
+    const pa = new Sprites()._ensureBackdrop(6, 2, 123456789).placements;
+    const pb = new Sprites()._ensureBackdrop(6, 2, 123456789).placements;
+    expect(pa).toEqual(pb);
+    // Same instance + same key returns the cached object untouched.
+    const s = new Sprites();
+    const first = s._ensureBackdrop(6, 2, 123456789).placements;
+    expect(s._ensureBackdrop(6, 2, 123456789).placements).toBe(first);
+    // A different level seed must re-hash the sky: hills, clouds, stars and
+    // the disc home all shift.
+    const pc = new Sprites()._ensureBackdrop(6, 2, 987654321).placements;
+    expect(pc.discPos).not.toEqual(pa.discPos);
+    expect(pc.fore).not.toEqual(pa.fore);
+});
+
+test("the hashed disc home always sits in the safe upper-sky band", () => {
+    const s = new Sprites();
+    for (let i = 0; i < 500; i++) {
+        const seed = Math.imul(i + 1, 2654435761) >>> 0;
+        const levelNumber = (i % 9) + 1;
+        const p = s._ensureBackdrop(levelNumber, (levelNumber - 1) % 3, seed)
+            .placements.discPos;
+        expect(p.x).toBeGreaterThanOrEqual(0.12);
+        expect(p.x).toBeLessThan(0.88);
+        expect(p.y).toBeGreaterThanOrEqual(0.14);
+        expect(p.y).toBeLessThan(0.30);
+    }
+});
+
+test("_ensureAo counts consecutive solids above each cell (burial depth)", () => {
+    const s = new Sprites();
+    const level = fakeLevel(4);          // column 0: solid rows 8..11
+    const ao = s._ensureAo(level);
+    const w = level.width;
+    expect(ao[8 * w + 0]).toBe(0);       // exposed cap row
+    expect(ao[9 * w + 0]).toBe(1);       // buried: one solid above
+    expect(ao[10 * w + 0]).toBe(2);
+    expect(ao[11 * w + 0]).toBe(3);
+    expect(ao[7 * w + 0]).toBe(0);       // empty cell reads zero
+    expect(s._ensureAo(level)).toBe(ao); // cache guard: identity per level
+});
+
+test("coin glints fire on a 3 s duty cycle, staggered so coins never blink together", () => {
+    const samples = [];
+    for (let t = 0; t < 30; t += 0.01) samples.push(t);
+    const active = (i) => samples.filter(t => coinGlintAt(t, i)).length;
+    const duty = COIN_GLINT_WINDOW / COIN_GLINT_PERIOD;
+    expect(active(0) / samples.length).toBeCloseTo(duty, 2);
+    expect(active(1) / samples.length).toBeCloseTo(duty, 2);
+    // The per-index offset (1.37 s) exceeds the window: windows never overlap.
+    for (const t of samples) {
+        expect(coinGlintAt(t, 0) && coinGlintAt(t, 1)).toBe(false);
+    }
+    // Spin period constant shipped at the briefed ~1.2 s.
+    expect(COIN_SPIN_PERIOD).toBeCloseTo(1.2, 6);
+});
+
+test("flowers respect the shelf budget: <=3 per contiguous run, >=4 cells apart", () => {
+    const sprites = new Sprites();
+    const wideShelf = (n) => {
+        const width = 40, height = 10;
+        const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
+        for (let tx = 0; tx < width; tx++) { tiles[8][tx] = 1; tiles[9][tx] = 1; }
+        return { levelNumber: n, width, height, tiles, tileSize: 32 };
+    };
+    let sawFlower = 0;
+    for (const n of [1, 4, 7, 2, 5, 8]) {
+        const flowers = sprites._ensureDecor(wideShelf(n))
+            .filter(d => d.kind === 'flower')
+            .map(d => d.tx).sort((a, b) => a - b);
+        sawFlower += flowers.length > 0 ? 1 : 0;
+        expect(flowers.length, `L${n}: shelf flower cap`).toBeLessThanOrEqual(3);
+        for (let i = 1; i < flowers.length; i++) {
+            expect(flowers[i] - flowers[i - 1], `L${n}: flower spacing`)
+                .toBeGreaterThanOrEqual(4);
+        }
+    }
+    // Not just vacuously true: the budget actually engaged on real rolls.
+    expect(sawFlower).toBeGreaterThan(0);
 });

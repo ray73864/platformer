@@ -54,3 +54,47 @@ test("drawParticles restores globalAlpha to 1", () => {
     expect(calls.length).toBe(3);
     expect(ctx.globalAlpha).toBe(1);
 });
+
+// ---------------------------------------------------------------------------
+// Look-A ambient field: hard cap including climb flecks, firefly ground band,
+// falling-fleck motion, and draw-gating so flecks only exist mid-ascent.
+// ---------------------------------------------------------------------------
+import { createMotes, stepMotes, drawMotes, MAX_MOTES } from "../../js/particles.js";
+
+test("the mote field respects the hard cap including climb flecks", () => {
+    const list = createMotes(40, 1234, 1200, 700, { fireflies: true, flecks: 14 });
+    expect(list.length).toBeLessThanOrEqual(MAX_MOTES);
+    expect(MAX_MOTES).toBe(40);
+    expect(list.filter(m => m.fleck).length).toBe(14);
+});
+
+test("fireflies spawn in the ground band; day dust fills the air", () => {
+    const night = createMotes(20, 99, 1200, 700, { fireflies: true });
+    for (const m of night) expect(m.y).toBeGreaterThanOrEqual(700 * 0.58 - 1e-9);
+    const day = createMotes(20, 99, 1200, 700);
+    expect(day.some(m => m.y < 700 * 0.5)).toBe(true);
+});
+
+test("flecks fall (height cue), motes rise", () => {
+    const list = createMotes(6, 7, 800, 600, { flecks: 4 });
+    const fleck = list.find(m => m.fleck && m.y < 500);
+    const mote = list.find(m => !m.fleck);
+    const fy = fleck.y, my = mote.y;
+    stepMotes(list, 0.1, 800, 600);
+    expect(fleck.y).toBeGreaterThan(fy);
+    expect(mote.y).toBeLessThan(my);
+});
+
+test("climb flecks render only while climbing", () => {
+    const list = createMotes(1, 5, 800, 600, { flecks: 3 });
+    let rects = 0;
+    const ctx = {
+        globalAlpha: 1, fillStyle: '',
+        beginPath() {}, arc() {}, fill() {}, fillRect() { rects++; }
+    };
+    drawMotes(ctx, list, 0, 800, '#fff', false, false);
+    expect(rects).toBe(0);
+    drawMotes(ctx, list, 0, 800, '#fff', false, true);
+    expect(rects).toBe(3);
+    expect(ctx.globalAlpha).toBe(1);
+});

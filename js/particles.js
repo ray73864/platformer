@@ -55,15 +55,21 @@ export function drawParticles(ctx, list) {
 }
 
 // ---------------------------------------------------------------------------
-// Ambient motes: slow-drifting dust (day themes) or fireflies/spores. These
-// live in SCREEN space (not world), so they never collide with gameplay, and
-// their positions wrap at the viewport edges. Spawns are seeded (a local
+// Ambient motes: slow-drifting dust (day themes) or fireflies (dusk/jungle).
+// These live in SCREEN space (not world), so they never collide with gameplay,
+// and their positions wrap at the viewport edges. Spawns are seeded (a local
 // mulberry32 copy — render code must never consume Math.random) so a level
 // always gets the same mote field, and each mote carries its own parallax
 // depth applied against cameraX at draw time.
+//
+// Look-A additions: `fireflies` concentrates spawns into a ground-hugging
+// band with a SLOW sine blink (night-life read, not TV static); `flecks`
+// adds falling streaks that only render while the camera is aloft on a
+// vertical map — the height cue for climbs. Total live count stays hard-
+// capped at MAX_MOTES.
 // ---------------------------------------------------------------------------
 
-export const MAX_MOTES = 20;
+export const MAX_MOTES = 40;
 
 function makeRng(seed) {
     let s = seed >>> 0;
@@ -77,20 +83,40 @@ function makeRng(seed) {
 }
 
 // Build a capped mote field across a viewW×viewH screen from `seed`.
-export function createMotes(count, seed, viewW, viewH) {
+// opts.fireflies → ground band + slow blink; opts.flecks → N falling
+// streaks (drawn only while climbing, see drawMotes).
+export function createMotes(count, seed, viewW, viewH, opts = {}) {
     const rng = makeRng(seed);
     const motes = [];
-    const n = Math.min(count, MAX_MOTES);
+    const n = Math.min(count, MAX_MOTES - (opts.flecks || 0));
     for (let i = 0; i < n; i++) {
+        const fly = !!opts.fireflies;
+        motes.push({
+            x: rng() * viewW,
+            // Fireflies hover low (bottom ~40% of the screen, above the very
+            // edge where foreground silhouettes live); day dust fills the air.
+            y: fly ? viewH * (0.58 + rng() * 0.34) : rng() * viewH,
+            vx: 4 + rng() * 10,       // lazy horizontal drift, px/s
+            vy: fly ? -(1 + rng() * 3) : -(2 + rng() * 6),
+            size: 1.5 + rng() * 2,
+            phase: rng() * Math.PI * 2,
+            // Slow blink for night life; day dust keeps the quicker shimmer.
+            wobble: fly ? 0.25 + rng() * 0.3 : 0.4 + rng() * 0.8,
+            par: 0.1 + rng() * 0.3    // per-mote parallax depth factor
+        });
+    }
+    const fleckRoom = Math.min(opts.flecks || 0, MAX_MOTES - motes.length);
+    for (let i = 0; i < fleckRoom; i++) {
         motes.push({
             x: rng() * viewW,
             y: rng() * viewH,
-            vx: 4 + rng() * 10,       // lazy horizontal drift, px/s
-            vy: -(2 + rng() * 6),     // gentle rise; wraps back at the floor
-            size: 1.5 + rng() * 2,
+            vx: -2 + rng() * 4,
+            vy: 26 + rng() * 30,      // gentle FALL: reads as rising past it
+            size: 1,
             phase: rng() * Math.PI * 2,
-            wobble: 0.4 + rng() * 0.8,
-            par: 0.1 + rng() * 0.3    // per-mote parallax depth factor
+            wobble: 0.5 + rng() * 0.5,
+            par: 0.15 + rng() * 0.25,
+            fleck: true
         });
     }
     return motes;
@@ -111,12 +137,24 @@ export function stepMotes(list, dt, viewW, viewH) {
 }
 
 // Draw in screen space with camera parallax. `fireflies` bumps brightness
-// and radius for night/jungle themes; day dust stays faint so it can never
-// compete with hazards for attention.
-export function drawMotes(ctx, list, cameraX, viewW, color, fireflies = false) {
+// and radius for night themes and slows the blink to a life-like pulse;
+// day dust stays faint so it can never compete with hazards for attention.
+// Falling flecks render ONLY while `climbing` (vertical maps mid-ascent).
+export function drawMotes(ctx, list, cameraX, viewW, color,
+    fireflies = false, climbing = false) {
     for (const m of list) {
+        if (m.fleck) {
+            if (!climbing) continue;
+            const fx = (((m.x - cameraX * m.par) % viewW) + viewW) % viewW;
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = color;
+            ctx.fillRect(fx, m.y, 1, 3);
+            continue;
+        }
         const sx = (((m.x - cameraX * m.par) % viewW) + viewW) % viewW;
-        const twinkle = 0.55 + 0.45 * Math.sin(m.phase * 2.3);
+        const twinkle = fireflies
+            ? 0.5 + 0.5 * Math.sin(m.phase * 1.1)
+            : 0.55 + 0.45 * Math.sin(m.phase * 2.3);
         ctx.globalAlpha = twinkle * (fireflies ? 0.85 : 0.45);
         ctx.fillStyle = color;
         ctx.beginPath();
