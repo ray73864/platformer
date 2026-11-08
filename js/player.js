@@ -90,6 +90,27 @@ export const WALL_JUMP_PUSH = 240;
 // stick-spamming the same wall. Chimney chains become intentional alternation.
 export const WALL_INPUT_LOCK = 0.15;
 
+// --- Dash (capability program M2, owner-approved 2026-11-08) ------------------
+// MONOTONIC ADDITION, same discipline as M1: the burst only ever fires from an
+// explicit pressDash() call (KeyX/KeyC wiring in main.js). No legacy input —
+// arrows/WASD/Space/Shift — reaches it, so every recorded trajectory runs
+// byte-identical and the reachability BFS stays a conservative lower bound.
+// A dash is a FLAT horizontal burst: vx is re-asserted at DASH_SPEED for
+// DASH_TIME frames while gravity keeps integrating vy untouched (the arc
+// falls exactly as far as it would have — the burst buys range, never lift).
+// Net added travel ≈ 380 × 0.15 = 57 px ≈ 1.8 cells over the run-speed base.
+// NO i-frames: contact resolution never reads any dash state, so dashing
+// into a hostile body kills or bounces precisely as a normal collision does.
+// Burst speed. Above PLAYER_SPEED (200) by design; below charger dash
+// territory so hazards stay readable mid-burst.
+export const DASH_SPEED = 380;
+// Burst duration; vx is owned by the dash for this long (9 frames at 60 Hz).
+export const DASH_TIME = 0.15;
+// Minimum seconds between GROUNDED dashes (rate-limit on the spam-safe
+// ground path only — airborne use is instead limited to one per arc). The
+// timer drains in every state; it merely GATES grounded initiation.
+export const DASH_COOLDOWN = 0.8;
+
 /**
  * Wall-contact probe: 1px slivers either side of the entity, inset 4px at
  * top and bottom so floor edges and ceiling lips never read as side walls.
@@ -141,6 +162,15 @@ export class Player extends Entity {
         this._airFrames = 0;
         this._leftHeldPrev = false;
         this._rightHeldPrev = false;
+        // Dash state (M2). dashTimer > 0 means the burst owns vx this frame;
+        // airDashUsed enforces one-per-airborne-arc; dashCooldown rate-limits
+        // grounded re-use; _facing is the last unambiguous travel direction
+        // (default right) used when no key disambiguates a press.
+        this.dashTimer = 0;
+        this.dashDir = 0;            // -1/+1 while dashing, else 0
+        this.dashCooldown = 0;       // remaining grounded cooldown (s)
+        this.airDashUsed = false;    // air-dash consumed this airborne arc
+        this._facing = 1;
     }
 
     // Feed the per-frame terrain wall-contact probe result (-1/+1/0). Called
@@ -166,8 +196,10 @@ export class Player extends Entity {
         const walk = !!opts.walk && this.grounded;
         if (left && !right) {
             this.vx = -(walk ? WALK_SPEED : this.speed);
+            this._facing = -1;
         } else if (right && !left) {
             this.vx = walk ? WALK_SPEED : this.speed;
+            this._facing = 1;
         } else if (this.grounded) {
             // Coasting on the ground: hard linear brake, exact stop.
             const drop = PLAYER_STOP_DECEL * dt;
@@ -238,6 +270,9 @@ export class Player extends Entity {
             this._airFrames = 0;
             // Ground contact re-arms every wall face (alternation rule).
             this.lastKickSide = 0;
+            // ...and the single airborne dash (M2): one per arc means the
+            // arc counter resets on contact, not on jump launch.
+            this.airDashUsed = false;
         } else {
             const onlyLeft = left && !right;
             const onlyRight = right && !left;
@@ -261,14 +296,33 @@ export class Player extends Entity {
         if (this.sliding && this.vy > WALL_SLIDE_MAX_FALL) {
             this.vy = WALL_SLIDE_MAX_FALL;
         }
+
+        // --- Dash mechanics (M2; see constants) -------------------------------
+        // The burst owns vx LAST: held keys, the wall-lockout override and the
+        // brakes above all lose to a committed dash (deliberate press wins),
+        // while vy stays entirely to gravity — the flat-burst contract. The
+        // EPS snap closes the float boundary at exact divisors of DASH_TIME
+        // (9 × 1/60 accumulates to 0.14999999999999997 < 0.15, which would
+        // otherwise hand the burst a tenth frame): a frame participates iff
+        // it STARTS with remaining time, and residue snaps to dead zero.
+        if (this.dashTimer > 1e-9) {
+            this.vx = this.dashDir * DASH_SPEED;
+            this.dashTimer -= dt;
+            if (this.dashTimer < 1e-9) this.dashTimer = 0;
+        }
+        if (this.dashCooldown > 0) {
+            this.dashCooldown = Math.max(0, this.dashCooldown - dt);
+        }
     }
 
     moveLeft(walk = false) {
         this.vx = -(walk && this.grounded ? WALK_SPEED : this.speed);
+        this._facing = -1;
     }
 
     moveRight(walk = false) {
         this.vx = walk && this.grounded ? WALK_SPEED : this.speed;
+        this._facing = 1;
     }
 
     stopLeft() {
@@ -323,6 +377,16 @@ export class Player extends Entity {
             // ignored until the window expires (see update()).
             this.wallLockTimer = WALL_INPUT_LOCK;
             this.wallLockDir = -away;
+            // Kick-during-dash interplay pin (M2): the KICK WINS. The dash
+            // burst dies here so its vx override cannot fight the push-off
+            // arc on later frames; the air-dash stays consumed (no refund —
+            // it was spent mid-air like any other use). Facing turns with
+            // the push-off (matching draw()'s velocity-facing eyes), so a
+            // neutral dash out of a kick EXTENDS the kick; a freshly held
+            // direction key re-faces and steers it instead (pinned below).
+            this.dashTimer = 0;
+            this.dashDir = 0;
+            this._facing = away;
         } else {
             this.jumpBufferTimer = JUMP_BUFFER_TIME;
         }
@@ -368,6 +432,47 @@ export class Player extends Entity {
     cancelJumpFeel() {
         this.jumpBufferTimer = 0;
         this.coyoteTimer = 0;
+    }
+
+    // Single entry point for every dash press (KeyX/KeyC, autorepeat-filtered
+    // upstream in InputHandler like the jump key). Policy lives here so bots,
+    // tests and harnesses all get identical rules:
+    //  - mid-burst presses are REJECTED (no chaining into itself);
+    //  - GROUNDED initiation pays the DASH_COOLDOWN rate limit;
+    //  - AIRBORNE initiation (including inside the coyote window — pinned
+    //    ruling: coyote means no contact, so it reads as air) consumes the
+    //    one dash granted per airborne arc; landing re-arms it;
+    //  - direction = last unambiguous held/travel facing (_facing), which is
+    //    exactly "held dir at initiation, default facing" (right).
+    // Returns true only when the burst actually fired (main.js gates its FX
+    // on the return value so rejected presses stay silent).
+    pressDash() {
+        if (this.dashTimer > 0) return false;
+        if (this.grounded) {
+            if (this.dashCooldown > 0) return false;
+            this.dashCooldown = DASH_COOLDOWN;
+        } else {
+            if (this.airDashUsed) return false;
+            this.airDashUsed = true;
+        }
+        this.dashDir = this._facing < 0 ? -1 : 1;
+        this.dashTimer = DASH_TIME;
+        this.vx = this.dashDir * DASH_SPEED;
+        return true;
+    }
+
+    // Pause entry companion to cancelJumpFeel (documented API choice: a
+    // SIBLING, not an extension — jump-feel and dash are separate mechanics
+    // and their cancel sites should name what they cancel). An in-flight
+    // burst ends immediately: pause is an interruption, not a frame boundary,
+    // so half a committed teleport-like burst must not resume under the
+    // player's feet. Nothing is REFUNDED — the air-arc consumption and the
+    // cooldown stand, exactly like a buffered press dropped by pause. A dash
+    // pressed while PAUSED never reaches pressDash() at all (PLAYING-gated
+    // wiring in main.js).
+    cancelDashFeel() {
+        this.dashTimer = 0;
+        this.dashDir = 0;
     }
 
     hasReachedPortal() {

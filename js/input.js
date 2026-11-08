@@ -16,6 +16,7 @@ export class InputHandler {
         this.onReleaseLeftCallback = null;
         this.onReleaseRightCallback = null;
         this.onReleaseJumpCallback = null;
+        this.onDashCallback = null;
 
         // One controller for every listener registered below; destroy()
         // detaches them all (owner: Game).
@@ -81,6 +82,12 @@ export class InputHandler {
                 // Space belongs to that control; Enter still reaches buttons
                 // untouched, and gameplay resumes once focus leaves it.
                 this.onJumpCallback?.();
+            } else if (code === 'KeyX' || code === 'KeyC') {
+                // Dash (M2): KeyX primary, KeyC alias — neither collides with
+                // anything existing (gameplay keys are arrows/WASD/Space/Shift,
+                // pause nav is Escape+arrows, mute is KeyM). Wave D touch will
+                // mirror KeyX. Autorepeat filtered by the wasDown check above.
+                this.onDashCallback?.();
             }
         }
     }
@@ -124,6 +131,13 @@ export class InputHandler {
         return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     }
 
+    // Dash key state (M2): KeyX primary, KeyC alias. No release callback —
+    // the burst is fire-and-forget in Player.pressDash(), nothing reads a
+    // held dash key per frame. Blur/visibilitychange clear it like every key.
+    isDash() {
+        return this.keys.has('KeyX') || this.keys.has('KeyC');
+    }
+
     // Callback setters
     onMoveLeft(callback) {
         this.onMoveLeftCallback = callback;
@@ -147,5 +161,9 @@ export class InputHandler {
 
     onReleaseJump(callback) {
         this.onReleaseJumpCallback = callback;
+    }
+
+    onDash(callback) {
+        this.onDashCallback = callback;
     }
 }

@@ -75,6 +75,7 @@
       this.onReleaseLeftCallback = null;
       this.onReleaseRightCallback = null;
       this.onReleaseJumpCallback = null;
+      this.onDashCallback = null;
       this._abort = new AbortController;
       this.bindEvents();
     }
@@ -114,6 +115,8 @@
           this.onMoveRightCallback?.();
         } else if (code === "Space" && !isButtonTarget(event)) {
           this.onJumpCallback?.();
+        } else if (code === "KeyX" || code === "KeyC") {
+          this.onDashCallback?.();
         }
       }
     }
@@ -140,6 +143,9 @@
     isWalk() {
       return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     }
+    isDash() {
+      return this.keys.has("KeyX") || this.keys.has("KeyC");
+    }
     onMoveLeft(callback) {
       this.onMoveLeftCallback = callback;
     }
@@ -157,6 +163,9 @@
     }
     onReleaseJump(callback) {
       this.onReleaseJumpCallback = callback;
+    }
+    onDash(callback) {
+      this.onDashCallback = callback;
     }
   }
 
@@ -275,6 +284,9 @@
   var WALL_SLIDE_MAX_FALL = 120;
   var WALL_JUMP_PUSH = 240;
   var WALL_INPUT_LOCK = 0.15;
+  var DASH_SPEED = 380;
+  var DASH_TIME = 0.15;
+  var DASH_COOLDOWN = 0.8;
   function wallContactSide(entity, platforms) {
     const y = entity.y + 4;
     const h = entity.height - 8;
@@ -314,6 +326,11 @@
       this._airFrames = 0;
       this._leftHeldPrev = false;
       this._rightHeldPrev = false;
+      this.dashTimer = 0;
+      this.dashDir = 0;
+      this.dashCooldown = 0;
+      this.airDashUsed = false;
+      this._facing = 1;
     }
     setWallContact(side) {
       this.wallSide = side || 0;
@@ -323,8 +340,10 @@
       const walk = !!opts.walk && this.grounded;
       if (left && !right) {
         this.vx = -(walk ? WALK_SPEED : this.speed);
+        this._facing = -1;
       } else if (right && !left) {
         this.vx = walk ? WALK_SPEED : this.speed;
+        this._facing = 1;
       } else if (this.grounded) {
         const drop = PLAYER_STOP_DECEL * dt;
         this.vx = Math.abs(this.vx) <= drop ? 0 : this.vx - Math.sign(this.vx) * drop;
@@ -357,6 +376,7 @@
         this._airIntent = 0;
         this._airFrames = 0;
         this.lastKickSide = 0;
+        this.airDashUsed = false;
       } else {
         const onlyLeft = left && !right;
         const onlyRight = right && !left;
@@ -377,12 +397,23 @@
       if (this.sliding && this.vy > WALL_SLIDE_MAX_FALL) {
         this.vy = WALL_SLIDE_MAX_FALL;
       }
+      if (this.dashTimer > 0.000000001) {
+        this.vx = this.dashDir * DASH_SPEED;
+        this.dashTimer -= dt;
+        if (this.dashTimer < 0.000000001)
+          this.dashTimer = 0;
+      }
+      if (this.dashCooldown > 0) {
+        this.dashCooldown = Math.max(0, this.dashCooldown - dt);
+      }
     }
     moveLeft(walk = false) {
       this.vx = -(walk && this.grounded ? WALK_SPEED : this.speed);
+      this._facing = -1;
     }
     moveRight(walk = false) {
       this.vx = walk && this.grounded ? WALK_SPEED : this.speed;
+      this._facing = 1;
     }
     stopLeft() {}
     stopRight() {}
@@ -403,6 +434,9 @@
         this._airIntent = 0;
         this.wallLockTimer = WALL_INPUT_LOCK;
         this.wallLockDir = -away;
+        this.dashTimer = 0;
+        this.dashDir = 0;
+        this._facing = away;
       } else {
         this.jumpBufferTimer = JUMP_BUFFER_TIME;
       }
@@ -425,6 +459,27 @@
     cancelJumpFeel() {
       this.jumpBufferTimer = 0;
       this.coyoteTimer = 0;
+    }
+    pressDash() {
+      if (this.dashTimer > 0)
+        return false;
+      if (this.grounded) {
+        if (this.dashCooldown > 0)
+          return false;
+        this.dashCooldown = DASH_COOLDOWN;
+      } else {
+        if (this.airDashUsed)
+          return false;
+        this.airDashUsed = true;
+      }
+      this.dashDir = this._facing < 0 ? -1 : 1;
+      this.dashTimer = DASH_TIME;
+      this.vx = this.dashDir * DASH_SPEED;
+      return true;
+    }
+    cancelDashFeel() {
+      this.dashTimer = 0;
+      this.dashDir = 0;
     }
     hasReachedPortal() {
       return this.reachedPortal;
@@ -6771,6 +6826,8 @@
   var LAND_DEPTH_REF_VY = 520;
   var SKID_MIN_SPEED = 150;
   var WALL_SLIDE_DUST_INTERVAL = 0.12;
+  var DASH_GHOST_MAX = 6;
+  var DASH_GHOST_LIFE = 0.22;
   var LEAN_MAX_RAD = 0.07;
   var LOOKAHEAD_LEAD_S = 0.06;
   var LOOKAHEAD_MAX_PX = 10;
@@ -6864,6 +6921,7 @@
       this._launchStretch = 0;
       this._landDepth = 0;
       this._prevFrameVx = 0;
+      this._dashGhosts = [];
       this._lean = 0;
       this._lookAhead = 0;
       this.state = STATE.MENU;
@@ -6983,6 +7041,23 @@
           return;
         this.player.releaseJump();
       });
+      this.input.onDash(() => {
+        if (this.state !== STATE.PLAYING || !this.player)
+          return;
+        if (!this.player.pressDash())
+          return;
+        if (FX.dust) {
+          const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+          spawnDust(this.dust, this.player.dashDir === -1 ? this.player.x + this.player.width : this.player.x, this.player.y + this.player.height / 2, dustTint(dTheme), {
+            count: 4,
+            dir: -this.player.dashDir,
+            speed: 1.3,
+            alpha: 0.6,
+            life: 0.3,
+            size: 4
+          });
+        }
+      });
       const moveIfPlaying = (fn) => () => {
         if (this.state === STATE.PLAYING)
           fn();
@@ -7019,6 +7094,7 @@
       if (this.state === STATE.PLAYING) {
         this.setState(STATE.PAUSED);
         this.player?.cancelJumpFeel();
+        this.player?.cancelDashFeel();
         this.ui.showOverlay("pause-screen");
         this.ui.setPauseLabel(true);
         duckMusic(true);
@@ -7072,6 +7148,7 @@
       this._lookAhead = 0;
       this._dustTx = -1;
       this._slideDustT = 0;
+      this._dashGhosts.length = 0;
     }
     _impactFx(shakeTime, shakeMag, punch = true) {
       if (shakeTime > this.shakeTime) {
@@ -7289,6 +7366,12 @@
       }
       stepPopups(this.popups, dt);
       stepRings(this.rings, dt);
+      for (let i = this._dashGhosts.length - 1;i >= 0; i--) {
+        this._dashGhosts[i].age += dt;
+        if (this._dashGhosts[i].age >= DASH_GHOST_LIFE) {
+          this._dashGhosts.splice(i, 1);
+        }
+      }
       if (this.state !== STATE.PLAYING && this._lean !== 0) {
         this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));
         if (Math.abs(this._lean) < 0.0005)
@@ -7402,6 +7485,12 @@
           }
         } else {
           this._slideDustT = 0;
+        }
+        if (this.player.dashTimer > 0 && FX.trails) {
+          this._dashGhosts.push({ x: this.player.x, y: this.player.y, age: 0 });
+          if (this._dashGhosts.length > DASH_GHOST_MAX) {
+            this._dashGhosts.shift();
+          }
         }
         const accel = (this.player.vx - this._prevFrameVx) / Math.max(dt, 0.0001);
         let leanTarget = 0;
@@ -7592,6 +7681,16 @@
         this.level.draw(this.ctx, sprites, this.player);
         if (this.projectiles && this.projectiles.list.length) {
           this.projectiles.drawAll(this.ctx, FX.trails ? THEMES[themeIdx].mote : null);
+        }
+        if (FX.trails && this._dashGhosts.length) {
+          const ghColor = THEMES[themeIdx].mote;
+          for (const g of this._dashGhosts) {
+            const k = Math.max(0, 1 - g.age / DASH_GHOST_LIFE);
+            this.ctx.globalAlpha = k * k * 0.35 * FX.intensity;
+            this.ctx.fillStyle = ghColor;
+            this.ctx.fillRect(g.x, g.y, this.player.width, this.player.height);
+          }
+          this.ctx.globalAlpha = 1;
         }
         let squash = 1;
         let bodySx = 1;

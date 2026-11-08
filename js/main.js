@@ -149,6 +149,12 @@ const SKID_MIN_SPEED = 150;         // px/s pre-reversal speed for a skid puff
 // Timer-driven (fixed-dt deterministic) rather than position-event because a
 // slide barely moves — tile-crossing would never fire.
 const WALL_SLIDE_DUST_INTERVAL = 0.12;
+// Dash streak ghosts (M2): how many hero silhouettes trail an active burst
+// and how long each fades. FX.trails gates BOTH spawn and draw; reduced-
+// motion keeps trails ON at half amplitude (fx.js gentle-family policy), so
+// alpha rides FX.intensity rather than a new flag.
+const DASH_GHOST_MAX = 6;
+const DASH_GHOST_LIFE = 0.22;
 const LEAN_MAX_RAD = 0.07;          // subtle travel-direction lean ceiling
 const LOOKAHEAD_LEAD_S = 0.06;      // seconds of vx lead the offset eases toward
 const LOOKAHEAD_MAX_PX = 10;        // hard clamp on the look-ahead render offset
@@ -383,6 +389,7 @@ export class Game {
         this._launchStretch = 0; // counts down from LAUNCH_STRETCH_TIME
         this._landDepth = 0;     // 0..1 magnitude of the current landing thud
         this._prevFrameVx = 0;   // end-of-frame vx snapshot (skid + lean input)
+        this._dashGhosts = [];   // dash-streak snapshots (M2, FX.trails family)
         this._lean = 0;          // smoothed draw-time lean angle (rad)
         this._lookAhead = 0;     // smoothed camera render-offset (px, clamped)
 
@@ -613,6 +620,27 @@ export class Game {
             if (this.state !== STATE.PLAYING || !this.player) return;
             this.player.releaseJump();
         });
+        // Dash (M2): KeyX primary / KeyC alias, autorepeat-filtered upstream
+        // in InputHandler exactly like the jump key. PLAYING-gated like every
+        // other mutation path: a press during pause must not fire on resume.
+        // Dust puff at the trailing edge marks the launch (FX.dust spawn gate,
+        // same family as the wall-jump skid); the mechanic itself never reads
+        // an FX flag. Rejected presses (cooldown / arc spent / mid-burst)
+        // return false and stay silent.
+        this.input.onDash(() => {
+            if (this.state !== STATE.PLAYING || !this.player) return;
+            if (!this.player.pressDash()) return;
+            if (FX.dust) {
+                const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                spawnDust(this.dust,
+                    this.player.dashDir === -1
+                        ? this.player.x + this.player.width : this.player.x,
+                    this.player.y + this.player.height / 2,
+                    dustTint(dTheme),
+                    { count: 4, dir: -this.player.dashDir, speed: 1.3,
+                        alpha: 0.6, life: 0.3, size: 4 });
+            }
+        });
         const moveIfPlaying = (fn) => () => {
             if (this.state === STATE.PLAYING) fn();
         };
@@ -681,6 +709,10 @@ export class Game {
             // boundary. (Space keyups during pause are ignored outright —
             // releaseJump is PLAYING-gated like every other input path.)
             this.player?.cancelJumpFeel();
+            // Dash companion (M2): an in-flight burst ends at pause too, so
+            // half a committed burst never resumes under the player's feet.
+            // No refund of cooldown/arc consumption (see cancelDashFeel).
+            this.player?.cancelDashFeel();
             this.ui.showOverlay('pause-screen');
             this.ui.setPauseLabel(true);
             // Music ducks to silence under the menu; the scheduler stops
@@ -764,6 +796,7 @@ export class Game {
         this._lookAhead = 0;
         this._dustTx = -1;
         this._slideDustT = 0;
+        this._dashGhosts.length = 0;
     }
 
     // Shared trigger for the Wave B impact family (stomp / shell / death):
@@ -1164,6 +1197,14 @@ export class Game {
         }
         stepPopups(this.popups, dt);
         stepRings(this.rings, dt);
+        // Dash-streak ghosts fade on the visual clock (all states, like the
+        // bursts above): pausing never freezes a half-live streak.
+        for (let i = this._dashGhosts.length - 1; i >= 0; i--) {
+            this._dashGhosts[i].age += dt;
+            if (this._dashGhosts[i].age >= DASH_GHOST_LIFE) {
+                this._dashGhosts.splice(i, 1);
+            }
+        }
         if (this.state !== STATE.PLAYING && this._lean !== 0) {
             this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));
             if (Math.abs(this._lean) < 0.0005) this._lean = 0;
@@ -1365,6 +1406,18 @@ export class Game {
                 }
             } else {
                 this._slideDustT = 0;
+            }
+
+            // Dash streak (M2 feel): snapshot the hero silhouette every burst
+            // frame into a short capped ring. Spawn-gated on FX.trails AND
+            // drawn under the same flag (a mid-life toggle hides instantly),
+            // position-event driven so two boots of one seed render identical
+            // frames — no RNG anywhere in the trail.
+            if (this.player.dashTimer > 0 && FX.trails) {
+                this._dashGhosts.push({ x: this.player.x, y: this.player.y, age: 0 });
+                if (this._dashGhosts.length > DASH_GHOST_MAX) {
+                    this._dashGhosts.shift();
+                }
             }
 
             // Subtle lean toward travel direction WHILE ACCELERATING (Wave
@@ -1783,6 +1836,24 @@ export class Game {
             if (this.projectiles && this.projectiles.list.length) {
                 this.projectiles.drawAll(this.ctx,
                     FX.trails ? THEMES[themeIdx].mote : null);
+            }
+
+            // Dash-streak ghosts (M2): fading hero silhouettes behind the
+            // body, drawn UNDER the live player so the real sprite always
+            // wins. Same theme-mote hue as projectile trails; alpha decays
+            // with age and rides FX.intensity (reduced-motion softens rather
+            // than removes — fx.js keeps the trails family ON). Draw gate
+            // mirrors the spawn gate in update().
+            if (FX.trails && this._dashGhosts.length) {
+                const ghColor = THEMES[themeIdx].mote;
+                for (const g of this._dashGhosts) {
+                    const k = Math.max(0, 1 - g.age / DASH_GHOST_LIFE);
+                    this.ctx.globalAlpha = k * k * 0.35 * FX.intensity;
+                    this.ctx.fillStyle = ghColor;
+                    this.ctx.fillRect(g.x, g.y,
+                        this.player.width, this.player.height);
+                }
+                this.ctx.globalAlpha = 1;
             }
 
             // Player squash & stretch (Wave B, DRAW-TIME ONLY — the collision
