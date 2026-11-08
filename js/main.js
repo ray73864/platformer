@@ -1,6 +1,6 @@
 import { InputHandler } from './input.js';
 import { Physics } from './physics.js';
-import { Player } from './player.js';
+import { Player, wallContactSide } from './player.js';
 import { Level } from './level.js';
 import { Camera } from './camera.js';
 import { UI } from './ui.js';
@@ -145,6 +145,10 @@ const DEATH_SHAKE_TIME = 0.35;      // legacy value kept verbatim
 const DEATH_SHAKE_MAG = 9;
 const LAND_DEPTH_REF_VY = 520;      // px/s fall speed that reads as a FULL thud
 const SKID_MIN_SPEED = 150;         // px/s pre-reversal speed for a skid puff
+// Wall-slide dust cadence (M1): one small puff every interval while sliding.
+// Timer-driven (fixed-dt deterministic) rather than position-event because a
+// slide barely moves — tile-crossing would never fire.
+const WALL_SLIDE_DUST_INTERVAL = 0.12;
 const LEAN_MAX_RAD = 0.07;          // subtle travel-direction lean ceiling
 const LOOKAHEAD_LEAD_S = 0.06;      // seconds of vx lead the offset eases toward
 const LOOKAHEAD_MAX_PX = 10;        // hard clamp on the look-ahead render offset
@@ -358,6 +362,9 @@ export class Game {
         // Tile index the last walking-dust puff fired on (see update()):
         // position-event driven so puffs are deterministic, never RNG.
         this._dustTx = -1;
+        // Wall-slide dust cadence timer (M1); reset with every other dust
+        // bookkeeping so retries never inherit a mid-puff phase.
+        this._slideDustT = 0;
         // Portal-gate edge tracker for the unlock chime: seeded from the
         // level's current state in publishLevel so a retry that starts with
         // every coin already banked does not re-ring.
@@ -569,9 +576,26 @@ export class Game {
             // when grounded/coyote fires, while a buffered press leaves it
             // alone — no phantom jump sound for inputs that did not jump.
             const vyBefore = this.player.vy;
+            const lockBefore = this.player.wallLockTimer;
+            const wallBefore = this.player.wallSide;
             this.player.pressJump();
             if (this.player.vy < vyBefore) {
                 audio.playSfx('jump');
+                // Wall jump (M1): the lock timer's rising edge identifies
+                // it uniquely (only pressJump's wall branch arms it). Skid
+                // puff at the abandoned wall face, spray biased back toward
+                // it like a ground-reversal skid. Presentation-only, FX.dust
+                // gated; the mechanic itself never reads any FX flag.
+                if (this.player.wallLockTimer > 0 && lockBefore <= 0 &&
+                    wallBefore !== 0 && FX.dust) {
+                    const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    spawnDust(this.dust,
+                        wallBefore === -1 ? this.player.x : this.player.x + this.player.width,
+                        this.player.y + this.player.height / 2,
+                        dustTint(wTheme),
+                        { count: 5, dir: -Math.sign(this.player.vx), speed: 1.3,
+                            alpha: 0.65, life: 0.3, size: 4 });
+                }
                 // Jump-off inheritance (feel choice): launching from a ridden
                 // deck adds the deck velocity, capped (see applyJumpBoost).
                 // Bridge decks move 26-44 px/s, far under the cap and too
@@ -739,6 +763,7 @@ export class Game {
         this._lean = 0;
         this._lookAhead = 0;
         this._dustTx = -1;
+        this._slideDustT = 0;
     }
 
     // Shared trigger for the Wave B impact family (stomp / shell / death):
@@ -1204,7 +1229,8 @@ export class Game {
             this.physics.applyGravity(this.player, dt);
 
             // Check collisions
-            const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
+            const platforms = this.level.getPlatforms();
+            const collisions = this.physics.checkCollisions(this.player, platforms);
             // Impact speed before the resolver zeroes it: gates the landing
             // thud below.
             const vyBeforeResolve = this.player.vy;
@@ -1225,6 +1251,16 @@ export class Game {
                 // frame (single source of truth lives in the manager).
                 this._riding = this.movingPlatforms.attachRider(this.player);
             }
+
+            // Wall-contact probes (M1): 1px slivers either side against
+            // TERRAIN only — one-way decks are never walls (their pure-help
+            // rule above explicitly forbids blocking or wall-sliding off
+            // them). Fed to the Player after resolution so next frame's
+            // pressJump()/slide check read fresh contact, same contract as
+            // the collision-derived grounded flag. Cost: one more linear
+            // pass over the platform list per frame (same shape as
+            // checkCollisions already pays).
+            this.player.setWallContact(wallContactSide(this.player, platforms));
 
             // Grounded-state edges (visual-tuning hooks, physics-safe):
             // air-to-ground fires the landing squash. The walked-off-a-ledge
@@ -1306,6 +1342,29 @@ export class Game {
                 }
             } else {
                 this._dustTx = -1;
+            }
+
+            // Wall-slide dust (M1): small puffs along the contacted wall
+            // face while sliding, on a fixed cadence (deterministic under
+            // fixed dt; spawnDust's own jitter is hash-based, never RNG).
+            // FX.dust gates the SPAWN exactly like the land/skid/run family
+            // above; reduced-motion keeps the pool at half amplitude via
+            // fx.js and the mechanic itself never reads any flag.
+            if (this.player.sliding && FX.dust) {
+                this._slideDustT += dt;
+                if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
+                    this._slideDustT = 0;
+                    const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    spawnDust(this.dust,
+                        this.player.sliding === -1
+                            ? this.player.x : this.player.x + this.player.width,
+                        this.player.y + this.player.height - 12,
+                        dustTint(wTheme),
+                        { count: 2, dir: 0, speed: 0.6, alpha: 0.5,
+                            life: 0.26, size: 3 });
+                }
+            } else {
+                this._slideDustT = 0;
             }
 
             // Subtle lean toward travel direction WHILE ACCELERATING (Wave

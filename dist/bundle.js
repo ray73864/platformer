@@ -272,6 +272,29 @@
   var JUMP_CUT_FACTOR = 0.45;
   var WALK_SPEED = 110;
   var LEDGE_FALL_SEED = 140;
+  var WALL_SLIDE_MAX_FALL = 120;
+  var WALL_JUMP_PUSH = 240;
+  var WALL_INPUT_LOCK = 0.15;
+  function wallContactSide(entity, platforms) {
+    const y = entity.y + 4;
+    const h = entity.height - 8;
+    let side = 0;
+    for (const p of platforms) {
+      if (y < p.y + p.height && y + h > p.y) {
+        if (entity.x - 1 < p.x + p.width && entity.x > p.x)
+          side |= 1;
+        if (entity.x + entity.width < p.x + p.width && entity.x + entity.width + 1 > p.x)
+          side |= 2;
+      }
+    }
+    if (side === 3)
+      return entity.vx >= 0 ? 1 : -1;
+    if (side === 1)
+      return -1;
+    if (side === 2)
+      return 1;
+    return 0;
+  }
 
   class Player extends Entity {
     constructor(x, y, speed, jumpForce) {
@@ -282,6 +305,18 @@
       this.jumpBufferTimer = 0;
       this.coyoteTimer = 0;
       this.jumpCutAvailable = false;
+      this.wallSide = 0;
+      this.lastKickSide = 0;
+      this.wallLockTimer = 0;
+      this.wallLockDir = 0;
+      this.sliding = 0;
+      this._airIntent = 0;
+      this._airFrames = 0;
+      this._leftHeldPrev = false;
+      this._rightHeldPrev = false;
+    }
+    setWallContact(side) {
+      this.wallSide = side || 0;
     }
     update(dt, left = false, right = false, opts = {}) {
       super.update(dt, left, right);
@@ -310,6 +345,38 @@
         if (this.grounded)
           this.jump();
       }
+      if (this.wallLockTimer > 0) {
+        this.wallLockTimer -= dt;
+        if (this.wallLockDir === -1 && left && !right) {
+          this.vx = WALL_JUMP_PUSH;
+        } else if (this.wallLockDir === 1 && right && !left) {
+          this.vx = -WALL_JUMP_PUSH;
+        }
+      }
+      if (this.grounded) {
+        this._airIntent = 0;
+        this._airFrames = 0;
+        this.lastKickSide = 0;
+      } else {
+        const onlyLeft = left && !right;
+        const onlyRight = right && !left;
+        if (onlyLeft && !this._leftHeldPrev && this._airFrames > 0) {
+          this._airIntent = -1;
+        } else if (onlyRight && !this._rightHeldPrev && this._airFrames > 0) {
+          this._airIntent = 1;
+        } else if (this._airIntent === -1 && !onlyLeft) {
+          this._airIntent = 0;
+        } else if (this._airIntent === 1 && !onlyRight) {
+          this._airIntent = 0;
+        }
+        this._airFrames++;
+      }
+      this._leftHeldPrev = !!left;
+      this._rightHeldPrev = !!right;
+      this.sliding = this.vy > 0 && !this.grounded && (this.wallSide === -1 && this._airIntent === -1 || this.wallSide === 1 && this._airIntent === 1) ? this.wallSide : 0;
+      if (this.sliding && this.vy > WALL_SLIDE_MAX_FALL) {
+        this.vy = WALL_SLIDE_MAX_FALL;
+      }
     }
     moveLeft(walk = false) {
       this.vx = -(walk && this.grounded ? WALK_SPEED : this.speed);
@@ -322,6 +389,20 @@
     pressJump() {
       if (this.grounded || this.coyoteTimer > 0 && this.vy < COYOTE_MAX_FALL_SPEED) {
         this.jump();
+      } else if (this.wallSide !== 0 && this.wallLockTimer <= 0 && this.wallSide !== this.lastKickSide) {
+        const away = this.wallSide === -1 ? 1 : -1;
+        this.vy = -this.jumpForce;
+        this.vx = away * WALL_JUMP_PUSH;
+        this.grounded = false;
+        this.coyoteTimer = 0;
+        this.jumpBufferTimer = 0;
+        this.jumpCutAvailable = true;
+        this.sliding = 0;
+        this.lastKickSide = this.wallSide;
+        this._airFrames = 0;
+        this._airIntent = 0;
+        this.wallLockTimer = WALL_INPUT_LOCK;
+        this.wallLockDir = -away;
       } else {
         this.jumpBufferTimer = JUMP_BUFFER_TIME;
       }
@@ -332,6 +413,8 @@
       this.coyoteTimer = 0;
       this.jumpBufferTimer = 0;
       this.jumpCutAvailable = true;
+      this._airFrames = 0;
+      this._airIntent = 0;
     }
     releaseJump() {
       if (this.vy < 0 && this.jumpCutAvailable) {
@@ -6687,6 +6770,7 @@
   var DEATH_SHAKE_MAG = 9;
   var LAND_DEPTH_REF_VY = 520;
   var SKID_MIN_SPEED = 150;
+  var WALL_SLIDE_DUST_INTERVAL = 0.12;
   var LEAN_MAX_RAD = 0.07;
   var LOOKAHEAD_LEAD_S = 0.06;
   var LOOKAHEAD_MAX_PX = 10;
@@ -6768,6 +6852,7 @@
       this.squashTimer = 0;
       this._prevGrounded = true;
       this._dustTx = -1;
+      this._slideDustT = 0;
       this._portalUnlocked = false;
       initFX();
       this.dust = [];
@@ -6874,9 +6959,22 @@
         if (this.state !== STATE.PLAYING || !this.player)
           return;
         const vyBefore = this.player.vy;
+        const lockBefore = this.player.wallLockTimer;
+        const wallBefore = this.player.wallSide;
         this.player.pressJump();
         if (this.player.vy < vyBefore) {
           playSfx("jump");
+          if (this.player.wallLockTimer > 0 && lockBefore <= 0 && wallBefore !== 0 && FX.dust) {
+            const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            spawnDust(this.dust, wallBefore === -1 ? this.player.x : this.player.x + this.player.width, this.player.y + this.player.height / 2, dustTint(wTheme), {
+              count: 5,
+              dir: -Math.sign(this.player.vx),
+              speed: 1.3,
+              alpha: 0.65,
+              life: 0.3,
+              size: 4
+            });
+          }
           applyJumpBoost(this.player, this._riding);
         }
       });
@@ -6973,6 +7071,7 @@
       this._lean = 0;
       this._lookAhead = 0;
       this._dustTx = -1;
+      this._slideDustT = 0;
     }
     _impactFx(shakeTime, shakeMag, punch = true) {
       if (shakeTime > this.shakeTime) {
@@ -7224,7 +7323,8 @@
           applyJumpBoost(this.player, this._riding);
         }
         this.physics.applyGravity(this.player, dt);
-        const collisions = this.physics.checkCollisions(this.player, this.level.getPlatforms());
+        const platforms = this.level.getPlatforms();
+        const collisions = this.physics.checkCollisions(this.player, platforms);
         const vyBeforeResolve = this.player.vy;
         this.physics.resolveCollisions(this.player, collisions);
         if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
@@ -7233,6 +7333,7 @@
             this.physics.resolveYCollision(this.player, decks);
           this._riding = this.movingPlatforms.attachRider(this.player);
         }
+        this.player.setWallContact(wallContactSide(this.player, platforms));
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
           this._landDepth = Math.min(1, Math.max(0.25, vyBeforeResolve / LAND_DEPTH_REF_VY));
@@ -7284,6 +7385,23 @@
           }
         } else {
           this._dustTx = -1;
+        }
+        if (this.player.sliding && FX.dust) {
+          this._slideDustT += dt;
+          if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
+            this._slideDustT = 0;
+            const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            spawnDust(this.dust, this.player.sliding === -1 ? this.player.x : this.player.x + this.player.width, this.player.y + this.player.height - 12, dustTint(wTheme), {
+              count: 2,
+              dir: 0,
+              speed: 0.6,
+              alpha: 0.5,
+              life: 0.26,
+              size: 3
+            });
+          }
+        } else {
+          this._slideDustT = 0;
         }
         const accel = (this.player.vx - this._prevFrameVx) / Math.max(dt, 0.0001);
         let leanTarget = 0;

@@ -67,6 +67,55 @@ const WALK_SPEED = 110;
 // accepted because drift across narrow gaps reads better than a clean drop.
 const LEDGE_FALL_SEED = 140;
 
+// --- Wall jumps (capability program M1, owner-approved 2026-11-08) ----------
+// MONOTONIC ADDITION: these options only ADD movement. Nothing here fires
+// unless the player is airborne, falling, and deliberately pressing INTO a
+// terrain wall contact — every pre-existing trajectory (grounded launches,
+// committed arcs, buffered presses away from walls) runs byte-identical, so
+// the reachability BFS stays a conservative lower bound forever.
+// Constants adjudicated by fixed-dt sim (/tmp/opencode/capability-program/
+// wjchimney.mjs): 2-cell chimneys climb fully; single-wall laddering cannot
+// profit because PUSH > SPEED (turning back toward an abandoned wall is
+// slower than the push-off that left it).
+//
+// Slide: while airborne-falling and pressing INTO wall contact, downward
+// speed caps at this value (same value family as COYOTE_MAX_FALL_SPEED).
+export const WALL_SLIDE_MAX_FALL = 120;
+// Horizontal launch away from the wall on a wall jump (~2 cells over the
+// jump arc). Deliberately above SPEED: see adjudication note above.
+export const WALL_JUMP_PUSH = 240;
+// Rise is identical to a ground jump: -jumpForce (no separate constant).
+// Directional lockout after a wall jump: input toward the wall just left is
+// ignored for this long — the body completes the push-off arc instead of
+// stick-spamming the same wall. Chimney chains become intentional alternation.
+export const WALL_INPUT_LOCK = 0.15;
+
+/**
+ * Wall-contact probe: 1px slivers either side of the entity, inset 4px at
+ * top and bottom so floor edges and ceiling lips never read as side walls.
+ * Tested against terrain rects only — one-way decks are NEVER walls (their
+ * pure-help rule forbids blocking or sliding). Returns -1 (left contact),
+ * +1 (right contact), 0 (none); when both sides touch (a shaft exactly as
+ * wide as the player fits), the wall being moved TOWARD wins, matching the
+ * adjudication prototype's tie-break.
+ */
+export function wallContactSide(entity, platforms) {
+    const y = entity.y + 4;
+    const h = entity.height - 8;
+    let side = 0;
+    for (const p of platforms) {
+        if (y < p.y + p.height && y + h > p.y) {
+            if (entity.x - 1 < p.x + p.width && entity.x > p.x) side |= 1;
+            if (entity.x + entity.width < p.x + p.width &&
+                entity.x + entity.width + 1 > p.x) side |= 2;
+        }
+    }
+    if (side === 3) return entity.vx >= 0 ? 1 : -1;
+    if (side === 1) return -1; // left wall only
+    if (side === 2) return 1;  // right wall only
+    return 0;
+}
+
 export class Player extends Entity {
     constructor(x, y, speed, jumpForce) {
         super(x, y, 32, 32);
@@ -77,6 +126,31 @@ export class Player extends Entity {
         this.jumpBufferTimer = 0;      // airborne press awaiting landing contact
         this.coyoteTimer = 0;          // ground contact remembered
         this.jumpCutAvailable = false; // variable-height cut usable once/jump
+        // Wall-jump state (M1). wallSide is fed externally each frame after
+        // collision resolution (main.js probes via wallContactSide()); the
+        // rest lives entirely inside Player policy.
+        this.wallSide = 0;             // -1 left / +1 right terrain contact
+        this.lastKickSide = 0;         // face used by the last wall jump
+        this.wallLockTimer = 0;        // directional lockout remaining (s)
+        this.wallLockDir = 0;          // axis ignored while locked (-1/+1)
+        this.sliding = 0;              // presentation-only: slide side or 0
+        // Air-intent latch state for slide engagement (see update()): the
+        // direction latched by a fresh airborne key press, airborne-frame
+        // count since ground, and last-frame key snapshot.
+        this._airIntent = 0;
+        this._airFrames = 0;
+        this._leftHeldPrev = false;
+        this._rightHeldPrev = false;
+    }
+
+    // Feed the per-frame terrain wall-contact probe result (-1/+1/0). Called
+    // by main.js AFTER collision resolution so next frame's pressJump() and
+    // slide check read fresh contact, exactly like the grounded flag they
+    // sit beside. Minimal surface on purpose: no opts plumbing because the
+    // value is produced outside the player every frame regardless of who
+    // calls update (bots, tests, harnesses all get identical policy).
+    setWallContact(side) {
+        this.wallSide = side || 0;
     }
 
     // opts: { walk = false } — Shift-style ground speed cap. Positional
@@ -124,6 +198,69 @@ export class Player extends Entity {
             // zeroes the buffer, so one press yields exactly one jump.
             if (this.grounded) this.jump();
         }
+
+        // --- Wall-jump mechanics (M1; see constants) ----------------------
+        // Directional lockout: for WALL_INPUT_LOCK after a wall jump, keys
+        // held toward the abandoned wall cannot cancel the push-off — the
+        // body keeps flying away at push speed. Keys toward the OPPOSITE
+        // wall steer normally (cross-shaft steering stays alive). The
+        // adjudication prototype carried this branch as dead code under its
+        // alternating policy; the shipped form implements the documented
+        // intent, re-validated with both alternating AND naive hold-into-
+        // wall policies (scratch sim, task-3 report).
+        if (this.wallLockTimer > 0) {
+            this.wallLockTimer -= dt;
+            if (this.wallLockDir === -1 && left && !right) {
+                this.vx = WALL_JUMP_PUSH;
+            } else if (this.wallLockDir === 1 && right && !left) {
+                this.vx = -WALL_JUMP_PUSH;
+            }
+        }
+        // Wall slide: airborne + falling + pressing INTO contacted wall caps
+        // the descent. Applied AFTER the movement re-assertion above so held
+        // keys can never outrun it; the next frame's gravity adds its usual
+        // increment on top of the cap, matching the adjudicated terminal-
+        // slide value bit-for-bit.
+        //
+        // Engagement rule (monotonicity ruling, task-3): the press INTO the
+        // wall must be an AIRBORNE DECISION — an "air intent" latches only
+        // when a direction key becomes newly held on a frame STRICTLY after
+        // leaving the ground, and lives until that key is released, the
+        // opposite key takes over, or contact with the ground resets. A key
+        // simply held from a grounded run (every legacy hop script brushing
+        // a wall face) never engages: committed arcs stay byte-identical,
+        // exactly the AIR_BRAKE precedent ("keys HELD re-assert speed; only
+        // abandoned arcs change"). Catching a wall mid-air is the new
+        // capability; hugging one on an old arc is not. Chimney chains are
+        // unaffected: every cross-shaft steer IS a fresh airborne press.
+        if (this.grounded) {
+            this._airIntent = 0;
+            this._airFrames = 0;
+            // Ground contact re-arms every wall face (alternation rule).
+            this.lastKickSide = 0;
+        } else {
+            const onlyLeft = left && !right;
+            const onlyRight = right && !left;
+            if (onlyLeft && !this._leftHeldPrev && this._airFrames > 0) {
+                this._airIntent = -1;
+            } else if (onlyRight && !this._rightHeldPrev && this._airFrames > 0) {
+                this._airIntent = 1;
+            } else if (this._airIntent === -1 && !onlyLeft) {
+                this._airIntent = 0;
+            } else if (this._airIntent === 1 && !onlyRight) {
+                this._airIntent = 0;
+            }
+            this._airFrames++;
+        }
+        this._leftHeldPrev = !!left;
+        this._rightHeldPrev = !!right;
+        this.sliding = (this.vy > 0 && !this.grounded &&
+            ((this.wallSide === -1 && this._airIntent === -1) ||
+             (this.wallSide === 1 && this._airIntent === 1)))
+            ? this.wallSide : 0;
+        if (this.sliding && this.vy > WALL_SLIDE_MAX_FALL) {
+            this.vy = WALL_SLIDE_MAX_FALL;
+        }
     }
 
     moveLeft(walk = false) {
@@ -146,12 +283,46 @@ export class Player extends Entity {
     // autorepeat-filtered) input callback here; grounded/coyote policy lives
     // in the Player so it is unit-testable without a Game loop. Fires
     // immediately when grounded or inside the guarded coyote window;
-    // otherwise records ONE buffered press — consumed on landing contact or
-    // dropped when the window expires, never chained.
+    // otherwise a live terrain-wall contact fires a WALL JUMP instead of
+    // buffering (M1, after both forgiveness paths so a coyote launch next
+    // to a wall stays a normal jump); everything else records ONE buffered
+    // press — consumed on landing contact or dropped when the window
+    // expires, never chained.
     pressJump() {
         if (this.grounded ||
             (this.coyoteTimer > 0 && this.vy < COYOTE_MAX_FALL_SPEED)) {
             this.jump();
+        } else if (this.wallSide !== 0 && this.wallLockTimer <= 0 &&
+            this.wallSide !== this.lastKickSide) {
+            // Wall jump: rise identical to a ground jump, horizontal push
+            // AWAY from the contacted wall. Alternation rule: each wall
+            // face launches at most once until the player touches ground
+            // again (the next kick must come off the OTHER face) — this
+            // is what kills the single-wall stick-spam ladder: repeated
+            // kicks off one face reset vy to -jumpForce ever higher up
+            // the wall, so unbounded same-wall chaining must be
+            // impossible by construction. Chimney chains alternate faces
+            // and stay fully alive.
+            const away = this.wallSide === -1 ? 1 : -1;
+            this.vy = -this.jumpForce;
+            this.vx = away * WALL_JUMP_PUSH;
+            this.grounded = false;
+            // Both forgiveness windows die exactly like a real launch (no
+            // coyote re-fire, no banked buffer), and the cut flag arms so
+            // releasing the key mid-rise shortens this arc like any jump.
+            this.coyoteTimer = 0;
+            this.jumpBufferTimer = 0;
+            this.jumpCutAvailable = true;
+            this.sliding = 0;
+            this.lastKickSide = this.wallSide;
+            // Launch restarts the air-intent bookkeeping (same reasoning
+            // as jump()): keys held through the kick are pre-kick decisions.
+            this._airFrames = 0;
+            this._airIntent = 0;
+            // Lockout: pressing back toward the wall just abandoned is
+            // ignored until the window expires (see update()).
+            this.wallLockTimer = WALL_INPUT_LOCK;
+            this.wallLockDir = -away;
         } else {
             this.jumpBufferTimer = JUMP_BUFFER_TIME;
         }
@@ -171,6 +342,13 @@ export class Player extends Entity {
         this.coyoteTimer = 0;
         this.jumpBufferTimer = 0;
         this.jumpCutAvailable = true;
+        // Wall-slide air-intent restarts with the launch: keys held at the
+        // takeoff frame are grounded-run decisions, never a fresh airborne
+        // press (update() sees grounded=false here because jump() just
+        // cleared it — without this reset the launch frame would inherit
+        // the pre-jump airborne count and miscredit them).
+        this._airFrames = 0;
+        this._airIntent = 0;
     }
 
     // Variable jump height: wired to the jump key's keyup in main.js. Cuts
