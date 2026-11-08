@@ -9,6 +9,8 @@ import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
 import { MovingPlatformManager, applyJumpBoost } from './movingplatforms.js';
+import { LaunchPad, padUnderFeet, applyPadLaunch, drawPads, PAD_SQUASH_TIME } from './pads.js';
+import { Crate, cratePushDirection, stepCrate, drawCrates, crateContainmentWalls } from './crates.js';
 import { spawnBurst, spawnDust, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
 import {
     FX, initFX, shakeOffset, punchScale, PUNCH_TIME,
@@ -149,6 +151,8 @@ const SKID_MIN_SPEED = 150;         // px/s pre-reversal speed for a skid puff
 // Timer-driven (fixed-dt deterministic) rather than position-event because a
 // slide barely moves — tile-crossing would never fire.
 const WALL_SLIDE_DUST_INTERVAL = 0.12;
+// Cadence for the M3 crate push-dust puffs (same deterministic-clock rule).
+const CRATE_PUSH_DUST_INTERVAL = 0.15;
 // Dash streak ghosts (M2): how many hero silhouettes trail an active burst
 // and how long each fades. FX.trails gates BOTH spawn and draw; reduced-
 // motion keeps trails ON at half amplitude (fx.js gentle-family policy), so
@@ -428,6 +432,14 @@ export class Game {
         // Deck the player rode at the end of the last resolved frame (carry
         // + jump-off inheritance source); null whenever not landed on one.
         this._riding = null;
+        // M3 capability objects for the published level: static pads (list
+        // of LaunchPad) and at most ONE pushable crate. Rebuilt fresh per
+        // publishLevel from the level's descriptors, so a retry replays
+        // identical kinematics (the crate carries no cross-attempt state).
+        this.pads = [];
+        this.crate = null;
+        this._crateWalls = [];
+        this._crateDustT = 0;
         this.score = 0;
         // Score at the moment the current level started; retryLevel() rolls
         // back to it so repeated retries of a regenerated level cannot farm
@@ -971,6 +983,18 @@ export class Game {
         // replayed seed.
         this.movingPlatforms = new MovingPlatformManager(level.getMovingPlatforms());
         this._riding = null;
+        // M3 capability objects: fresh instances from THIS level's
+        // descriptors every publish (retry-exact: descriptors are seeded-
+        // deterministic, kinematics start from rest).
+        this.pads = (level.getPads() || []).map(d => new LaunchPad(d.x, d.y));
+        const crateDescs = level.getCrates() || [];
+        this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
+        // Crate-only pixel walls where the pocket model reads the map edge
+        // as a blocker (off-grid tiles produce no collider for anyone); X-
+        // pass only — see stepCrate's split-resolution contract.
+        this._crateWalls = this.crate ? crateContainmentWalls(
+            level.width * level.tileSize, level.height * level.tileSize) : [];
+        this._crateDustT = 0;
         // Coin chip reflects this level's progress: fresh on first play,
         // carried over on a retry (collected flags transfer with the seed).
         this.ui.updateCoins(
@@ -1205,6 +1229,12 @@ export class Game {
                 this._dashGhosts.splice(i, 1);
             }
         }
+        // Pad plate squash decays on the same visual clock: it is a draw-time
+        // channel only (the collision box is never touched, FX.squash gates
+        // the compression inside drawPads).
+        for (const pad of this.pads) {
+            if (pad.squash > 0) pad.squash = Math.max(0, pad.squash - dt);
+        }
         if (this.state !== STATE.PLAYING && this._lean !== 0) {
             this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));
             if (Math.abs(this._lean) < 0.0005) this._lean = 0;
@@ -1269,9 +1299,31 @@ export class Game {
             // Apply physics
             this.physics.applyGravity(this.player, dt);
 
-            // Check collisions
             const platforms = this.level.getPlatforms();
-            const collisions = this.physics.checkCollisions(this.player, platforms);
+
+            // Crates (M3): push detection + crate step BEFORE the player's
+            // own resolution, so a pushed crate presents its MOVED face this
+            // frame and the player's X resolution against it caps them at the
+            // crate face for free (no separate velocity clamp). Detection
+            // reads frame-start geometry: prevX/prevY captured above, and
+            // player.grounded still holds last frame's resolved value (the
+            // resolver below re-derives it after this point).
+            if (this.crate) {
+                const pressDir =
+                    this.input.isRight() && !this.input.isLeft() ? 1 :
+                        this.input.isLeft() && !this.input.isRight() ? -1 : 0;
+                stepCrate(this.crate, this.physics, platforms, dt,
+                    cratePushDirection(this.player, this.crate, pressDir),
+                    this._crateWalls);
+            }
+
+            // Check collisions. The crate joins the solid list as a FULL
+            // solid on both axes — the deliberate contrast with one-way
+            // decks below (Y-only, pure-help). Wall probes stay terrain-
+            // only: a crate is never a slide/kick surface.
+            const solids = this.crate ? platforms.concat([this.crate]) :
+                platforms;
+            const collisions = this.physics.checkCollisions(this.player, solids);
             // Impact speed before the resolver zeroes it: gates the landing
             // thud below.
             const vyBeforeResolve = this.player.vy;
@@ -1302,6 +1354,38 @@ export class Game {
             // pass over the platform list per frame (same shape as
             // checkCollisions already pays).
             this.player.setWallContact(wallContactSide(this.player, platforms));
+
+            // Launch pads (M3): feet-flush contact with a pad's floor line
+            // converts grounded arrival into the fixed-apex bounce. Gated on
+            // vyBeforeResolve >= 0 — arriving from above or resting, never
+            // rising. Runs AFTER decks/wall probes and BEFORE the grounded-
+            // edge block below, so the pad frame reads as a LAUNCH (no
+            // landing squash/brake steals it). applyPadLaunch arms the jump-
+            // cut, so releasing early shortens the bounce like any jump.
+            if (this.pads.length) {
+                const pad = padUnderFeet(this.player, this.pads);
+                if (pad && vyBeforeResolve >= 0) {
+                    applyPadLaunch(this.player);
+                    pad.squash = PAD_SQUASH_TIME;
+                    audio.playSfx('jump');
+                    this._launchStretch = LAUNCH_STRETCH_TIME;
+                    // Feel: soft dust at the plate + an unlock-family ring,
+                    // each spawn-gated exactly like the Wave-B family above
+                    // (draw gates live in fx.drawRings / drawPads).
+                    if (FX.dust) {
+                        const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                        spawnDust(this.dust,
+                            pad.x + pad.width / 2, pad.y + pad.height - 4,
+                            dustTint(pTheme),
+                            { count: 5, dir: 0, speed: 1.1, alpha: 0.7,
+                                life: 0.3, size: 4 });
+                    }
+                    if (FX.pulse) {
+                        spawnRing(this.rings, pad.x + pad.width / 2,
+                            pad.y + pad.height - 6, '#f2b13c', 6, 34);
+                    }
+                }
+            }
 
             // Grounded-state edges (visual-tuning hooks, physics-safe):
             // air-to-ground fires the landing squash. The walked-off-a-ledge
@@ -1406,6 +1490,28 @@ export class Game {
                 }
             } else {
                 this._slideDustT = 0;
+            }
+
+            // Crate push dust (M3 feel): puffs at the crate's trailing base
+            // on a fixed cadence WHILE pushed (deterministic under fixed dt;
+            // spawnDust's own jitter is hash-based, never RNG). Spawn-gated
+            // by FX.dust like the whole family above.
+            if (this.crate && this.crate.pushed && FX.dust) {
+                this._crateDustT += dt;
+                if (this._crateDustT >= CRATE_PUSH_DUST_INTERVAL) {
+                    this._crateDustT = 0;
+                    const cdx = this.crate.x -
+                        (this.crate.prevX ?? this.crate.x);
+                    const cTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    spawnDust(this.dust,
+                        this.crate.x + this.crate.width / 2,
+                        this.crate.y + this.crate.height - 6,
+                        dustTint(cTheme),
+                        { count: 2, dir: cdx !== 0 ? -Math.sign(cdx) : 0,
+                            speed: 0.8, alpha: 0.6, life: 0.3, size: 3 });
+                }
+            } else {
+                this._crateDustT = 0;
             }
 
             // Dash streak (M2 feel): snapshot the hero silhouette every burst
@@ -1823,6 +1929,11 @@ export class Game {
                 this.sprites.drawMovingPlatforms(this.ctx,
                     this.movingPlatforms.platforms, this.currentLevel);
             }
+            // M3 capability objects sit in the same world-furniture band:
+            // vector art, so they render identically with or without the
+            // sprite sheets (the degrade path IS the primary path).
+            if (this.pads.length) drawPads(this.ctx, this.pads);
+            if (this.crate) drawCrates(this.ctx, [this.crate]);
             // Mood wash over background+terrain+props only — entities below
             // paint at full contrast (hazard-readability ruling).
             if (sprites) sprites.drawMoodTint(this.ctx, this.currentLevel,

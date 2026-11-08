@@ -1331,6 +1331,54 @@
     }
   }
 
+  // js/pads.js
+  var PAD_TILE = 32;
+  var PAD_GRAVITY = 980;
+  var PAD_APEX_CELLS = 4;
+  var PAD_IMPULSE = Math.sqrt(2 * PAD_GRAVITY * PAD_APEX_CELLS * PAD_TILE);
+  var PAD_FEET_TOLERANCE = 1.5;
+  var PAD_SQUASH_TIME = 0.12;
+
+  class LaunchPad extends Entity {
+    constructor(x, y) {
+      super(x, y, PAD_TILE, PAD_TILE);
+      this.squash = 0;
+    }
+  }
+  function padUnderFeet(player, pads) {
+    const feet = player.y + player.height;
+    for (const pad of pads) {
+      if (Math.abs(feet - (pad.y + pad.height)) < PAD_FEET_TOLERANCE && player.x < pad.x + pad.width && player.x + player.width > pad.x) {
+        return pad;
+      }
+    }
+    return null;
+  }
+  function applyPadLaunch(player) {
+    player.vy = -PAD_IMPULSE;
+    player.grounded = false;
+    player.coyoteTimer = 0;
+    player.jumpBufferTimer = 0;
+    player.jumpCutAvailable = true;
+  }
+  function drawPads(ctx, pads) {
+    for (const pad of pads) {
+      const baseY = pad.y + pad.height;
+      let h = 10;
+      if (FX.squash && pad.squash > 0) {
+        const k = Math.min(1, pad.squash / PAD_SQUASH_TIME);
+        h = 10 * (1 - 0.55 * k * FX.intensity);
+      }
+      ctx.fillStyle = "#3b2a1e";
+      ctx.fillRect(pad.x + 2, baseY - h, pad.width - 4, h);
+      ctx.fillStyle = "#f2b13c";
+      ctx.fillRect(pad.x + 2, baseY - h, pad.width - 4, 3);
+      ctx.fillStyle = "#8a5a1d";
+      ctx.fillRect(pad.x + 6, baseY - 4, 4, 3);
+      ctx.fillRect(pad.x + pad.width - 10, baseY - 4, 4, 3);
+    }
+  }
+
   // js/level.js
   var DIFFICULTY = new Difficulty;
   var MAX_GENERATION_ATTEMPTS = 200;
@@ -2130,6 +2178,11 @@
     }
     return hub;
   }
+  var CAPABILITY_TIER_MIN = 2;
+  var PAD_CHANCE = 0.5;
+  var CRATE_CHANCE = 0.5;
+  var CRATE_MAX_TRAVEL_PAST_END = 3;
+
   class Level {
     constructor(levelNumber, tileSize, seed) {
       this.levelNumber = levelNumber;
@@ -2230,6 +2283,7 @@
       });
       this.spawnEnemies();
       this.movingPlatforms = this.deriveMovingPlatforms();
+      this.placeCapabilityObjects();
     }
     getSpawnTile() {
       const y = this.height - 4;
@@ -3425,6 +3479,184 @@
       });
       return out.slice(0, MAX_DECK_BRIDGES);
     }
+    placeCapabilityObjects() {
+      this.pads = [];
+      this.crates = [];
+      if (tierIndexFor(this.levelNumber) < CAPABILITY_TIER_MIN)
+        return;
+      const forbidden = this._capabilityForbiddenCells();
+      if (this.rng() < PAD_CHANCE) {
+        const cands = this._findPadCandidates(forbidden);
+        if (cands.length > 0) {
+          const cell = cands[Math.floor(this.rng() * cands.length)];
+          this.pads.push({
+            x: cell.col * this.tileSize,
+            y: cell.row * this.tileSize,
+            col: cell.col,
+            row: cell.row
+          });
+        }
+      }
+      if (this.rng() < CRATE_CHANCE) {
+        const cands = this._findCrateCandidates(this._capabilityForbiddenCells(true));
+        if (cands.length > 0) {
+          const pocket = cands[Math.floor(this.rng() * cands.length)];
+          const mid = pocket.L + Math.floor((pocket.R - pocket.L) / 2);
+          this.crates.push({
+            x: mid * this.tileSize,
+            y: pocket.row * this.tileSize,
+            col: mid,
+            row: pocket.row,
+            channelLeft: pocket.BL,
+            channelRight: pocket.BR
+          });
+        }
+      }
+    }
+    _capabilityForbiddenCells(includeCoinHub = false) {
+      const w = this.width, h = this.height;
+      const key = (x, y) => y * w + x;
+      const bad = new Set;
+      const addRect = (x0, y0, x1, y1) => {
+        for (let y = Math.max(0, y0);y <= Math.min(h - 1, y1); y++) {
+          for (let x = Math.max(0, x0);x <= Math.min(w - 1, x1); x++) {
+            bad.add(key(x, y));
+          }
+        }
+      };
+      if (this.direction === "vertical") {
+        if (this.pathCells)
+          for (const k of this.pathCells)
+            bad.add(k);
+      } else if (this.portalTile) {
+        const mustPass = computeMustPassCells(this.tiles, w, h, this.spawnTile, this.portalTile, this.bridgeGap);
+        if (mustPass)
+          for (const k of mustPass)
+            bad.add(k);
+      }
+      if (includeCoinHub && this.coinSafeHub) {
+        for (const k of this.coinSafeHub)
+          bad.add(k);
+      }
+      addRect(this.spawnTile.x - 2, this.spawnTile.y - 2, this.spawnTile.x + 2, this.spawnTile.y + 2);
+      if (this.portalTile) {
+        addRect(this.portalTile.x - 1, this.portalTile.y - 1, this.portalTile.x + 1, this.portalTile.y + 1);
+      }
+      const T = this.tileSize;
+      for (const c of this.coins) {
+        const cx = Math.floor((c.x + c.width / 2) / T);
+        const cy = Math.floor((c.y + c.height / 2) / T);
+        bad.add(key(cx, cy));
+      }
+      for (const e of this.enemyManager.enemies) {
+        const row = Math.floor(e.y / T);
+        const c0 = Math.floor(e.minX / T);
+        const c1 = Math.floor((e.maxX - 1) / T);
+        addRect(c0, row, c1, row);
+      }
+      if (this.bridgeGap) {
+        const g = this.bridgeGap;
+        addRect(g.a - 1, g.S - 2, g.b + 1, g.S);
+      }
+      if (this.shaftGap) {
+        const g = this.shaftGap;
+        addRect(g.sx - 1, g.A - 2, g.ex + 1, g.B + 1);
+      }
+      return bad;
+    }
+    _findPadCandidates(forbidden) {
+      const out = [];
+      const w = this.width, h = this.height;
+      for (let r = 0;r <= h - 2; r++) {
+        for (let c = 0;c < w; c++) {
+          if (this.tiles[r][c] !== 0 || this.tiles[r + 1][c] !== 1) {
+            continue;
+          }
+          const k = r * w + c;
+          if (forbidden.has(k))
+            continue;
+          if (!this.reachableTiles.has(k))
+            continue;
+          let clear = true;
+          for (let dr = 1;dr <= PAD_APEX_CELLS; dr++) {
+            const rr = r - dr;
+            if (rr < 0) {
+              clear = false;
+              break;
+            }
+            const t = this.tiles[rr][c];
+            if (t === 1 || t === 2) {
+              clear = false;
+              break;
+            }
+          }
+          if (clear)
+            out.push({ col: c, row: r });
+        }
+      }
+      return out;
+    }
+    _findCrateCandidates(forbidden) {
+      const out = [];
+      const w = this.width, h = this.height;
+      const bodyFree = (r, c) => c >= 0 && c < w && this.tiles[r][c] === 0;
+      const floored = (r, c) => c >= 0 && c < w && this.tiles[r + 1][c] === 1;
+      for (let r = 0;r <= h - 2; r++) {
+        let c = 0;
+        while (c < w) {
+          if (!(bodyFree(r, c) && floored(r, c))) {
+            c++;
+            continue;
+          }
+          let L = c;
+          while (bodyFree(r, L - 1) && floored(r, L - 1))
+            L--;
+          let R = c;
+          while (bodyFree(r, R + 1) && floored(r, R + 1))
+            R++;
+          const BL = L;
+          const BR = R;
+          const leftBlocked = BL - 1 < 0 || this.tiles[r][BL - 1] === 1;
+          const rightBlocked = BR + 1 >= w || this.tiles[r][BR + 1] === 1;
+          const contained = leftBlocked && rightBlocked && L - BL <= CRATE_MAX_TRAVEL_PAST_END && BR - R <= CRATE_MAX_TRAVEL_PAST_END;
+          if (contained && R - L + 1 >= 2) {
+            const midSeat = L + Math.floor((R - L) / 2);
+            if (midSeat - L > CRATE_MAX_TRAVEL_PAST_END || R - midSeat > CRATE_MAX_TRAVEL_PAST_END) {
+              c = R + 1;
+              continue;
+            }
+            let ok = true;
+            for (let x = BL;x <= BR && ok; x++) {
+              if (forbidden.has(r * w + x))
+                ok = false;
+            }
+            for (let x = BL;x <= BR && ok; x++) {
+              if (this.tiles[r + 1][x] === 2) {
+                ok = false;
+                break;
+              }
+              if (r + 2 < h && this.tiles[r + 2][x] === 2) {
+                ok = false;
+                break;
+              }
+            }
+            if (ok && !this._channelReachable(r, BL, BR))
+              ok = false;
+            if (ok)
+              out.push({ row: r, L, R, BL, BR });
+          }
+          c = R + 1;
+        }
+      }
+      return out;
+    }
+    _channelReachable(row, bl, br) {
+      for (let x = bl;x <= br; x++) {
+        if (this.reachableTiles.has(row * this.width + x))
+          return true;
+      }
+      return false;
+    }
     movingDeckLegal(a, b, S) {
       const inGrid = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height;
       for (let cx = a;cx <= b; cx++) {
@@ -3534,6 +3766,12 @@
     }
     getMovingPlatforms() {
       return this.movingPlatforms;
+    }
+    getPads() {
+      return this.pads;
+    }
+    getCrates() {
+      return this.crates;
     }
     getCoins() {
       return this.collectibles.getCoins();
@@ -6009,6 +6247,70 @@
     }
   }
 
+  // js/crates.js
+  var CRATE_SIZE = 32;
+  var CRATE_PUSH_SPEED = 40;
+  var PUSH_CONTACT_EPS = 1;
+
+  class Crate extends Entity {
+    constructor(desc) {
+      super(desc.x, desc.y, CRATE_SIZE, CRATE_SIZE);
+      this.pushed = false;
+    }
+  }
+  function cratePushDirection(player, crate, dir) {
+    if (!player.grounded || dir === 0)
+      return 0;
+    const px = player.prevX !== undefined ? player.prevX : player.x;
+    const py = player.prevY !== undefined ? player.prevY : player.y;
+    if (!(py < crate.y + crate.height && py + player.height > crate.y)) {
+      return 0;
+    }
+    if (dir > 0) {
+      return Math.abs(px + player.width - crate.x) <= PUSH_CONTACT_EPS ? 1 : 0;
+    }
+    return Math.abs(px - (crate.x + crate.width)) <= PUSH_CONTACT_EPS ? -1 : 0;
+  }
+  function crateContainmentWalls(widthPx, heightPx) {
+    const PAD = 4 * CRATE_SIZE;
+    return [
+      { x: -CRATE_SIZE, y: -PAD, width: CRATE_SIZE, height: heightPx + 2 * PAD },
+      { x: widthPx, y: -PAD, width: CRATE_SIZE, height: heightPx + 2 * PAD }
+    ];
+  }
+  function stepCrate(crate, physics, solids, dt, pushDir, wallSolids = []) {
+    crate.prevX = crate.x;
+    crate.prevY = crate.y;
+    crate.pushed = pushDir !== 0;
+    if (pushDir !== 0) {
+      crate.x += pushDir * CRATE_PUSH_SPEED * dt;
+    }
+    physics.applyGravity(crate, dt);
+    const hits = physics.checkCollisions(crate, solids);
+    crate.grounded = false;
+    physics.resolveYCollision(crate, hits);
+    if (wallSolids.length > 0) {
+      physics.resolveXCollision(crate, hits.concat(physics.checkCollisions(crate, wallSolids)));
+    } else {
+      physics.resolveXCollision(crate, hits);
+    }
+  }
+  function drawCrates(ctx, crates) {
+    for (const c of crates) {
+      ctx.fillStyle = "#8a5a2b";
+      ctx.fillRect(c.x, c.y, c.width, c.height);
+      ctx.fillStyle = "#5c3a1a";
+      ctx.fillRect(c.x, c.y, c.width, 3);
+      ctx.fillRect(c.x, c.y + c.height - 3, c.width, 3);
+      ctx.fillRect(c.x, c.y, 3, c.height);
+      ctx.fillRect(c.x + c.width - 3, c.y, 3, c.height);
+      if (FX.intensity > 0) {
+        ctx.fillStyle = "#6e4622";
+        ctx.fillRect(c.x + 6, c.y + c.height / 2 - 1, c.width - 12, 2);
+      }
+    }
+  }
+
   // js/particles.js
   var MAX_PARTICLES = 120;
   function spawnBurst(list, x, y, color, count = 10) {
@@ -6826,6 +7128,7 @@
   var LAND_DEPTH_REF_VY = 520;
   var SKID_MIN_SPEED = 150;
   var WALL_SLIDE_DUST_INTERVAL = 0.12;
+  var CRATE_PUSH_DUST_INTERVAL = 0.15;
   var DASH_GHOST_MAX = 6;
   var DASH_GHOST_LIFE = 0.22;
   var LEAN_MAX_RAD = 0.07;
@@ -6936,6 +7239,10 @@
       this.projectiles = null;
       this.movingPlatforms = null;
       this._riding = null;
+      this.pads = [];
+      this.crate = null;
+      this._crateWalls = [];
+      this._crateDustT = 0;
       this.score = 0;
       this.levelStartScore = 0;
       this.deathsOnCurrentLevel = 0;
@@ -7255,6 +7562,11 @@
       this.projectiles = level.getProjectileManager();
       this.movingPlatforms = new MovingPlatformManager(level.getMovingPlatforms());
       this._riding = null;
+      this.pads = (level.getPads() || []).map((d) => new LaunchPad(d.x, d.y));
+      const crateDescs = level.getCrates() || [];
+      this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
+      this._crateWalls = this.crate ? crateContainmentWalls(level.width * level.tileSize, level.height * level.tileSize) : [];
+      this._crateDustT = 0;
       this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
       this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
@@ -7372,6 +7684,10 @@
           this._dashGhosts.splice(i, 1);
         }
       }
+      for (const pad of this.pads) {
+        if (pad.squash > 0)
+          pad.squash = Math.max(0, pad.squash - dt);
+      }
       if (this.state !== STATE.PLAYING && this._lean !== 0) {
         this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));
         if (Math.abs(this._lean) < 0.0005)
@@ -7407,7 +7723,12 @@
         }
         this.physics.applyGravity(this.player, dt);
         const platforms = this.level.getPlatforms();
-        const collisions = this.physics.checkCollisions(this.player, platforms);
+        if (this.crate) {
+          const pressDir = this.input.isRight() && !this.input.isLeft() ? 1 : this.input.isLeft() && !this.input.isRight() ? -1 : 0;
+          stepCrate(this.crate, this.physics, platforms, dt, cratePushDirection(this.player, this.crate, pressDir), this._crateWalls);
+        }
+        const solids = this.crate ? platforms.concat([this.crate]) : platforms;
+        const collisions = this.physics.checkCollisions(this.player, solids);
         const vyBeforeResolve = this.player.vy;
         this.physics.resolveCollisions(this.player, collisions);
         if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
@@ -7417,6 +7738,29 @@
           this._riding = this.movingPlatforms.attachRider(this.player);
         }
         this.player.setWallContact(wallContactSide(this.player, platforms));
+        if (this.pads.length) {
+          const pad = padUnderFeet(this.player, this.pads);
+          if (pad && vyBeforeResolve >= 0) {
+            applyPadLaunch(this.player);
+            pad.squash = PAD_SQUASH_TIME;
+            playSfx("jump");
+            this._launchStretch = LAUNCH_STRETCH_TIME;
+            if (FX.dust) {
+              const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+              spawnDust(this.dust, pad.x + pad.width / 2, pad.y + pad.height - 4, dustTint(pTheme), {
+                count: 5,
+                dir: 0,
+                speed: 1.1,
+                alpha: 0.7,
+                life: 0.3,
+                size: 4
+              });
+            }
+            if (FX.pulse) {
+              spawnRing(this.rings, pad.x + pad.width / 2, pad.y + pad.height - 6, "#f2b13c", 6, 34);
+            }
+          }
+        }
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
           this._landDepth = Math.min(1, Math.max(0.25, vyBeforeResolve / LAND_DEPTH_REF_VY));
@@ -7485,6 +7829,24 @@
           }
         } else {
           this._slideDustT = 0;
+        }
+        if (this.crate && this.crate.pushed && FX.dust) {
+          this._crateDustT += dt;
+          if (this._crateDustT >= CRATE_PUSH_DUST_INTERVAL) {
+            this._crateDustT = 0;
+            const cdx = this.crate.x - (this.crate.prevX ?? this.crate.x);
+            const cTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            spawnDust(this.dust, this.crate.x + this.crate.width / 2, this.crate.y + this.crate.height - 6, dustTint(cTheme), {
+              count: 2,
+              dir: cdx !== 0 ? -Math.sign(cdx) : 0,
+              speed: 0.8,
+              alpha: 0.6,
+              life: 0.3,
+              size: 3
+            });
+          }
+        } else {
+          this._crateDustT = 0;
         }
         if (this.player.dashTimer > 0 && FX.trails) {
           this._dashGhosts.push({ x: this.player.x, y: this.player.y, age: 0 });
@@ -7676,6 +8038,10 @@
         if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
           this.sprites.drawMovingPlatforms(this.ctx, this.movingPlatforms.platforms, this.currentLevel);
         }
+        if (this.pads.length)
+          drawPads(this.ctx, this.pads);
+        if (this.crate)
+          drawCrates(this.ctx, [this.crate]);
         if (sprites)
           sprites.drawMoodTint(this.ctx, this.currentLevel, camX, this.camera.y, effW, effH);
         this.level.draw(this.ctx, sprites, this.player);

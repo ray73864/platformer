@@ -15,6 +15,8 @@ import { Game } from "../../js/main.js";
 import { Player, DASH_TIME } from "../../js/player.js";
 import { Physics } from "../../js/physics.js";
 import { EnemyManager } from "../../js/enemies.js";
+import { Hazards } from "../../js/hazards.js";
+import { ProjectileManager } from "../../js/projectiles.js";
 import { FX } from "../../js/fx.js";
 
 const DT = 1 / 60;
@@ -208,4 +210,66 @@ test("draw pipeline survives an active streak (ghost pass under FX.trails)", () 
         strokeText: () => {}
     });
     expect(() => game.draw()).not.toThrow();
+});
+
+// --- R3 fold-in pins (review adjudication, M2): NO contact i-frames -------
+// The reviewer proved these by execution (/tmp/opencode/reviewT4/noiframes_
+// probe.mjs); they ship here so the guarantee can never silently regress:
+// the burst owns vx, nothing else — spikes and live projectiles kill exactly
+// as they do without a dash, WHILE the burst is still running.
+
+test("dash INTO spikes is death mid-burst — no i-frame channel exists", () => {
+    const physics = new Physics(GRAVITY, MAX_FALL);
+    const hz = new Hazards();
+    for (let i = 0; i < 3; i++) hz.addSpike(300 + i * 32, 320 - 16);
+    const p = new Player(240, 320 - 32, 200, 350);
+    p.grounded = true;
+    expect(p.pressDash()).toBe(true);   // faces right by default → into spikes
+    let died = false, timerAtDeath = 0;
+    for (let f = 0; f < 30 && !died; f++) {
+        p.prevX = p.x; p.prevY = p.y;
+        p.update(DT, false, false, {});
+        physics.applyGravity(p, DT);
+        physics.resolveCollisions(p, physics.checkCollisions(p, FLOOR));
+        if (hz.checkPlayerSpikes(p)) { died = true; timerAtDeath = p.dashTimer; }
+    }
+    expect(died).toBe(true);
+    expect(timerAtDeath).toBeGreaterThan(0); // killed INSIDE the burst window
+});
+
+test("dash INTO a live projectile is a hit mid-burst — same rule, spelled out", () => {
+    const physics = new Physics(GRAVITY, MAX_FALL);
+    const terrain = { tileSize: 32, width: 100, height: 100, isSolidPx: () => false };
+    const pm = new ProjectileManager(terrain);
+    const p = new Player(200, 320 - 32, 200, 350);
+    p.grounded = true;
+    // Inbound at chest height: meets the player well inside the 9-frame burst.
+    pm.spawn(290, p.y + 16, -150, 0, null);
+    expect(p.pressDash()).toBe(true);
+    let hit = false, timerAtHit = 0;
+    for (let f = 0; f < 30 && !hit; f++) {
+        p.prevX = p.x; p.prevY = p.y;
+        p.update(DT, false, false, {});
+        physics.applyGravity(p, DT);
+        physics.resolveCollisions(p, physics.checkCollisions(p, FLOOR));
+        const ev = pm.updateAll(DT, p);
+        if (ev.hitPlayer) { hit = true; timerAtHit = p.dashTimer; }
+    }
+    expect(hit).toBe(true);
+    expect(timerAtHit).toBeGreaterThan(0);
+    // Control: the identical spike fixture kills a plain walker too — the
+    // deaths above are the engine's normal lethality, not a dash artefact.
+    const hz = new Hazards();
+    for (let i = 0; i < 3; i++) hz.addSpike(300 + i * 32, 320 - 16);
+    const walker = new Player(240, 320 - 32, 200, 350);
+    walker.grounded = true;
+    let walkerDied = false;
+    for (let f = 0; f < 60 && !walkerDied; f++) {
+        walker.prevX = walker.x; walker.prevY = walker.y;
+        walker.update(DT, false, true, {}); // walk right, no dash
+        physics.applyGravity(walker, DT);
+        physics.resolveCollisions(walker, physics.checkCollisions(walker, FLOOR));
+        if (hz.checkPlayerSpikes(walker)) walkerDied = true;
+    }
+    expect(walkerDied).toBe(true);
 });

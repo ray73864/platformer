@@ -5,6 +5,7 @@ import { Hazards } from './hazards.js';
 import { Physics, aabbOverlap } from './physics.js';
 import { Player } from './player.js';
 import { ProjectileManager } from './projectiles.js';
+import { PAD_APEX_CELLS } from './pads.js';
 
 const DIFFICULTY = new Difficulty();
 
@@ -1550,6 +1551,29 @@ export function canReach(
     return reachable.has(goalTile.y * width + goalTile.x);
 }
 
+// --- Capability objects: launch pads + crates (M3, owner-approved) ----------
+// Placement-only pass at the CONSTRUCTOR TAIL (after deriveMovingPlatforms):
+// zero tile writes, zero draws consumed by anything upstream, so terrain,
+// spikes, coins, spawn/portal, direction, attempt counts AND the deck
+// schedule stay byte-identical versus pre-M3 builds for every seed — only
+// the new entity sets (this.pads / this.crates) grow. Rng-stream contract:
+// an eligible map consumes exactly two rolls (pad chance, crate chance)
+// plus one pick draw per object actually placed; nothing reads rng after
+// this pass, so there is no stream shift anywhere else (the deck-schedule
+// precedent in spawnEnemies' header documents what shifting WOULD cost —
+// this pass deliberately pays none of it).
+// Budget: max 1 pad + 1 crate per level, tiers >= 2 only (tierIndexFor, the
+// same boundary authority the score economy reads).
+const CAPABILITY_TIER_MIN = 2;
+const PAD_CHANCE = 0.5;
+const CRATE_CHANCE = 0.5;
+// Seat-relative travel budget: from the midpoint seat, neither push
+// direction may exceed this many cells before the crate meets its blocker
+// (rejects runs of 8+; see the guard in _findCrateCandidates). Convention
+// documented there: bound the SHOVE so every push outcome stays short,
+// readable, and inside the pocket's sightline.
+const CRATE_MAX_TRAVEL_PAST_END = 3;
+
 export class Level {
     constructor(levelNumber, tileSize, seed) {
         this.levelNumber = levelNumber;
@@ -1780,6 +1804,9 @@ export class Level {
         // Fresh Level per publish/retry => fresh manager with an identical
         // phase schedule (replays are exact).
         this.movingPlatforms = this.deriveMovingPlatforms();
+        // Capability objects (M3 pads + crates): LAST consumer of this.rng,
+        // pure placement over the accepted grid — see the constant header.
+        this.placeCapabilityObjects();
     }
 
     // Standing tile per direction on the forced flat ground band: canonical
@@ -3989,6 +4016,251 @@ export class Level {
         return out.slice(0, MAX_DECK_BRIDGES);
     }
 
+    /**
+     * M3 placement pass (see the capability-objects constant header). Runs
+     * at the constructor tail over the ACCEPTED grid: reads tiles/reachability/
+     * coins/enemies/decks, writes only this.pads / this.crates descriptor
+     * arrays ([] when nothing qualifies). Deterministic per seed like
+     * everything else — a retry rebuilds byte-identical objects.
+     */
+    placeCapabilityObjects() {
+        this.pads = [];
+        this.crates = [];
+        if (tierIndexFor(this.levelNumber) < CAPABILITY_TIER_MIN) return;
+
+        const forbidden = this._capabilityForbiddenCells();
+
+        // Pad: roll, then pick uniformly among candidates in scan order.
+        if (this.rng() < PAD_CHANCE) {
+            const cands = this._findPadCandidates(forbidden);
+            if (cands.length > 0) {
+                const cell = cands[Math.floor(this.rng() * cands.length)];
+                this.pads.push({
+                    x: cell.col * this.tileSize,
+                    y: cell.row * this.tileSize,
+                    col: cell.col,
+                    row: cell.row
+                });
+            }
+        }
+        // Crate: same discipline; initial seat is the stand-run midpoint so
+        // the bounded travel stays symmetric around a visible resting spot.
+        if (this.rng() < CRATE_CHANCE) {
+            const cands = this._findCrateCandidates(
+                this._capabilityForbiddenCells(true));
+            if (cands.length > 0) {
+                const pocket = cands[Math.floor(this.rng() * cands.length)];
+                const mid = pocket.L + Math.floor((pocket.R - pocket.L) / 2);
+                this.crates.push({
+                    x: mid * this.tileSize,
+                    y: pocket.row * this.tileSize,
+                    col: mid,
+                    row: pocket.row,
+                    // Containment contract for tests/sweeps: the crate may
+                    // never leave columns [BL..BR] on its spawn row.
+                    channelLeft: pocket.BL,
+                    channelRight: pocket.BR
+                });
+            }
+        }
+    }
+
+    /**
+     * Cells pads AND crate channels must stay out of (keyed y*width+x):
+     * route articulation (must-pass cells horizontal via computeMustPassCells
+     * — the exact set the gauntlet gate consumes; vertical maps have no
+     * articulation model, so their forced pathCells carry the ban), spawn
+     * neighborhood, portal approach band, every coin body cell, every
+     * DEPLOYED patrol span (final minX/maxX bounds, enemy row), and the deck
+     * corridor / shaft swept bands plus one column of flank. Conservative by
+     * design: an over-ban costs one missed pad, never a broken proof.
+     */
+    _capabilityForbiddenCells(includeCoinHub = false) {
+        const w = this.width, h = this.height;
+        const key = (x, y) => y * w + x;
+        const bad = new Set();
+        const addRect = (x0, y0, x1, y1) => {
+            for (let y = Math.max(0, y0); y <= Math.min(h - 1, y1); y++) {
+                for (let x = Math.max(0, x0); x <= Math.min(w - 1, x1); x++) {
+                    bad.add(key(x, y));
+                }
+            }
+        };
+        // Route cells: articulation points (horizontal) or the constructed
+        // climb's jump-off/landing set (vertical). Null-safe both ways.
+        if (this.direction === 'vertical') {
+            if (this.pathCells) for (const k of this.pathCells) bad.add(k);
+        } else if (this.portalTile) {
+            const mustPass = computeMustPassCells(
+                this.tiles, w, h, this.spawnTile, this.portalTile,
+                this.bridgeGap);
+            if (mustPass) for (const k of mustPass) bad.add(k);
+        }
+        // Coin safe-hub cells — CRATE CHANNELS ONLY per the brief's rule list
+        // (pads only owe the route-waiting-spot ban): a shoved crate must
+        // never occupy a cell on a portal-preserving coin route — the body
+        // ban alone would let it sit one step off a coin's safe line.
+        // Null-safe: hub is null when no model exists.
+        if (includeCoinHub && this.coinSafeHub) {
+            for (const k of this.coinSafeHub) bad.add(k);
+        }
+        // Spawn neighborhood (+/-2) and portal approach (+/-1 around the
+        // portal body rows).
+        addRect(this.spawnTile.x - 2, this.spawnTile.y - 2,
+            this.spawnTile.x + 2, this.spawnTile.y + 2);
+        if (this.portalTile) {
+            addRect(this.portalTile.x - 1, this.portalTile.y - 1,
+                this.portalTile.x + 1, this.portalTile.y + 1);
+        }
+        // Coins: a crate sliding through a coin cell buries it; a pad under
+        // a coin is fine (the bounce delivers), but the SHARED forbidden set
+        // keeps both simple — coin body cells only.
+        const T = this.tileSize;
+        for (const c of this.coins) {
+            const cx = Math.floor((c.x + c.width / 2) / T);
+            const cy = Math.floor((c.y + c.height / 2) / T);
+            bad.add(key(cx, cy));
+        }
+        // Deployed patrols: final travel bounds on the enemy's own row.
+        for (const e of this.enemyManager.enemies) {
+            const row = Math.floor(e.y / T);
+            const c0 = Math.floor(e.minX / T);
+            const c1 = Math.floor((e.maxX - 1) / T);
+            addRect(c0, row, c1, row);
+        }
+        // Deck corridor swept band (+1 flank column); elevator cabin band.
+        if (this.bridgeGap) {
+            const g = this.bridgeGap;
+            addRect(g.a - 1, g.S - 2, g.b + 1, g.S);
+        }
+        if (this.shaftGap) {
+            const g = this.shaftGap;
+            addRect(g.sx - 1, g.A - 2, g.ex + 1, g.B + 1);
+        }
+        return bad;
+    }
+
+    // Pad candidates: standable floor cell, reachable, NOT on a forbidden
+    // cell (R1: never a must-pass waiting spot), with the full rise column
+    // clear of rock and teeth for PAD_APEX_CELLS rows (a bounce into solid
+    // ceiling or a spike throat would trade a mobility aid for a death
+    // trap). Scan order row-major for determinism.
+    _findPadCandidates(forbidden) {
+        const out = [];
+        const w = this.width, h = this.height;
+        for (let r = 0; r <= h - 2; r++) {
+            for (let c = 0; c < w; c++) {
+                if (this.tiles[r][c] !== 0 || this.tiles[r + 1][c] !== 1) {
+                    continue;
+                }
+                const k = r * w + c;
+                if (forbidden.has(k)) continue;
+                if (!this.reachableTiles.has(k)) continue;
+                let clear = true;
+                for (let dr = 1; dr <= PAD_APEX_CELLS; dr++) {
+                    const rr = r - dr;
+                    if (rr < 0) { clear = false; break; }
+                    const t = this.tiles[rr][c];
+                    if (t === 1 || t === 2) { clear = false; break; }
+                }
+                if (clear) out.push({ col: c, row: r });
+            }
+        }
+        return out;
+    }
+
+    // Crate pockets: maximal flat stand runs (open body row over continuous
+    // solid floor) of >= 2 cells whose slide range ends at a SOLID body
+    // blocker or the map edge within CRATE_MAX_TRAVEL_PAST_END cells on both
+    // sides — a run that merely falls away (missing floor) is rejected, the
+    // crate would gravity out of its pocket. Every channel cell must dodge
+    // the forbidden set, no spike may sit within one cell below the channel
+    // floor (a pushed crate must never create spike cover), and at least one
+    // channel cell must be player-reachable (an assist nobody can find is
+    // just scenery).
+    _findCrateCandidates(forbidden) {
+        const out = [];
+        const w = this.width, h = this.height;
+        const bodyFree = (r, c) => c >= 0 && c < w && this.tiles[r][c] === 0;
+        const floored = (r, c) => c >= 0 && c < w && this.tiles[r + 1][c] === 1;
+        for (let r = 0; r <= h - 2; r++) {
+            let c = 0;
+            while (c < w) {
+                if (!(bodyFree(r, c) && floored(r, c))) { c++; continue; }
+                let L = c;
+                while (bodyFree(r, L - 1) && floored(r, L - 1)) L--;
+                let R = c;
+                while (bodyFree(r, R + 1) && floored(r, R + 1)) R++;
+                // Slide range == stand run here by construction: coasting
+                // needs the SAME open-body-plus-floor predicate the run scan
+                // just exhausted, so BL/BR cannot extend past L/R on a static
+                // grid. They stay named separately because the descriptor's
+                // containment contract speaks in channel terms, and the
+                // travel-budget checks below are what would loosen if crates
+                // ever coast (e.g. onto slopes).
+                const BL = L;
+                const BR = R;
+                // Containment: each end must stop at edge or SOLID blocker
+                // (not a floor gap), within the travel budget.
+                const leftBlocked = BL - 1 < 0 || this.tiles[r][BL - 1] === 1;
+                const rightBlocked =
+                    BR + 1 >= w || this.tiles[r][BR + 1] === 1;
+                const contained = leftBlocked && rightBlocked &&
+                    L - BL <= CRATE_MAX_TRAVEL_PAST_END &&
+                    BR - R <= CRATE_MAX_TRAVEL_PAST_END;
+                if (contained && R - L + 1 >= 2) {
+                    // Seat-relative travel budget (REAL conjunct since the
+                    // BL≡L cleanup made the old past-end checks vacuous):
+                    // from the midpoint seat, neither direction may exceed
+                    // CRATE_MAX_TRAVEL_PAST_END cells of shove, so a run of
+                    // 8+ is rejected outright. Convention: bound the SHOVE,
+                    // not the geometry — max(seat-L, R-seat) <= 3 keeps every
+                    // push outcome short enough to stay readable and inside
+                    // the pocket's sightline.
+                    const midSeat = L + Math.floor((R - L) / 2);
+                    if (midSeat - L > CRATE_MAX_TRAVEL_PAST_END ||
+                        R - midSeat > CRATE_MAX_TRAVEL_PAST_END) { c = R + 1; continue; }
+                    // Pockets are NATURAL bounded trenches (zero terrain
+                    // carving). Measured across two independent seed families
+                    // of tier>=2 maps (~3200 builds incl. vertical): channel
+                    // length histogram ~{2:60, 3:11, 4:35, 5:35} — most
+                    // channels are 3..5 cells and LONGER channels live mostly
+                    // on vertical maps. The midpoint seat leaves a free cell
+                    // beside the crate in every run >= 3, so the player can
+                    // drop in behind it and shove it up to
+                    // CRATE_MAX_TRAVEL_PAST_END cells before its blocker
+                    // (verified player-driven 64 px push on L25 s607974);
+                    // flush 2-cell seats give strain feedback plus a static
+                    // step-up instead. Crates are therefore a WORKING bounded
+                    // assist, never route-required (R2).
+                    let ok = true;
+                    for (let x = BL; x <= BR && ok; x++) {
+                        if (forbidden.has(r * w + x)) ok = false;
+                    }
+                    // Spike cover check: rows r+1 (channel floor itself) and
+                    // r+2 under any channel column.
+                    for (let x = BL; x <= BR && ok; x++) {
+                        if (this.tiles[r + 1][x] === 2) { ok = false; break; }
+                        if (r + 2 < h && this.tiles[r + 2][x] === 2) {
+                            ok = false; break;
+                        }
+                    }
+                    if (ok && !this._channelReachable(r, BL, BR)) ok = false;
+                    if (ok) out.push({ row: r, L, R, BL, BR });
+                }
+                c = R + 1;
+            }
+        }
+        return out;
+    }
+
+    _channelReachable(row, bl, br) {
+        for (let x = bl; x <= br; x++) {
+            if (this.reachableTiles.has(row * this.width + x)) return true;
+        }
+        return false;
+    }
+
     // Swept-volume legality for one gap candidate [a..b] with flush flank
     // top row S (deck occupies rows S..S+1 across the gap for its whole
     // shuttle). Returns false on any contact with terrain, teeth, patrols,
@@ -4148,6 +4420,17 @@ export class Level {
     // fresh per published level from these descriptors.
     getMovingPlatforms() {
         return this.movingPlatforms;
+    }
+
+    // M3 capability-object descriptors ([] when nothing qualified). Static
+    // data: live pad squash clocks / crate kinematics live in main.js, built
+    // fresh per publish so a retry replays identical objects.
+    getPads() {
+        return this.pads;
+    }
+
+    getCrates() {
+        return this.crates;
     }
 
     getCoins() {
