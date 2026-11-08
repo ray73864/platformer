@@ -89,9 +89,19 @@ test("window stays non-vacuous: spinies and enemy presence survive the ramp",
         }
         // Measured @this wave: 12 spinies over 90 routed maps, mean 3.72
         // enemies/map (HEAD baseline 3.9 — inside the ±15% presence floor).
+        // RE-BASELINED 2026-11-08 for the owner density ruling (bodies-per-
+        // run cap + portal-shelf protection): mean is now 1.60 enemies/map
+        // over the same band (spinies 8) because shared-run clustering WAS
+        // the bulk of teen-tier enemy count — pre-rule, 54% of maps stacked
+        // more bodies on one walkable run than max(1, floor(runTiles/3))
+        // allows. This floor tracks non-vacuity (the window must still ship
+        // patrols), not the old density level; the fairness ruling INTEN-
+        // TIONALLY trades raw presence for per-run readability (see
+        // BODIES_PER_RUN_DIVISOR in js/level.js and task-2-report.md for the
+        // measured cost/bot A/B). Floor set well under observation.
         expect(maps).toBeGreaterThan(60);
         expect(spinies).toBeGreaterThanOrEqual(6);
-        expect(enemies / maps).toBeGreaterThanOrEqual(2.5);
+        expect(enemies / maps).toBeGreaterThanOrEqual(1.2);
         expect(enemies / maps).toBeLessThanOrEqual(5.0);
     });
 

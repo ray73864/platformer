@@ -75,12 +75,20 @@ test("legacy long-run blocking still holds behind the R1' wall", () => {
 // generator drift on these cases trips immediately. routeFair() re-running
 // clean here is the shipped physics gate vouching for each map.
 
+// RECAPTURED 2026-11-08 for the enemy density/grouping fairness rules
+// (bodies-per-run cap + portal-shelf protection, owner ruling): ALL 5 fps
+// intentionally moved. Every repro map here is L32+ where the cap skips at
+// least one excess shared-run placement before the kind rolls; the shrunk
+// deployment also shifts the deck speed/phase draws behind it (documented
+// spawnEnemies stream note). Tiles/spikes/coins are byte-identical on these
+// seeds — verified against BASE 8a9109f with terrain-only fingerprints —
+// and the route/soft-lock properties above stay green untouched.
 const SOFTLOCK_REPROS = [
-    { lvl: 83, seed: 1514804096, fp: "05d9df9c" },
-    { lvl: 32, seed: 32010, fp: "fee4a0c2" },
-    { lvl: 44, seed: 44019, fp: "c68076e3" },
-    { lvl: 32, seed: 32313, fp: "868432cd" },
-    { lvl: 59, seed: 59309, fp: "b7caa46f" }
+    { lvl: 83, seed: 1514804096, fp: "c92e247d" },
+    { lvl: 32, seed: 32010, fp: "b46d9e79" },
+    { lvl: 44, seed: 44019, fp: "df7311b8" },
+    { lvl: 32, seed: 32313, fp: "cbf15943" },
+    { lvl: 59, seed: 59309, fp: "c70058b2" }
 ];
 
 function fnv1a(str) {

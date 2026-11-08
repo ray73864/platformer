@@ -1224,6 +1224,8 @@
   var HOSTILE_MIN_RUN = 4;
   var ENEMY_MIN_RUN = 2;
   var GAUNTLET_MIN_BODIES = 3;
+  var BODIES_PER_RUN_DIVISOR = 3;
+  var PORTAL_SHELF_CLEAR_COLS = 1;
   function computeMustPassCells(tiles, width, height, spawnTile, portalTile, bridgeGap = null) {
     const key = (x, y) => y * width + x;
     const view = { tiles, width, height, spawnTile, bridgeGap };
@@ -1358,6 +1360,67 @@
       }
     }
     return violations;
+  }
+  function walkRunExtent(tiles, width, height, x, y, blocked = null) {
+    const solidAt = (cx, cy) => cx >= 0 && cx < width && cy >= 0 && cy < height && tiles[cy][cx] === 1;
+    const blockedAt = (cx, cy) => blocked !== null && blocked.has(cy * width + cx);
+    const walkable = (cx, cy) => cx >= 0 && cx < width && cy >= 0 && cy < height && tiles[cy][cx] !== 1 && tiles[cy][cx] !== 2 && !blockedAt(cx, cy);
+    if (!solidAt(x, y + 1) || blockedAt(x, y))
+      return null;
+    let left = x;
+    while (solidAt(left - 1, y + 1) && walkable(left - 1, y))
+      left--;
+    let right = x;
+    while (solidAt(right + 1, y + 1) && walkable(right + 1, y))
+      right++;
+    return { left, right };
+  }
+  function patrolRunGroups(tiles, width, height, spawns, pathCells = null) {
+    const byKey = new Map;
+    spawns.forEach((s, i) => {
+      const ext = walkRunExtent(tiles, width, height, s.x, s.y, pathCells);
+      if (ext === null)
+        return;
+      const k = `${s.y}:${ext.left}`;
+      if (!byKey.has(k))
+        byKey.set(k, []);
+      byKey.get(k).push(i);
+    });
+    return [...byKey.entries()].map(([key, items]) => ({ key, items }));
+  }
+  function capBodiesPerPatrolRun(tiles, width, height, spawns, pathCells = null, divisor = BODIES_PER_RUN_DIVISOR) {
+    const drop = new Set;
+    for (const g of patrolRunGroups(tiles, width, height, spawns, pathCells)) {
+      const first = spawns[g.items[0]];
+      const ext = walkRunExtent(tiles, width, height, first.x, first.y, pathCells);
+      const cap = Math.max(1, Math.floor((ext.right - ext.left + 1) / divisor));
+      for (let i = cap;i < g.items.length; i++)
+        drop.add(g.items[i]);
+    }
+    return spawns.filter((_, i) => !drop.has(i));
+  }
+  function protectPortalShelf(tiles, width, height, portalTile, direction, spawns, pathCells = null) {
+    if (!portalTile)
+      return spawns;
+    const px = portalTile.x;
+    const ext = walkRunExtent(tiles, width, height, px, portalTile.y, pathCells);
+    if (ext === null)
+      return spawns;
+    const key = `${portalTile.y}:${ext.left}`;
+    let loneClaimed = false;
+    return spawns.filter((s) => {
+      const se = walkRunExtent(tiles, width, height, s.x, s.y, pathCells);
+      if (se === null || `${s.y}:${se.left}` !== key)
+        return true;
+      if (loneClaimed)
+        return false;
+      const clearance = PORTAL_SHELF_CLEAR_COLS;
+      const keepsClear = direction === "left" ? s.left - clearance >= px + 1 : direction === "vertical" ? s.right + clearance < px || s.left - clearance > px : s.right + clearance <= px - 1;
+      if (!keepsClear)
+        return false;
+      loneClaimed = true;
+      return true;
+    });
   }
   var DECK_BRIDGE_FIRST_LEVEL = 8;
   var MAX_DECK_BRIDGES = 1;
@@ -2676,18 +2739,7 @@
       return [HAZARD_SPAWN_EXCLUDE_COLS, this.width - 6];
     }
     patrolSpan(tiles, x, y) {
-      const solidAt = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height && tiles[cy][cx] === 1;
-      const blockedByRoute = (cx, cy) => this.pathCells !== null && this.pathCells.has(cy * this.width + cx);
-      const walkable = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height && tiles[cy][cx] !== 1 && tiles[cy][cx] !== 2 && !blockedByRoute(cx, cy);
-      if (!solidAt(x, y + 1) || blockedByRoute(x, y))
-        return null;
-      let left = x;
-      while (solidAt(left - 1, y + 1) && walkable(left - 1, y))
-        left--;
-      let right = x;
-      while (solidAt(right + 1, y + 1) && walkable(right + 1, y))
-        right++;
-      return { left, right };
+      return walkRunExtent(tiles, this.width, this.height, x, y, this.pathCells);
     }
     deriveEnemySpawns() {
       const spawns = [];
@@ -3095,6 +3147,8 @@
         }
         deploySpawns = kept;
       }
+      deploySpawns = capBodiesPerPatrolRun(this.tiles, this.width, this.height, deploySpawns, this.pathCells);
+      deploySpawns = protectPortalShelf(this.tiles, this.width, this.height, this.portalTile, this.direction, deploySpawns, this.pathCells);
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
       const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX);

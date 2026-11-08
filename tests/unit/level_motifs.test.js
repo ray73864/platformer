@@ -54,6 +54,19 @@ const T = 32;
 // vertical-exempt, yet R1' applies to ALL directions: spiked verticals from
 // ~L28 legitimately reshuffle — conservative edge removal, determinism
 // intact.) If this pin fails on an L1..4 or L7 row, that IS drift.
+// RECAPTURED for the enemy density/grouping fairness rules of 2026-11-08
+// (owner ruling: bodies-per-run cap + portal-shelf protection in
+// spawnEnemies): 6 of 56 rows intentionally changed — two L5 (seeds 50044,
+// 50066) and four L6 (60022, 60033, 60044, 60088) maps where excess bodies
+// sharing a walkable patrol run are now SKIPPED PLACEMENTS before any kind
+// roll (and the shifted roll stream re-kinds later sites). Tiles/spikes/
+// coins stay byte-identical by construction (the filters run after
+// extractCoins, consume no draws of their own, write no grid cell — pinned
+// terrain-only fingerprints in tests/unit/enemy_density_grouping_fairness.
+// test.js). L1..4 keep their prior hashes (no enemies below L5 at all) and
+// L7 too (its vertical marker economy ships <=1 body per run, so neither
+// rule can bite there — verified against HEAD). If this pin fails on an
+// L1..4 or L7 row, that IS drift.
 const GOLDEN_L1_7 = [
     [1, 11, "43dc716b"], [1, 22, "e568e737"], [1, 33, "85137246"], [1, 44, "82be8d9a"],
     [1, 55, "49f57ede"], [1, 66, "af5cd10e"], [1, 77, "20272d24"], [1, 88, "adc51e8a"],
@@ -63,10 +76,10 @@ const GOLDEN_L1_7 = [
     [3, 55, "638439fd"], [3, 66, "0ec11564"], [3, 77, "52da8cbf"], [3, 88, "aad03405"],
     [4, 11, "bc858548"], [4, 22, "b2dfcd1d"], [4, 33, "59ed6382"], [4, 44, "3a42f034"],
     [4, 55, "53bc22c7"], [4, 66, "1d0aad41"], [4, 77, "92557e86"], [4, 88, "c7657f2a"],
-    [5, 11, "126423c7"], [5, 22, "81073b13"], [5, 33, "71505252"], [5, 44, "861d19d3"],
-    [5, 55, "493c36cc"], [5, 66, "1c9edcef"], [5, 77, "a8cd5a59"], [5, 88, "b47ed851"],
-    [6, 11, "e0bd7866"], [6, 22, "b99279f0"], [6, 33, "46e31bb0"], [6, 44, "bade056d"],
-    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "703e5856"], [6, 88, "f61b2279"],
+    [5, 11, "126423c7"], [5, 22, "81073b13"], [5, 33, "71505252"], [5, 44, "9b83b8a9"],
+    [5, 55, "493c36cc"], [5, 66, "df20e330"], [5, 77, "a8cd5a59"], [5, 88, "b47ed851"],
+    [6, 11, "e0bd7866"], [6, 22, "ac39ae9a"], [6, 33, "a9785bb9"], [6, 44, "8351591c"],
+    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "703e5856"], [6, 88, "9ab6b777"],
     [7, 11, "f22b14bd"], [7, 22, "f42ccc32"], [7, 33, "333006fe"], [7, 44, "bc32302d"],
     [7, 55, "f136f4c3"], [7, 66, "ef5e92fe"], [7, 77, "285c6abb"], [7, 88, "8f0b1f69"]
 ];

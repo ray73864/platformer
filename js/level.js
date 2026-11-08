@@ -256,6 +256,58 @@ const ENEMY_MIN_RUN = 2;
 // vertical density drifts toward the horizontal norm and the class reopens.
 const GAUNTLET_MIN_BODIES = 3;
 
+// --- Bodies-per-run cap + portal-shelf protection (owner ruling 2026-11-08) -
+// Playtest report, L20 seed 3906687302: two walkers share-patrol cols 21..22
+// of the 5-tile top shelf holding the portal (portal col 24 row 14; spike on
+// the fallback terrace below-left), and a spiny + 2 walkers pack cols 10..14
+// of the run below. Survivability witnesses exist at certain patrol phases
+// but every window is pixel-tight: a precision-tax wall, not a soft-lock —
+// and the stacked-patrol gauntlet metric cannot see it, because cols 24..25
+// count as safe pockets BEHIND the sweep. Owner ruling: "enemies moving too
+// quickly and not far enough away from the edge... ensure enemies can't group
+// so much, especially on smaller ledges."
+// RULE A — BODIES-PER-RUN CAP: max(1, floor(runTiles / 3)) bodies may deploy
+// per SHARED PATROL RUN: bodies whose maximal WALKABLE run matches share a
+// sweep (walkRunExtent — solid support below, rock/spike/route-free body
+// row; the same extent patrolSpan bounds every body by), and runTiles is
+// that run's width. Measured on the ledge as the PLAYER walks it, so a wide
+// rock mass whose standable surface is cut to 5 columns by a tooth still
+// caps at 1, while the pre-existing 6-wide/two-walkers fixture morphology
+// stays legal exactly as ruled 2026-11-04. A 3-wide ledge gets 1 body,
+// 6-wide gets 2, 9-wide 3.
+// This narrows the old walker exemption ("sharing is fair play", see
+// HOSTILE_MIN_RUN): that ruling sized ONE body's pass-by arc statically;
+// a second body on a <=5-wide sweep removes the wait-for-the-far-bound room
+// the arc depends on — the exact morphology the owner reported, kind-blind
+// because two stomped-together walkers on a 3-col sweep still force a pixel-
+// perfect double dodge. Runs BEFORE the kind rolls (same precedence as the
+// gauntlet gate, which cannot see kinds either): greedy keep-first in derive
+// order, excess bodies are SKIPPED PLACEMENTS consuming zero rng draws
+// beyond the established drop-before-rolls discipline (spawnEnemies' stream
+// note). Fairness ADDITIVE: no existing gate loosens; this only removes
+// compositions.
+// RULE B — PORTAL-SHELF PROTECTION: on the standable run containing the
+// portal cell (the traverse ends there, so the approach cells up to 2 tiles
+// before it are mandatory ground), at most ONE patroller may deploy AND its
+// span must leave >= PORTAL_SHELF_CLEAR_COLS clear cells between its edge
+// and the portal column — the portal-adjacent cell stays sweep-free, so
+// entering the portal is never a timed dodge ON the goal tile. Direction-
+// aware: 'right' protects cols portalX-1..portalX, 'left' protects
+// portalX..portalX+1; vertical maps require the lone body to stay entirely
+// to one side (both flanks free — the climb arrives from below, so no single
+// approach column exists). Vertical exposure is currently NULL anyway
+// (measured 0/333 vertical maps below), so this costs nothing today and
+// closes the class before the vertical marker economy grows.
+// Measured prevalence @8a9109f BEFORE the rules (fresh disjoint band
+// s=(20261108+i*7919)>>>0, L5..100, 1000 seeds): Rule A flags 548/1000 maps
+// (54.8%, 881 groups; all horizontal — the vertical marker economy ships <=1
+// body per run today), Rule B flags 76/1000 (7.6%, 11.4% of horizontal
+// maps). Post-rule both measure ZERO; enemy-count cost by tier, bot A/B on
+// the reported seed, and terrain byte-identity are quantified in
+// .superpowers/sdd/PLAN/task-2-report.md.
+const BODIES_PER_RUN_DIVISOR = 3;
+const PORTAL_SHELF_CLEAR_COLS = 1;
+
 // Spawn->portal articulation cells in the movement-model graph: cells on
 // one shortest path whose REMOVAL disconnects goal from spawn (any cell on
 // ALL paths is on every shortest path, so candidates are exactly the cells
@@ -380,6 +432,94 @@ export function gauntletViolations(tiles, width, height, bodies, mustPass,
         }
     }
     return violations;
+}
+
+// Shared patrol runs for the density cap (see BODIES_PER_RUN_DIVISOR): the
+// run a body patrols is its maximal WALKABLE run — contiguous columns with
+// solid support below and a rock/spike/route-free body row (exactly what
+// patrolSpan bounds every body by). Two sites share a run exactly when that
+// extent matches, so a solid mass split by a tooth or route cell counts as
+// two runs (its halves never share a sweep). Returns [{key, items}] with
+// derive-ordered item indices; pure: no rng, no grid writes.
+export function walkRunExtent(tiles, width, height, x, y, blocked = null) {
+    const solidAt = (cx, cy) =>
+        cx >= 0 && cx < width && cy >= 0 && cy < height &&
+        tiles[cy][cx] === 1;
+    const blockedAt = (cx, cy) => blocked !== null &&
+        blocked.has(cy * width + cx);
+    const walkable = (cx, cy) =>
+        cx >= 0 && cx < width && cy >= 0 && cy < height &&
+        tiles[cy][cx] !== 1 && tiles[cy][cx] !== 2 && !blockedAt(cx, cy);
+    if (!solidAt(x, y + 1) || blockedAt(x, y)) return null;
+    let left = x;
+    while (solidAt(left - 1, y + 1) && walkable(left - 1, y)) left--;
+    let right = x;
+    while (solidAt(right + 1, y + 1) && walkable(right + 1, y)) right++;
+    return { left, right };
+}
+
+export function patrolRunGroups(tiles, width, height, spawns,
+    pathCells = null) {
+    const byKey = new Map();
+    spawns.forEach((s, i) => {
+        const ext = walkRunExtent(tiles, width, height, s.x, s.y, pathCells);
+        if (ext === null) return; // unsupported site: nothing to group
+        const k = `${s.y}:${ext.left}`;
+        if (!byKey.has(k)) byKey.set(k, []);
+        byKey.get(k).push(i);
+    });
+    return [...byKey.entries()].map(([key, items]) => ({ key, items }));
+}
+
+// Rule A filter (see BODIES_PER_RUN_DIVISOR): drop every body beyond its
+// shared run's capacity max(1, floor(runTiles / divisor)), runTiles the
+// WALKABLE RUN width (walkRunExtent) — the ledge as the player perceives it,
+// which is also what the pre-existing 6-wide/two-walkers ruling measured on
+// its fixtures. Greedy keep-first in derive order — the last body that walls
+// the sweep goes, mirroring the gauntlet gate's convention. Consumes no rng.
+export function capBodiesPerPatrolRun(tiles, width, height, spawns,
+    pathCells = null, divisor = BODIES_PER_RUN_DIVISOR) {
+    const drop = new Set();
+    for (const g of patrolRunGroups(tiles, width, height, spawns, pathCells)) {
+        const first = spawns[g.items[0]];
+        const ext = walkRunExtent(tiles, width, height, first.x, first.y,
+            pathCells);
+        const cap = Math.max(1, Math.floor((ext.right - ext.left + 1) / divisor));
+        for (let i = cap; i < g.items.length; i++) drop.add(g.items[i]);
+    }
+    return spawns.filter((_, i) => !drop.has(i));
+}
+
+// Rule B filter (see PORTAL_SHELF_CLEAR_COLS): on the standable run holding
+// the portal cell, keep at most ONE patroller and only when its span leaves
+// >= CLEAR clear cells between its edge and the portal column (approach side
+// for horizontal travel; both flanks on vertical climbs). Offenders are
+// skipped placements, never re-rolled elsewhere; consumes no rng. Sites on
+// other runs never sweep the portal cell (patrolSpan clamps at ledges), so
+// they pass untouched.
+export function protectPortalShelf(tiles, width, height, portalTile,
+    direction, spawns, pathCells = null) {
+    if (!portalTile) return spawns;
+    const px = portalTile.x;
+    const ext = walkRunExtent(tiles, width, height, px, portalTile.y,
+        pathCells);
+    if (ext === null) return spawns; // unsupported/floating portal: no run
+    const key = `${portalTile.y}:${ext.left}`;
+    let loneClaimed = false;
+    return spawns.filter(s => {
+        const se = walkRunExtent(tiles, width, height, s.x, s.y, pathCells);
+        if (se === null || `${s.y}:${se.left}` !== key) return true;
+        if (loneClaimed) return false;
+        const clearance = PORTAL_SHELF_CLEAR_COLS;
+        const keepsClear = direction === 'left'
+            ? s.left - clearance >= px + 1
+            : direction === 'vertical'
+                ? (s.right + clearance < px || s.left - clearance > px)
+                : s.right + clearance <= px - 1;
+        if (!keepsClear) return false;
+        loneClaimed = true;
+        return true;
+    });
 }
 
 // --- Deck bridges: REQUIRED crossings over unjumpable gaps ------------------
@@ -2827,22 +2967,10 @@ export class Level {
     // lethal with no stomp mechanic (S10). Returns null when the marker
     // tile itself is unsupported or on the route.
     patrolSpan(tiles, x, y) {
-        const solidAt = (cx, cy) =>
-            cx >= 0 && cx < this.width && cy >= 0 && cy < this.height &&
-            tiles[cy][cx] === 1;
-        const blockedByRoute = (cx, cy) =>
-            this.pathCells !== null &&
-            this.pathCells.has(cy * this.width + cx);
-        const walkable = (cx, cy) =>
-            cx >= 0 && cx < this.width && cy >= 0 && cy < this.height &&
-            tiles[cy][cx] !== 1 && tiles[cy][cx] !== 2 &&
-            !blockedByRoute(cx, cy);
-        if (!solidAt(x, y + 1) || blockedByRoute(x, y)) return null;
-        let left = x;
-        while (solidAt(left - 1, y + 1) && walkable(left - 1, y)) left--;
-        let right = x;
-        while (solidAt(right + 1, y + 1) && walkable(right + 1, y)) right++;
-        return { left, right };
+        // Same maximal-walkable-run arithmetic the density cap groups by
+        // (walkRunExtent, module scope) — one definition, no drift.
+        return walkRunExtent(tiles, this.width, this.height, x, y,
+            this.pathCells);
     }
 
     // One geometry pass over the grid's type-4 markers producing every
@@ -3588,6 +3716,25 @@ export class Level {
             }
             deploySpawns = kept;
         }
+
+        // Density/grouping fairness (owner ruling 2026-11-08, see the
+        // BODIES_PER_RUN_DIVISOR + PORTAL_SHELF_CLEAR_COLS headers): bodies-
+        // per-run cap first (shared-surface math), portal-shelf protection
+        // second (its one-body bar subsumes the cap on that run). BOTH run
+        // BEFORE any kind roll as pure geometry on the final spans: zero
+        // extra draws, and excess bodies are skipped placements, so affected
+        // maps consume FEWER rolls — kinds shift downstream exactly like the
+        // narrow-shelf and gauntlet drops above (deterministic per seed),
+        // while tiles/spikes/coins stay byte-identical because this runs
+        // after extractCoins and touches no grid cell. The constructor's
+        // validity guard reads RAW derive results, so generation attempt
+        // counts and terrain selection cannot move either.
+        deploySpawns = capBodiesPerPatrolRun(
+            this.tiles, this.width, this.height, deploySpawns,
+            this.pathCells);
+        deploySpawns = protectPortalShelf(
+            this.tiles, this.width, this.height, this.portalTile,
+            this.direction, deploySpawns, this.pathCells);
 
         // Kind assignment rides the SAME marker sites/spans as walkers —
         // placement fairness rules are untouched, only what stands on a site

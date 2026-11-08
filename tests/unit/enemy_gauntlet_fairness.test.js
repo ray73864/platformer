@@ -95,11 +95,15 @@ test("hand-built L30 morphology: raw site set FLAGS, deployed set passes", () =>
     // whole run, not just the site column) — so every middle site drops and
     // the emptied shelf becomes the safe pocket. Landing stays (2 bodies <
     // GAUNTLET_MIN_BODIES against its own pocketed neighborhood).
+    // 2026-11-08 addendum: the bodies-per-run cap then thins the SURVIVORS
+    // further — the staging run is 3 walkable columns (cap 1) and the
+    // landing run 2 (cap 1) — so the same gauntlet-clean verdict now ships 2
+    // bodies instead of 5 (owner ruling; see BODIES_PER_RUN_DIVISOR).
     const enemies = deployedBodies(level);
-    expect(enemies.length).toBe(5);
+    expect(enemies.length).toBe(2);
     expect(enemies.some(e => e.row === 9)).toBe(false);
-    expect(enemies.filter(e => e.row === 8).length).toBe(3);
-    expect(enemies.filter(e => e.row === 10).length).toBe(2);
+    expect(enemies.filter(e => e.row === 8).length).toBe(1);
+    expect(enemies.filter(e => e.row === 10).length).toBe(1);
 });
 
 test("named repro L30 seed 4104669369: gauntlet gone, purple enemy gone", () => {
@@ -113,6 +117,11 @@ test("named repro L30 seed 4104669369: gauntlet gone, purple enemy gone", () => 
     // emptied middle shelf becomes the safe waiting pocket the traverse
     // always needed. Terrain bytes are untouched by the rule (placement
     // only), so the map shape is identical.
+    // 2026-11-08 addendum: the bodies-per-run cap further thins the
+    // survivors to one walker per remaining shelf (staging cols 13-15 is a
+    // 3-column run, landing cols 20-21 a 2-column run — owner ruling "enemies
+    // can't group so much, especially on smaller ledges"); the gauntlet
+    // verdict and the no-hostile guarantee are unchanged.
     const level = new Level(30, T, 4104669369);
     expect(violationsOf(level).length).toBe(0);
     const enemies = deployedBodies(level);
@@ -121,10 +130,10 @@ test("named repro L30 seed 4104669369: gauntlet gone, purple enemy gone", () => 
     expect(enemies.some(e => e.row === 17)).toBe(false);
     expect(level.getEnemyManager().enemies
         .some(e => e.kind !== 'walker')).toBe(false);
-    // Staging and landing patrols survive (density preserved where fair).
-    expect(enemies.filter(e => e.row === 16).length).toBe(3);
-    expect(enemies.filter(e => e.row === 18).length).toBe(2);
-    expect(enemies.length).toBe(5);
+    // One patrol per remaining shelf (cap 1 each): staging and landing.
+    expect(enemies.filter(e => e.row === 16).length).toBe(1);
+    expect(enemies.filter(e => e.row === 18).length).toBe(1);
+    expect(enemies.length).toBe(2);
 });
 
 test("same seed twice: deployments, kinds and pixels replay identically", () => {
