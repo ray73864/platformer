@@ -73,6 +73,25 @@ body {
     display: none;
 }
 
+/* Wave B death punctuation (presentation-only): the GAME_OVER scrim enters
+   with a ~180 ms white flash that decays into the normal dark scrim, so the
+   moment of loss lands even though the canvas scene stops rendering the same
+   tick. Pure CSS on the overlay reveal — no simulation or JS involvement. */
+#game-over-screen:not(.hidden) {
+    animation: death-scrim-flash 0.18s ease-out 1;
+}
+
+@keyframes death-scrim-flash {
+    from { background: rgba(255, 255, 255, 0.9); }
+    to { background: var(--scrim); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #game-over-screen:not(.hidden) {
+        animation: none;
+    }
+}
+
 /* Generic hide for non-overlay elements (e.g. the HUD timer before timed levels). */
 .hidden {
     display: none;

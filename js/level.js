@@ -4041,7 +4041,7 @@ export class Level {
     // and spikes come from Game's culled grid pass (Sprites.drawWorld) and
     // this method only owns entities; without them every element falls back
     // to the legacy flat-shape renderer (tests, missing files).
-    draw(ctx, sprites = null) {
+    draw(ctx, sprites = null, player = null) {
         const art = sprites && sprites.ready();
 
         if (!art) {
@@ -4072,8 +4072,9 @@ export class Level {
             }
         }
 
-        // Draw enemies (EnemyManager owns per-enemy drawing).
-        this.enemyManager.drawAll(ctx, sprites);
+        // Draw enemies (EnemyManager owns per-enemy drawing). Wave B threads
+        // the player through as read-only proximity context for telegraphs.
+        this.enemyManager.drawAll(ctx, sprites, player);
 
         // Draw coins AFTER enemies (ruling 2026-11-04: patrols may cross
         // coins again). Coins used to draw first, so a body mid-sweep fully

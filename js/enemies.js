@@ -78,6 +78,7 @@
  */
 import { aabbOverlap } from './physics.js';
 import { ballisticLaunch, PROJ_GRAVITY, PROJ_MAX_VX } from './projectiles.js';
+import { FX } from './fx.js';
 
 // Exported so Level.spawnEnemies' deploy filter (ENEMY_MIN_RUN) measures
 // patrol travel against the real body width instead of mirroring a magic
@@ -456,12 +457,14 @@ export class Enemy {
 
     // Optional sprite layer: slime/bat frames by spawn index (assigned by
     // EnemyManager.drawAll), feet-anchored and facing-flipped. Kinds other
-    // than 'walker' own dedicated silhouettes (see sprites.js).
-    draw(ctx, sprites = null, index = 0) {
+    // than 'walker' own dedicated silhouettes (see sprites.js). The optional
+    // `player` (Wave B) is READ-ONLY proximity context for telegraph
+    // embellishments (spiny rattle); nothing below ever writes to it.
+    draw(ctx, sprites = null, index = 0, player = null) {
         if (this.dead) return;
 
         if (sprites && sprites.ready()) {
-            sprites.drawEnemy(ctx, this, index);
+            sprites.drawEnemy(ctx, this, index, player);
             return;
         }
 
@@ -469,6 +472,21 @@ export class Enemy {
         // lethal box lives within it — protruding placeholder art would
         // misrepresent reach). Kind tints mirror the sprites.js palette so
         // recognition survives even without the sheets loaded.
+        // Wave B: the degradation path gets the same telegraph family as the
+        // sheet art. Spiny micro-rattle derives its phase from patrol x (no
+        // new timing source; spinies are always moving while alive), the
+        // charger windup pulses like the sheet dome, and the bombardier gun
+        // kicks back after firing. All read-only, all FX-scaled.
+        let jx = 0;
+        if (this.kind === 'spiny' && FX.trails && player &&
+            Math.abs((player.x + player.width / 2) - (this.x + this.width / 2)) <= 96) {
+            jx = Math.sin(this.x * 1.9) * 1.3 * FX.intensity;
+        }
+        const rattled = jx !== 0 && typeof ctx.save === 'function';
+        if (rattled) {
+            ctx.save();
+            ctx.translate(jx, 0);
+        }
         let body = '#ff0000';
         if (this.kind === 'spiny') body = '#7b4fa0'; // purple-ish, spiked back
         else if (this.kind === 'charger') body = '#c8503c'; // rust-red, horned
@@ -502,13 +520,22 @@ export class Enemy {
             ctx.fillStyle = '#e8d8b0';
             ctx.fillRect(hornX, this.y + 5, 6, 5);
             if (this.state === 'windup') {
-                ctx.fillStyle = 'rgba(255,232,170,0.55)';
+                // Pulsing tell mirroring sprites.js _drawCharger (stateTime-
+                // driven; intensity-scaled, never flag-gated — fairness).
+                const k = Math.min(1, this.stateTime / 0.45);
+                const pulse = 0.5 + 0.5 * Math.sin(this.stateTime * Math.PI * 12);
+                const a = Math.min(0.85, (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity);
+                ctx.fillStyle = `rgba(255,232,170,${a.toFixed(3)})`;
                 ctx.fillRect(this.x, this.y, this.width, this.height);
             }
         } else if (this.kind === 'bombardier') {
             // Bronze cannon barrel mounted forward on the leading edge —
-            // the silhouette signal that this body carries a gun.
-            const muzzleX = (drawnFace > 0 ? this.x + this.width - 2 : this.x - 10);
+            // the silhouette signal that this body carries a gun. Wave B
+            // muzzle recoil kick mirrors sprites.js _drawBombardier.
+            const recoil = (FX.trails && this.state === 'cooldown_ranged' &&
+                this.stateTime < 0.12) ? 5 * (1 - this.stateTime / 0.12) : 0;
+            const muzzleX = (drawnFace > 0 ? this.x + this.width - 2 : this.x - 10) -
+                drawnFace * recoil;
             ctx.fillStyle = '#b0803a';
             ctx.fillRect(muzzleX, this.y + 11, 12, 6);
             if (this.state === 'windup_ranged') {
@@ -531,6 +558,7 @@ export class Enemy {
         ctx.fillStyle = '#fff';
         const eyeOffset = drawnFace >= 0 ? 18 : 6;
         ctx.fillRect(this.x + eyeOffset, this.y + 8, 4, 4);
+        if (rattled) ctx.restore(); // spiny rattle translate (jx) opened above
     }
 }
 
@@ -604,7 +632,9 @@ export class EnemyManager {
         this.enemies.length = 0;
     }
 
-    drawAll(ctx, sprites = null) {
-        this.enemies.forEach((enemy, index) => enemy.draw(ctx, sprites, index));
+    // Optional `player`: read-only proximity context for Wave B telegraph
+    // embellishments (see Enemy.draw / sprites.drawEnemy).
+    drawAll(ctx, sprites = null, player = null) {
+        this.enemies.forEach((enemy, index) => enemy.draw(ctx, sprites, index, player));
     }
 }

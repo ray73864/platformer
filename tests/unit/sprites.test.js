@@ -103,13 +103,22 @@ test("charger windup telegraph (squash + flash) is deterministic from state", ()
     expect(scales.length).toBeGreaterThan(0);
     expect(Number.parseFloat(scales[0].split(' ')[2])).toBeLessThan(1);
 
-    // The fixed-rate strobe flips phase across the windup (stateTime-driven,
-    // never Math.random): off at t=0.1 s, on at t=0.2 s.
-    expect(a.ops.filter(o => o.includes('rgba(255,232,170'))).toHaveLength(0);
+    // Wave B adaptation (NOT a weakening): the fixed-rate strobe became a
+    // rising pulse — flash alpha rides stateTime (never Math.random), so
+    // identical inputs still draw identically (op-log equality above) while
+    // consecutive windup frames differ in intensity. The tint must exist
+    // through the whole windup AND stay absent from every other state (the
+    // dash tells with speed streaks instead — distinct reads by design).
+    const earlyFlash = a.ops.filter(o => o.includes('rgba(255,232,170'));
+    expect(earlyFlash.length).toBeGreaterThan(0);
     const late = recordingCtx();
     sprites.drawEnemy(late, { ...early, stateTime: 0.2 }, 0);
-    expect(late.ops.filter(o => o.includes('rgba(255,232,170')).length)
-        .toBeGreaterThan(0);
+    const lateFlash = late.ops.filter(o => o.includes('rgba(255,232,170'));
+    expect(lateFlash.length).toBeGreaterThan(0);
+    expect(lateFlash[0]).not.toBe(earlyFlash[0]); // pulse moved frame to frame
+    const dash = recordingCtx();
+    sprites.drawEnemy(dash, { ...early, state: 'dash', stateTime: 0.2 }, 0);
+    expect(dash.ops.filter(o => o.includes('rgba(255,232,170'))).toHaveLength(0);
 });
 
 test("Sprites never becomes ready without an image loader and tolerates advance", () => {

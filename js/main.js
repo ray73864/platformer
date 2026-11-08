@@ -9,7 +9,11 @@ import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
 import { MovingPlatformManager, applyJumpBoost } from './movingplatforms.js';
-import { spawnBurst, stepParticles, drawParticles, createMotes, stepMotes, drawMotes, MAX_PARTICLES } from './particles.js';
+import { spawnBurst, spawnDust, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
+import {
+    FX, initFX, shakeOffset, punchScale, PUNCH_TIME,
+    spawnPopup, stepPopups, drawPopups, spawnRing, stepRings, drawRings
+} from './fx.js';
 import * as audio from './audio.js';
 
 // Game constants
@@ -128,6 +132,23 @@ const STOMP_BOUNCE = 260;
 // landings instead of spamming every ground transition (~h = v²/2g puts the
 // threshold at a ~35 px drop).
 const LANDING_SFX_MIN_FALL = 260;
+// --- Wave B juice constants (render-only; every effect gated via js/fx.js) --
+// Launch stretch / landing thud / skid + dust / impact punch + shake /
+// popups / look-ahead magnitudes. None of these feed the simulation: they
+// describe how the frozen physics READS, never what it does.
+const LAUNCH_STRETCH_TIME = 0.14;   // s of tall-stretch after a jump launch
+const STOMP_SHAKE_TIME = 0.12;
+const STOMP_SHAKE_MAG = 4;          // px peak offset at trigger instant
+const SHELL_SHAKE_TIME = 0.15;
+const SHELL_SHAKE_MAG = 3;
+const DEATH_SHAKE_TIME = 0.35;      // legacy value kept verbatim
+const DEATH_SHAKE_MAG = 9;
+const LAND_DEPTH_REF_VY = 520;      // px/s fall speed that reads as a FULL thud
+const SKID_MIN_SPEED = 150;         // px/s pre-reversal speed for a skid puff
+const LEAN_MAX_RAD = 0.07;          // subtle travel-direction lean ceiling
+const LOOKAHEAD_LEAD_S = 0.06;      // seconds of vx lead the offset eases toward
+const LOOKAHEAD_MAX_PX = 10;        // hard clamp on the look-ahead render offset
+const LOOKAHEAD_DEADZONE_VX = 30;   // below this |vx| the target is exactly zero
 // Winning this level finishes the whole run instead of generating another.
 // Exported so tests pin their final-level fixtures to the same number.
 export const FINAL_LEVEL = 100;
@@ -234,6 +255,20 @@ export function clearBonusFor(deathsOnThisLevel, levelNumber) {
     return flawless ? base : Math.floor(base * CLEAR_BONUS_REDUCED_RATE);
 }
 
+// Theme dust tint (Wave B): the raw theme.dust hue sits too close to the
+// dirt/AO tones it spawns against to read as motion. Mixing it halfway to a
+// warm cream keeps the theme's earthy hue (day tan → pale sand, dusk amber →
+// glow-sand, jungle moss → pale lichen) while silhouetting against the
+// AO-darkened deck line where the puffs land.
+function dustTint(theme) {
+    const hex = theme.dust;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const mix = (c, t) => Math.round(c + (t - c) * 0.5);
+    return `rgb(${mix(r, 255)},${mix(g, 246)},${mix(b, 222)})`;
+}
+
 // Every live Game, so test scaffolding sharing one window can tear down all
 // window listeners at once (see destroy()/destroyAllGames).
 const liveGames = new Set();
@@ -327,6 +362,22 @@ export class Game {
         // level's current state in publishLevel so a retry that starts with
         // every coin already banked does not re-ring.
         this._portalUnlocked = false;
+
+        // --- Wave B juice state (visual-only; js/fx.js gates every effect) --
+        // One-shot reduced-motion boot BEFORE anything can read FX.
+        initFX();
+        this.dust = [];          // gameplay-dust pool (own cap, never shares
+                                 // the burst list or the ambient mote field)
+        this.popups = [];        // floating score popups (screen space)
+        this.rings = [];         // portal-unlock ring pulses (world space)
+        this.shakeMag = 0;       // amplitude of the active shake source
+        this.shakeDur = 0;       // envelope reference for the active shake
+        this._punchTime = 0;     // counts down from PUNCH_TIME on impacts
+        this._launchStretch = 0; // counts down from LAUNCH_STRETCH_TIME
+        this._landDepth = 0;     // 0..1 magnitude of the current landing thud
+        this._prevFrameVx = 0;   // end-of-frame vx snapshot (skid + lean input)
+        this._lean = 0;          // smoothed draw-time lean angle (rad)
+        this._lookAhead = 0;     // smoothed camera render-offset (px, clamped)
 
         // Game state
         this.state = STATE.MENU;
@@ -668,6 +719,53 @@ export class Game {
         this.levelEnemiesDodged = 0;
     }
 
+    // Wave B: wipe every transient effect state at a level publish (first
+    // play, retry, loop recovery). Without this a death's shake/flash/bursts
+    // and any live popups leak across the transition — the fresh attempt
+    // must start dead-still at spawn.
+    resetEffectState() {
+        this.particles.length = 0;
+        this.dust.length = 0;
+        this.popups.length = 0;
+        this.rings.length = 0;
+        this.shakeTime = 0;
+        this.shakeMag = 0;
+        this.shakeDur = 0;
+        this.squashTimer = 0;
+        this._punchTime = 0;
+        this._launchStretch = 0;
+        this._landDepth = 0;
+        this._prevFrameVx = 0;
+        this._lean = 0;
+        this._lookAhead = 0;
+        this._dustTx = -1;
+    }
+
+    // Shared trigger for the Wave B impact family (stomp / shell / death):
+    // strongest-wins shake with its own envelope duration plus the zoom
+    // punch. Purely visual bookkeeping — fx.js gates both at draw time.
+    _impactFx(shakeTime, shakeMag, punch = true) {
+        if (shakeTime > this.shakeTime) {
+            this.shakeTime = shakeTime;
+            this.shakeDur = shakeTime;
+        }
+        this.shakeMag = Math.max(this.shakeMag, shakeMag);
+        if (punch) this._punchTime = PUNCH_TIME;
+    }
+
+    // World → screen projection matching draw()'s world transform (CSS px).
+    // Ignores the decaying shake/punch embellishments on purpose: popups
+    // anchor to the steady camera, which reads calmer than jittering text.
+    _worldToScreen(wx, wy) {
+        const zoom = this.zoom;
+        const effW = window.innerWidth / zoom;
+        const effH = window.innerHeight / zoom;
+        return [
+            (wx - (this.camera.x + effW / 2)) * zoom + window.innerWidth / 2,
+            (wy + this.camera.y - effH / 2) * zoom + window.innerHeight / 2
+        ];
+    }
+
     startGame() {
         // Construct before mutating anything (same discipline as startLevel):
         // if generation exhausts and fails, a GAME_COMPLETE/GAME_OVER screen
@@ -865,6 +963,9 @@ export class Game {
             level.width * level.tileSize,
             level.height * level.tileSize
         );
+        // Wave B: every effect pool/timer starts empty on a published level
+        // (see resetEffectState) — no stale shake/popups across attempts.
+        this.resetEffectState();
         // Audio follows the published level. init() is a no-op after the
         // first call and lands inside the Start-click gesture for a fresh
         // run (the menu stays deliberately silent — no context exists until
@@ -959,13 +1060,17 @@ export class Game {
         audio.stopMusic();
         audio.playSfx('death');
         // Death feedback (visual-only): a short camera shake plus a red
-        // burst at the player so the moment of loss is unmistakable.
-        this.shakeTime = 0.35;
+        // burst at the player so the moment of loss is unmistakable. Wave B
+        // enhances it — bigger burst and the zoom punch (all FX-gated; the
+        // GAME_OVER flow itself is untouched). The white-flash beat lives in
+        // CSS on #game-over-screen: a canvas overlay here could never show,
+        // the DOM scrim replaces the scene in this same tick.
+        this._impactFx(DEATH_SHAKE_TIME, DEATH_SHAKE_MAG);
         if (this.player) {
             spawnBurst(this.particles,
                 this.player.x + this.player.width / 2,
                 this.player.y + this.player.height / 2,
-                '#ff5a5a', 16);
+                '#ff5a5a', 22);
         }
         this.ui.setPauseEnabled(false);
         // Cause and effect (owner ruling): dying costs DEATH_SCORE_PENALTY_RATE
@@ -1022,7 +1127,28 @@ export class Game {
             stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
         }
         if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - dt);
+        if (this.shakeTime === 0) this.shakeMag = 0;
         if (this.squashTimer > 0) this.squashTimer = Math.max(0, this.squashTimer - dt);
+        // Wave B visual clocks (all states, like the bursts above): punch and
+        // death-flash decay, popups rise, rings expand, and the lean relaxes
+        // to plumb whenever no acceleration drives it (outside PLAYING too,
+        // so a pause or end screen never freezes a tilted hero).
+        if (this._punchTime > 0) this._punchTime = Math.max(0, this._punchTime - dt);
+        if (this._launchStretch > 0) {
+            this._launchStretch = Math.max(0, this._launchStretch - dt);
+        }
+        stepPopups(this.popups, dt);
+        stepRings(this.rings, dt);
+        if (this.state !== STATE.PLAYING && this._lean !== 0) {
+            this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));
+            if (Math.abs(this._lean) < 0.0005) this._lean = 0;
+        }
+        // Look-ahead eases back to centre whenever travel is not driving it
+        // (pause/end screens must not freeze a permanent view lead).
+        if (this.state !== STATE.PLAYING && this._lookAhead !== 0) {
+            this._lookAhead += (0 - this._lookAhead) * (1 - Math.exp(-8 * dt));
+            if (Math.abs(this._lookAhead) < 0.25) this._lookAhead = 0;
+        }
 
         if (this.state === STATE.PLAYING) {
             // Run clock first: a tick that crosses zero is death before any
@@ -1106,6 +1232,23 @@ export class Game {
             // coyote window it waits for expires there.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
+                // Wave B: thud magnitude rides the impact fall speed (soft
+                // taps stay shallow, big drops slam), and a ground-hugging
+                // dust puff marks the contact in the theme's dust colour —
+                // the AO-darkened deck line is exactly where light dust
+                // reads best (Wave A soft-light convention).
+                this._landDepth = Math.min(1, Math.max(0.25,
+                    vyBeforeResolve / LAND_DEPTH_REF_VY));
+                if (FX.dust) {
+                    const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    spawnDust(this.dust,
+                        this.player.x + this.player.width / 2,
+                        this.player.y + this.player.height - 8,
+                        dustTint(dTheme),
+                        { count: 3 + Math.round(3 * this._landDepth), dir: 0,
+                            speed: 0.7 + this._landDepth, alpha: 0.65, life: 0.3,
+                            size: 4 });
+                }
                 if (vyBeforeResolve >= LANDING_SFX_MIN_FALL) audio.playSfx('land');
                 // Landing brake: touching down with no direction held kills
                 // the carried horizontal speed outright. Without it, jump
@@ -1115,35 +1258,73 @@ export class Game {
                 if (!this.input.isLeft() && !this.input.isRight()) {
                     this.player.vx = 0;
                 }
+            } else if (!this.player.grounded && this._prevGrounded &&
+                this.player.vy < 0) {
+                // Air-to-air the WRONG way within one frame with negative vy:
+                // a jump launched off grounded contact (press or buffered
+                // fire). One beat of tall stretch sells the takeoff.
+                this._launchStretch = LAUNCH_STRETCH_TIME;
             }
             this._prevGrounded = this.player.grounded;
+
+            // Skid spray (Wave B): a grounded direction REVERSAL at speed.
+            // Compared against last frame's snapshot because the input
+            // callback re-asserts vx between frames, and against the same
+            // threshold family as the run dust so only committed swerves
+            // spray. Position-event driven like everything here: no RNG.
+            if (this.player.grounded && FX.dust &&
+                this._prevFrameVx * this.player.vx < 0 &&
+                Math.abs(this._prevFrameVx) >= SKID_MIN_SPEED) {
+                const sTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                spawnDust(this.dust,
+                    this.player.x + this.player.width / 2,
+                    this.player.y + this.player.height - 8,
+                    dustTint(sTheme),
+                    { count: 6, dir: -Math.sign(this.player.vx), speed: 1.5,
+                        alpha: 0.7, life: 0.34, size: 4 });
+            }
 
             // Walking dust (terrain micro-feedback): a small puff each time a
             // runner crosses into a new tile while grounded. Driven by the
             // position event, not RNG, so two boots of one seed render
-            // identical frames; capped with the shared particle budget.
-            if (this.player.grounded && Math.abs(this.player.vx) > 120) {
+            // identical frames. Wave B moved it to its OWN capped pool
+            // (MAX_DUST in particles.js): bursts can no longer evict dust,
+            // and the low alpha keeps it under the hazard-readability line.
+            if (this.player.grounded && Math.abs(this.player.vx) > 120 && FX.dust) {
                 const footTx = Math.floor(
                     (this.player.x + this.player.width / 2) / this.level.tileSize);
                 if (footTx !== this._dustTx) {
                     this._dustTx = footTx;
                     const dir = this.player.vx > 0 ? -1 : 1;
                     const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
-                    this.particles.push({
-                        x: this.player.x + this.player.width / 2 - dir * 10,
-                        y: this.player.y + this.player.height - 2,
-                        vx: dir * (30 + (footTx & 3) * 8),
-                        vy: -(20 + (footTx & 1) * 14),
-                        life: 0.28,
-                        maxLife: 0.28,
-                        size: 2 + (footTx & 1),
-                        color: THEMES[themeIdx].dust
-                    });
-                    if (this.particles.length > MAX_PARTICLES) this.particles.shift();
+                    spawnDust(this.dust,
+                        this.player.x + this.player.width / 2 - dir * 10,
+                        this.player.y + this.player.height - 8,
+                        dustTint(THEMES[themeIdx]),
+                        { count: 1 + (footTx & 1), dir, speed: 0.75,
+                            alpha: 0.6, life: 0.28, size: 3 });
                 }
             } else {
                 this._dustTx = -1;
             }
+
+            // Subtle lean toward travel direction WHILE ACCELERATING (Wave
+            // B): an impulse frame (press from rest, reversal) tips the hero
+            // a few degrees forward; steady speed relaxes it back to plumb.
+            // Draw-time rotation only — see draw()'s player transform.
+            const accel = (this.player.vx - this._prevFrameVx) / Math.max(dt, 1e-4);
+            let leanTarget = 0;
+            // FX.squash off => rigid body (no lean ever accumulates; any
+            // residual eases back to zero within a few frames). Gentle
+            // family: magnitude rides FX.intensity.
+            if (FX.squash && accel * this.player.vx > 0) {
+                leanTarget = Math.max(-LEAN_MAX_RAD * FX.intensity,
+                    Math.min(LEAN_MAX_RAD * FX.intensity, accel * 0.00002));
+            }
+            this._lean += (leanTarget - this._lean) * (1 - Math.exp(-10 * dt));
+            if (Math.abs(this._lean) < 0.0005) this._lean = 0;
+            // End-of-frame snapshot for next frame's skid + lean inputs.
+            this._prevFrameVx = this.player.vx;
 
             // Phase 2 elements. Death checks run in a fixed order (enemies,
             // spikes, pit) and stop the tick at the first hit, so several
@@ -1188,6 +1369,17 @@ export class Game {
                 this.levelCombatPoints += stompPoints;
                 this.levelEnemiesKilled += contact.stompedEnemies.length;
                 this.score = Math.min(this.score + stompPoints, Number.MAX_SAFE_INTEGER);
+                // Impact punch + shake (Wave B): the visual hit-stop stand-in
+                // for a clean stomp, plus one aggregated '+N STOMP!' popup at
+                // the first victim (multi-stomps pay once, never stack text).
+                this._impactFx(STOMP_SHAKE_TIME, STOMP_SHAKE_MAG);
+                if (FX.popups && stompPoints > 0) {
+                    const mark = contact.stompedEnemies[0];
+                    const [sx, sy] = this._worldToScreen(
+                        mark.x + mark.width / 2, mark.y);
+                    spawnPopup(this.popups, sx, sy,
+                        `+${stompPoints} STOMP!`, '#c96bf5', true);
+                }
             }
             if (contact.deadly) {
                 // Teach the spiked-back rule at the exact moment it bites.
@@ -1206,6 +1398,9 @@ export class Game {
             if (shots.fired > 0) audio.playSfx('bombard_fire');
             for (const impact of shots.impacts) {
                 spawnBurst(this.particles, impact.x, impact.y, '#b9a58a', 6);
+                // Wave B: a shell landing shakes the frame lightly and gets
+                // the zoom punch so shots announce themselves even muted.
+                this._impactFx(SHELL_SHAKE_TIME, SHELL_SHAKE_MAG);
             }
             if (shots.hitPlayer) {
                 this.handleGameOver('projectile');
@@ -1254,6 +1449,14 @@ export class Game {
                     this.levelEnemiesDodged++;
                     this.score = Math.min(this.score + DODGE_POINTS,
                         Number.MAX_SAFE_INTEGER);
+                    // Wave B: the dodge bonus surfaces as a small cream '+5'
+                    // at the body just crossed (chip ink-cream, quiet tier).
+                    if (FX.popups) {
+                        const [sx, sy] = this._worldToScreen(
+                            enemy.x + enemy.width / 2, enemy.y - 6);
+                        spawnPopup(this.popups, sx, sy,
+                            `+${DODGE_POINTS}`, '#fdf6e8');
+                    }
                 }
                 enemy._dodgePrevSide = side;
                 enemy._dodgePrevPx = px;
@@ -1293,6 +1496,15 @@ export class Game {
                         this.collectibles.getUncollectedCoins().length,
                     this.collectibles.getCoins().length
                 );
+                // Wave B: one '+N' popup per pickup event (multi-coin frames
+                // pay a single aggregated number above the hero — chip gold).
+                if (FX.popups) {
+                    const [sx, sy] = this._worldToScreen(
+                        this.player.x + this.player.width / 2,
+                        this.player.y + 4);
+                    spawnPopup(this.popups, sx, sy,
+                        `+${collectedCoins * COIN_POINTS}`, '#ffd23f');
+                }
             }
 
             // Portal-gate chime on the locked→unlocked flip only: the flag
@@ -1301,6 +1513,17 @@ export class Game {
             if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
                 this._portalUnlocked = true;
                 audio.playSfx('portal_unlock');
+                // Wave B celebration on the locked→unlocked flip: one-shot
+                // expanding ring pulse (FX.pulse) plus a themed sparkle fan
+                // through the existing burst pool.
+                const gate = this.level.getPortal();
+                if (gate && FX.pulse) {
+                    const gx = gate.x + gate.width / 2;
+                    const gy = gate.y + gate.height / 2;
+                    const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    spawnRing(this.rings, gx, gy, pTheme.portalGlow);
+                    spawnBurst(this.particles, gx, gy, pTheme.portalGlow, 10);
+                }
             }
 
             // Check portal contact; ghosted and inert until every coin is
@@ -1326,6 +1549,23 @@ export class Game {
                 this.level.height * this.level.tileSize,
                 dt
             );
+
+            // Camera look-ahead (Wave B): a RENDER-ONLY offset eased toward
+            // ~0.06 s of travel lead, hard-clamped to ±10 px with a standstill
+            // deadzone so it never jitters at rest. camera.x stays the single
+            // authoritative logic position — this value is applied (and world-
+            // clamped) in draw() only, and shows strictly MORE of what's
+            // ahead, never less. Disabled by FX.lookahead (reduced-motion).
+            const laTarget = FX.lookahead &&
+                Math.abs(this.player.vx) > LOOKAHEAD_DEADZONE_VX
+                ? Math.max(-LOOKAHEAD_MAX_PX,
+                    Math.min(LOOKAHEAD_MAX_PX, this.player.vx * LOOKAHEAD_LEAD_S))
+                : 0;
+            this._lookAhead += (laTarget - this._lookAhead) *
+                (1 - Math.exp(-8 * dt));
+            if (Math.abs(laTarget - this._lookAhead) < 0.25) {
+                this._lookAhead = laTarget;
+            }
 
             // Update UI
             this.ui.updateScore(this.score);
@@ -1403,6 +1643,29 @@ export class Game {
             // Visible world extent at the current zoom.
             const effW = viewW / zoom;
             const effH = viewH / zoom;
+            const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+
+            // Impact zoom punch (Wave B): 1 -> 1.03 -> 1 over ~120 ms around
+            // the viewport centre, composed OUTSIDE the world transform so it
+            // scales the whole rendered scene. Presentation only — the loop
+            // keeps stepping the simulation at its fixed cadence (this is a
+            // substitute for hit-stop, never one). Gated by FX.punch.
+            const punch = punchScale(PUNCH_TIME - this._punchTime);
+            if (punch !== 1) {
+                this.ctx.translate(viewW / 2, viewH / 2);
+                this.ctx.scale(punch, punch);
+                this.ctx.translate(-viewW / 2, -viewH / 2);
+            }
+
+            // Look-ahead render offset (see update()): clamped into the same
+            // world bounds the camera itself obeys, so the lead can never
+            // reveal past the map edge; small-map centring stays untouched.
+            const worldWpx = this.level.width * this.level.tileSize;
+            let camX = this.camera.x;
+            if (this._lookAhead !== 0 && worldWpx > effW) {
+                camX = Math.max(0, Math.min(camX + this._lookAhead,
+                    worldWpx - effW));
+            }
 
             // Screen y of the world floor under the full transform:
             // screen = (world + camera.y - effH/2) * zoom + viewH/2. Also
@@ -1413,32 +1676,34 @@ export class Game {
             const worldBottomScreen =
                 (worldBottom + this.camera.y - effH / 2) * zoom + viewH / 2;
             if (sprites) {
-                sprites.drawBackground(this.ctx, this.currentLevel, this.camera.x,
+                sprites.drawBackground(this.ctx, this.currentLevel, camX,
                     viewW, viewH, worldBottomScreen,
                     this.level.seed === undefined ? null : this.level.seed);
             }
 
-            // Death screen-shake: a decaying random offset on the camera
-            // only — physics and hitboxes never see it.
-            let shakeX = 0;
-            let shakeY = 0;
-            if (this.shakeTime > 0) {
-                const mag = 9 * (this.shakeTime / 0.35);
-                shakeX = (Math.random() * 2 - 1) * mag;
-                shakeY = (Math.random() * 2 - 1) * mag;
-            }
+            // Screen shake (death / stomps / shell impacts): a DETERMINISTIC
+            // decaying sine offset on the camera only — physics and hitboxes
+            // never see it, and frame captures replay identically (the old
+            // Math.random pass broke the render-no-RNG rule). Gated by
+            // FX.shake inside shakeOffset.
+            const sh = shakeOffset(this.shakeTime,
+                this.shakeMag || DEATH_SHAKE_MAG,
+                this.shakeDur || DEATH_SHAKE_TIME);
+            const shakeX = sh.x;
+            const shakeY = sh.y;
 
             // World transform: centre the (zoomed) viewport on the camera's
             // top-left corner. At zoom 1 this reduces exactly to the legacy
             // translate(-camera.x, +camera.y). Camera clamping centres the
-            // whole level when it is smaller than the viewport.
+            // whole level when it is smaller than the viewport. The look-
+            // ahead lead rides here (camX), never into camera.x itself.
             this.ctx.translate(viewW / 2 + shakeX, viewH / 2 + shakeY);
             this.ctx.scale(zoom, zoom);
-            this.ctx.translate(-(this.camera.x + effW / 2), this.camera.y - effH / 2);
+            this.ctx.translate(-(camX + effW / 2), this.camera.y - effH / 2);
 
             // Terrain comes from the sprite layer's culled grid pass (in
             // world units of the zoomed viewport); level.draw owns entities.
-            if (sprites) sprites.drawWorld(this.ctx, this.level, this.camera.x, this.camera.y, effW, effH);
+            if (sprites) sprites.drawWorld(this.ctx, this.level, camX, this.camera.y, effW, effH);
             // Moving decks sit between props and entities: world-washed like
             // terrain furniture, always under coins/enemies/player. Vector art
             // works with or without the sheets, so this call is unconditional.
@@ -1449,21 +1714,54 @@ export class Game {
             // Mood wash over background+terrain+props only — entities below
             // paint at full contrast (hazard-readability ruling).
             if (sprites) sprites.drawMoodTint(this.ctx, this.currentLevel,
-                this.camera.x, this.camera.y, effW, effH);
-            this.level.draw(this.ctx, sprites);
+                camX, this.camera.y, effW, effH);
+            this.level.draw(this.ctx, sprites, this.player);
 
             // Cannonballs ride above the entity pass (they fly over decks
             // and heads) but below the player, so the hero is never hidden
-            // by an incoming ball.
+            // by an incoming ball. Wave B: with FX.trails on they carry a
+            // themed ember ghost trail so shots stay trackable against dusk.
             if (this.projectiles && this.projectiles.list.length) {
-                this.projectiles.drawAll(this.ctx);
+                this.projectiles.drawAll(this.ctx,
+                    FX.trails ? THEMES[themeIdx].mote : null);
             }
 
-            // Draw player (landing squash compresses height only)
-            const squash = this.squashTimer > 0 ? 1 - 0.25 * (this.squashTimer / 0.12) : 1;
+            // Player squash & stretch (Wave B, DRAW-TIME ONLY — the collision
+            // box is never touched): landing thud compresses height (depth
+            // scaled by impact fall speed) while widening the silhouette; a
+            // jump launch stretches tall for a beat; acceleration leans the
+            // hero toward travel. Height rides the legacy `squash` channel
+            // (the sprite path anchors feet), width/lean ride a ctx transform
+            // around the same feet anchor. FX.squash off => rigid body.
+            let squash = 1;
+            let bodySx = 1;
+            if (FX.squash) {
+                const landK = this.squashTimer > 0 ? this.squashTimer / 0.12 : 0;
+                const depth = 0.30 * (0.45 + 0.55 * this._landDepth) * FX.intensity;
+                const launchK = this._launchStretch > 0
+                    ? this._launchStretch / LAUNCH_STRETCH_TIME : 0;
+                squash = (1 - depth * landK) * (1 + 0.18 * launchK * FX.intensity);
+                bodySx = 1 + depth * landK * 0.8 - 0.13 * launchK * FX.intensity;
+            }
+            this.ctx.save();
+            if (bodySx !== 1 || this._lean !== 0) {
+                const pcx = this.player.x + this.player.width / 2;
+                const pfeet = this.player.y + this.player.height;
+                this.ctx.translate(pcx, pfeet);
+                this.ctx.rotate(this._lean);
+                this.ctx.scale(bodySx, 1);
+                this.ctx.translate(-pcx, -pfeet);
+            }
             this.player.draw(this.ctx, sprites, squash);
+            this.ctx.restore();
 
             if (this.particles.length) drawParticles(this.ctx, this.particles);
+            // Gameplay dust rides its own pool (own cap) just under the burst
+            // sparks; low per-particle alpha keeps it out of the playfield.
+            if (this.dust.length) drawParticles(this.ctx, this.dust);
+            // Portal-unlock ring pulses (world space; FX.pulse gates both the
+            // spawn in update() and this draw, so a mid-life flag flip hides).
+            if (FX.pulse && this.rings.length) drawRings(this.ctx, this.rings);
 
             this.ctx.restore();
 
@@ -1472,7 +1770,7 @@ export class Game {
             // once per level instance from a hash of the LEVEL SEED (look-A).
             // Firefly bands on night themes hover low; climb maps carry
             // falling flecks that only render while the floor is out of view.
-            const amb = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const amb = THEMES[themeIdx];
             if (this._motesSource !== this.level) {
                 this._motesSource = this.level;
                 const climbMap = worldBottom > viewH / zoom + 64;
@@ -1483,7 +1781,7 @@ export class Game {
                     { fireflies: amb.fireflies, flecks: climbMap ? CLIMB_FLECKS : 0 });
             }
             if (this.motes.length) {
-                drawMotes(this.ctx, this.motes, this.camera.x, viewW,
+                drawMotes(this.ctx, this.motes, camX, viewW,
                     amb.mote, amb.fireflies, worldBottomScreen - viewH > 64);
             }
 
@@ -1492,10 +1790,14 @@ export class Game {
             // the diagnostics text stays legible.
             if (sprites) {
                 sprites.drawForeground(this.ctx, this.currentLevel,
-                    this.camera.x, viewW, viewH,
+                    camX, viewW, viewH,
                     this.level.seed === undefined ? null : this.level.seed);
                 sprites.drawVignette(this.ctx, this.currentLevel, viewW, viewH);
             }
+
+            // Floating score popups (Wave B): canvas-space layer above the
+            // world, below the DOM HUD chips; pixel font, chip-palette fills.
+            drawPopups(this.ctx, this.popups, zoom);
 
             // Map identity readout: pins the exact generated layout from a
             // screenshot alone (retry replays the same seed, so what the

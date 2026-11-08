@@ -45,13 +45,75 @@ export function stepParticles(list, dt) {
     return list;
 }
 
+// Optional per-particle `alpha` multiplier (Wave B dust rides a low value so
+// it never fogs the playfield); absent means fully opaque at full life.
 export function drawParticles(ctx, list) {
+    const mult = p => (p.alpha === undefined ? 1 : p.alpha);
     for (const p of list) {
-        ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife)) * mult(p);
         ctx.fillStyle = p.color;
         ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     ctx.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Gameplay dust (Wave B): footstep/run puffs, landing thuds, skid sprays.
+// A SEPARATE capped pool from the burst list AND from the ambient motes —
+// bursts must never evict dust and vice versa, and the mote field keeps its
+// own MAX_MOTES headroom. Jitter comes from an integer hash of the spawn
+// position + index (never Math.random), so two boots of one seed render
+// identical frames, matching the walking-dust determinism ruling.
+// ---------------------------------------------------------------------------
+
+export const MAX_DUST = 48;
+
+function dustHash(a, b, i) {
+    let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^
+        Math.imul(i + 1, 0x9E3779B1);
+    h ^= h >>> 15;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Push a small ground-hugging puff at (x, y). opts:
+ *   count   — particles (default 3)
+ *   dir     — horizontal bias (+1/-1; 0 = symmetric fan)
+ *   speed   — magnitude multiplier (default 1)
+ *   life    — base seconds (default 0.28)
+ *   size    — pixel size (default 2)
+ *   alpha   — opacity multiplier (default 0.5)
+ *   up      — upward launch speed (default 26)
+ */
+export function spawnDust(list, x, y, color, opts = {}) {
+    const count = opts.count ?? 3;
+    const dir = opts.dir ?? 0;
+    const speed = opts.speed ?? 1;
+    const life = opts.life ?? 0.28;
+    const size = opts.size ?? 2;
+    const alpha = opts.alpha ?? 0.5;
+    const up = opts.up ?? 26;
+    for (let i = 0; i < count; i++) {
+        const h1 = dustHash(x, y, i);
+        const h2 = dustHash(y, x, i + 7);
+        // Symmetric fan when dir === 0; biased behind travel otherwise.
+        const spread = dir === 0 ? (h1 * 2 - 1) : dir * (0.35 + h1 * 0.9);
+        list.push({
+            x: x + (h2 - 0.5) * 6,
+            y: y - h1 * 3,
+            vx: spread * 55 * speed,
+            vy: -(up * (0.6 + h2 * 0.8)) * speed,
+            life: life * (0.8 + h1 * 0.4),
+            maxLife: life,
+            size: size + (h2 > 0.6 ? 1 : 0),
+            color,
+            alpha
+        });
+    }
+    if (list.length > MAX_DUST) list.splice(0, list.length - MAX_DUST);
+    return list;
 }
 
 // ---------------------------------------------------------------------------

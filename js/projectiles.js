@@ -104,6 +104,15 @@ class Projectile {
     }
 }
 
+// Wave B shell glow trail: fading GHOST POSITIONS sampled at DRAW time into
+// a module-level WeakMap keyed by the Projectile object. Deliberately not a
+// field on the projectile and never touched by updateAll: the simulation
+// stays byte-identical (no state writes, no reads), ghosts die with their
+// projectile via WeakMap semantics, and a paused game simply stops recording
+// movement (the <1px guard below collapses ghosts onto the resting point).
+const TRAIL_GHOSTS = 6;
+const ghostTrails = new WeakMap();
+
 export class ProjectileManager {
     /**
      * terrain: { tileSize, width, height, isSolidPx(px, py) } — the Level
@@ -193,9 +202,38 @@ export class ProjectileManager {
     // BACK along the velocity vector (state-derived, deterministic — no
     // history buffers, no rng). Drawn by main.js between the entity pass
     // and the player so a ball never hides behind a coin pile.
-    drawAll(ctx) {
+    // Wave B: an optional `glowColor` turns on the trackable ember trail —
+    // real ghost positions from the WeakMap above (cap TRAIL_GHOSTS), drawn
+    // under FX.trails by the caller passing null to opt out. The legacy
+    // velocity-derived ghosts stay: they are what makes the ball read as
+    // MOVING even when the glow pool is cold right after the shot.
+    drawAll(ctx, glowColor = null) {
         for (const p of this.list) {
             if (p.dead) continue;
+            if (glowColor) {
+                let ghosts = ghostTrails.get(p);
+                if (!ghosts) {
+                    ghosts = [];
+                    ghostTrails.set(p, ghosts);
+                }
+                const head = ghosts[0];
+                if (!head || Math.abs(head.x - p.x) > 1 ||
+                    Math.abs(head.y - p.y) > 1) {
+                    ghosts.unshift({ x: p.x, y: p.y });
+                    if (ghosts.length > TRAIL_GHOSTS) ghosts.length = TRAIL_GHOSTS;
+                }
+                // Oldest → newest: widening + brightening toward the ball so
+                // the eye rides the arc against dusk skies.
+                for (let i = ghosts.length - 1; i >= 1; i--) {
+                    const g = ghosts[i];
+                    const k = 1 - i / (TRAIL_GHOSTS + 1);
+                    ctx.globalAlpha = 0.3 * k;
+                    ctx.fillStyle = glowColor;
+                    ctx.beginPath();
+                    ctx.arc(g.x, g.y, p.r * (0.4 + 0.5 * k), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
             ctx.globalAlpha = 0.15;
             ctx.fillStyle = '#23232c';
             ctx.beginPath();

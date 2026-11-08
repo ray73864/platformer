@@ -17,6 +17,14 @@
 // Math.random (which would flicker frame to frame). Layers are pre-rendered
 // once per level into offscreen canvases; the per-frame cost is a handful of
 // drawImage blits plus cached-gradient fills.
+//
+// Wave B note: this layer imports ONLY fx.js — a pure presentation-config
+// leaf with no imports of its own (no cycle, no simulation reach). The "stay
+// import-free" convention above targets game-logic modules; telegraph and
+// juice embellishments must read the single FX object Wave C toggles, so a
+// mirrored constant here would defeat that.
+
+import { FX } from './fx.js';
 
 export const SHEETS = {
     tiles: { src: './assets/kenney_pixel-platformer/tiles.png', cols: 20, cell: 18 },
@@ -2204,11 +2212,11 @@ export class Sprites {
         ctx.restore();
     }
 
-    drawEnemy(ctx, enemy, index) {
+    drawEnemy(ctx, enemy, index, player = null) {
         if (enemy.dead) return;
         const kind = enemy.kind || 'walker';
         if (kind === 'spiny') {
-            this._drawSpiny(ctx, enemy);
+            this._drawSpiny(ctx, enemy, player);
             return;
         }
         if (kind === 'charger') {
@@ -2239,13 +2247,26 @@ export class Sprites {
     // (no sheet cell exists for this kind); motion is the walker's exactly,
     // so the tint + teeth carry the whole warning. Same feet-anchored,
     // facing-flipped, contact-shadowed convention as the sheet enemies.
-    _drawSpiny(ctx, enemy) {
+    // Wave B: when the player closes within ~3 tiles, the dome micro-rattles
+    // (a few px of clock-driven jitter on the BODY only — the contact shadow
+    // stays planted so the deck line never lies). Reads as "do not touch"
+    // without moving the lethal box a pixel; gated by FX.trails and scaled
+    // by intensity, never by anything the simulation reads.
+    _drawSpiny(ctx, enemy, player = null) {
         const cx = enemy.x + enemy.width / 2;
         const feet = enemy.y + enemy.height;
         this._entityShadow(ctx, cx, feet, 15);
         const face = this._faceOf(enemy);
+        let jx = 0;
+        let jy = 0;
+        if (player && FX.trails &&
+            Math.abs((player.x + player.width / 2) - cx) <= 96) {
+            const amp = 1.2 * FX.intensity;
+            jx = Math.sin(this.clock * 34 + enemy.x * 0.35) * amp;
+            jy = Math.sin(this.clock * 41 + 2.1) * amp * 0.4;
+        }
         ctx.save();
-        ctx.translate(cx, feet);
+        ctx.translate(cx + jx, feet + jy);
         ctx.scale(face, 1);
         // Purple-tinted slime dome (same footprint as the sheet slime).
         ctx.fillStyle = '#7d4fa8';
@@ -2295,15 +2316,21 @@ export class Sprites {
         const face = this._faceOf(enemy);
         let sx = 1;
         let sy = 1;
-        let flash = false;
+        let flashA = 0;
         const t = enemy.stateTime || 0;
         if (enemy.state === 'windup') {
             // Crouch-load toward the dash: sink and widen across the windup.
             const k = Math.min(1, t / CHARGER_WINDUP_TIME);
             sx = 1 + 0.18 * k;
             sy = 1 - 0.25 * k;
-            // Fixed-rate strobe off stateTime (deterministic, readable).
-            flash = Math.floor(t * 12) % 2 === 0;
+            // Wave B: the tell got LOUDER — a deep amber pulse (fixed-rate,
+            // stateTime-driven like the old strobe so replays and the bot see
+            // exactly what the player sees) riding a rising mean: the last
+            // third of the windup flashes hottest right before the dash
+            // locks. Intensity-scaled only: NEVER flag-gated, because this
+            // flash is fairness-critical information, not decoration.
+            const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 12);
+            flashA = (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity;
         } else if (enemy.state === 'dash') {
             sx = 1.12;
             sy = 0.9;
@@ -2335,9 +2362,9 @@ export class Sprites {
         ctx.fillRect(5, -15, 4, 4);
         ctx.fillStyle = '#16161d';
         ctx.fillRect(7, -14, 2, 2);
-        if (flash) {
+        if (flashA > 0.01) {
             // Windup flash tint over the visible flesh only.
-            ctx.fillStyle = 'rgba(255,232,170,0.45)';
+            ctx.fillStyle = `rgba(255,232,170,${Math.min(0.85, flashA).toFixed(3)})`;
             ctx.beginPath();
             ctx.moveTo(-15, 0);
             ctx.quadraticCurveTo(-17, -14, -9, -21);
@@ -2345,16 +2372,29 @@ export class Sprites {
             ctx.quadraticCurveTo(17, -14, 15, 0);
             ctx.closePath();
             ctx.fill();
+            // Sunward warning rim (Wave A litRight convention: the rim rides
+            // the lit side of the dome): a bright cap stroke that grows with
+            // the windup so the last frames read as "about to GO".
+            const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+            ctx.strokeStyle = `rgba(255,196,92,${(0.35 + 0.45 * k) * FX.intensity})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-9, -21);
+            ctx.quadraticCurveTo(0, -26, 9, -21);
+            ctx.stroke();
         }
         if (enemy.state === 'dash') {
-            // Speed streaks trailing behind the body.
+            // Speed streaks trailing behind the body — Wave B lengthens them
+            // (the dash's tell stays distinct from the windup's flash).
             ctx.strokeStyle = 'rgba(255,214,170,0.5)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(-18, -16);
-            ctx.lineTo(-26, -16);
-            ctx.moveTo(-18, -9);
-            ctx.lineTo(-24, -9);
+            ctx.moveTo(-18, -18);
+            ctx.lineTo(-30, -18);
+            ctx.moveTo(-18, -12);
+            ctx.lineTo(-27, -12);
+            ctx.moveTo(-18, -6);
+            ctx.lineTo(-24, -6);
             ctx.stroke();
         }
         ctx.restore();
@@ -2408,6 +2448,14 @@ export class Sprites {
         ctx.fillStyle = 'rgba(14,4,20,0.3)';
         ctx.fillRect(-16, -4, 32, 4);
         // THE signal: bronze cannon barrel mounted forward at muzzle height.
+        // Wave B muzzle recoil kick: right after FIRE the whole gun group
+        // snaps backward off its trunnions and springs back over 0.12 s
+        // (stateTime-driven, deterministic; FX.trails family — cosmetic, the
+        // shot itself was already resolved by the simulation).
+        const recoil = (FX.trails && enemy.state === 'cooldown_ranged' &&
+            t < 0.12) ? 5 * (1 - t / 0.12) : 0;
+        ctx.save();
+        ctx.translate(-recoil, 0);
         ctx.fillStyle = '#b0803a';
         ctx.fillRect(6, -15, 18, 6);
         ctx.fillStyle = '#7d5a26';           // breech shading
@@ -2427,6 +2475,7 @@ export class Sprites {
         ctx.beginPath();
         ctx.arc(8, -22, spark, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
         // Eye toward facing.
         ctx.fillStyle = '#fff';
         ctx.fillRect(2, -12, 4, 4);
@@ -2453,10 +2502,12 @@ export class Sprites {
             ctx.strokeStyle = 'rgba(255,214,170,0.5)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(-19, -13);
-            ctx.lineTo(-27, -13);
-            ctx.moveTo(-19, -7);
-            ctx.lineTo(-25, -7);
+            ctx.moveTo(-19, -15);
+            ctx.lineTo(-31, -15);
+            ctx.moveTo(-19, -9);
+            ctx.lineTo(-28, -9);
+            ctx.moveTo(-19, -3);
+            ctx.lineTo(-25, -3);
             ctx.stroke();
         }
         ctx.restore();
