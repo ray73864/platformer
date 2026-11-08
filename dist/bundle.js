@@ -48,6 +48,7 @@
     DODGE_POINTS: () => DODGE_POINTS,
     FINAL_LEVEL: () => FINAL_LEVEL,
     Game: () => Game,
+    INTERESTING_OK: () => INTERESTING_OK,
     STATE: () => STATE,
     STOMP_POINTS: () => STOMP_POINTS,
     TILE_SIZE: () => TILE_SIZE,
@@ -542,11 +543,14 @@
       return this.coins.filter((coin) => !coin.collected);
     }
     meetsPortalRequirement() {
-      const total = this.coins.length;
-      if (total === 0)
+      const required = this.getRequiredCoins();
+      if (required.length === 0)
         return true;
-      const collected = this.coins.filter((coin) => coin.collected).length;
-      return collected >= total;
+      const collected = required.filter((coin) => coin.collected).length;
+      return collected >= required.length;
+    }
+    getRequiredCoins() {
+      return this.coins.filter((coin) => !coin.secret);
     }
     checkCollection(player) {
       let collectedNow = 0;
@@ -2182,6 +2186,59 @@
   var PAD_CHANCE = 0.5;
   var CRATE_CHANCE = 0.5;
   var CRATE_MAX_TRAVEL_PAST_END = 3;
+  var ALCOVE_TIER_MIN = 2;
+  var ALCOVE_H_MIN = 3;
+  var ALCOVE_H_MAX = 5;
+  var ALCOVE_FORBID_MARGIN = 2;
+  var SECRET_COIN_MIN = 1;
+  var SECRET_COIN_MAX = 3;
+  var CRAG_CHANCE = 1;
+  function cragHash(v) {
+    v ^= v >>> 16;
+    v = Math.imul(v, 2146121005);
+    v ^= v >>> 15;
+    v = Math.imul(v, 2221713035);
+    return (v ^ v >>> 16) >>> 0;
+  }
+  function alcoveGeometryValid(tiles, width, height, site) {
+    const { col: c, entryRow: e, h, side } = site;
+    if (!Number.isInteger(h) || h < ALCOVE_H_MIN || h > ALCOVE_H_MAX) {
+      return false;
+    }
+    if (side !== -1 && side !== 1)
+      return false;
+    const t = (r, x) => r >= 0 && r < height && x >= 0 && x < width ? tiles[r][x] : -1;
+    const tunnelX = side === -1 ? c - 1 : c + 2;
+    const terraceX = side === -1 ? c - 2 : c + 3;
+    const flankX = side === -1 ? c + 2 : c - 1;
+    if (terraceX < 0 || terraceX > width - 1)
+      return false;
+    if (flankX < 0 || flankX > width - 1)
+      return false;
+    if (e - h < 0 || e + 1 > height - 1)
+      return false;
+    if (t(e, terraceX) !== 0 || t(e + 1, terraceX) !== 1)
+      return false;
+    if (t(e, tunnelX) !== 1 || t(e + 1, tunnelX) !== 1)
+      return false;
+    for (let r = e - h + 1;r <= e; r++) {
+      if (t(r, c) !== 1 || t(r, c + 1) !== 1)
+        return false;
+    }
+    if (t(e + 1, c) !== 1 || t(e + 1, c + 1) !== 1)
+      return false;
+    for (let r = e - h + 1;r <= e - 1; r++) {
+      if (t(r, tunnelX) !== 1)
+        return false;
+    }
+    for (let r = e - h + 1;r <= e; r++) {
+      if (t(r, flankX) !== 1)
+        return false;
+    }
+    if (t(e - h, c) !== 1 || t(e - h, c + 1) !== 1)
+      return false;
+    return true;
+  }
 
   class Level {
     constructor(levelNumber, tileSize, seed) {
@@ -2207,19 +2264,39 @@
       let physRejects = 0;
       let gateEngaged = false;
       const REWIND_BUDGET = 4;
-      while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
-        this.tiles = this.generateLevel();
+      const evaluateAttempt = () => {
         this.spawnTile = this.getSpawnTile();
         this.modelTransitions = [];
         this.reachableTiles = computeReachable(this.tiles, this.width, this.height, this.spawnTile, this.direction === "vertical", this.bridgeGap, this.shaftGap, this.modelTransitions);
         this.portalTile = this.pickPortalTile();
-        valid = this.portalTile !== null && this.bridgeIntact() && this.shaftIntact();
+        let valid = this.portalTile !== null && this.bridgeIntact() && this.shaftIntact();
         if (valid && DIFFICULTY.hasPhase2Content(this.levelNumber)) {
           valid = this.deriveEnemySpawns().length > 0 && (this.direction === "vertical" || this.countTilesOfType(2) > 0);
         }
+        return { valid, fair: valid && this.routeFair() };
+      };
+      while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
+        this.tiles = this.generateLevel();
+        const stampTrial = this._beginStampCrag(attempt);
+        const mainRng = this.rng;
+        if (stampTrial)
+          this.rng = makeRng(stampTrial.forkSeed);
+        let outcome = evaluateAttempt();
+        if (stampTrial && !outcome.fair) {
+          this._undoStampCrag(stampTrial);
+          this.rng = mainRng;
+          outcome = evaluateAttempt();
+        } else if (stampTrial) {
+          this.cragSite = stampTrial.site;
+          this.cragFilled = stampTrial.filled;
+        } else {
+          this.cragSite = null;
+          this.cragFilled = null;
+        }
+        valid = outcome.valid;
         attempt++;
         if (valid) {
-          if (this.routeFair()) {
+          if (outcome.fair) {
             fair = true;
           } else {
             valid = false;
@@ -2284,6 +2361,7 @@
       this.spawnEnemies();
       this.movingPlatforms = this.deriveMovingPlatforms();
       this.placeCapabilityObjects();
+      this.placeAlcove();
     }
     getSpawnTile() {
       const y = this.height - 4;
@@ -3657,6 +3735,209 @@
       }
       return false;
     }
+    _beginStampCrag(attempt) {
+      if (CRAG_CHANCE <= 0)
+        return null;
+      if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN)
+        return null;
+      if (this.direction !== "vertical")
+        return null;
+      const w = this.width, hgt = this.height, tiles = this.tiles;
+      const ground = new Array(w);
+      for (let x = 0;x < w; x++) {
+        let r = 0;
+        while (r < hgt && tiles[r][x] !== 1)
+          r++;
+        ground[x] = r;
+      }
+      const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
+      const sites = [];
+      for (const side of [-1, 1]) {
+        for (let c = 2;c <= w - 3; c++) {
+          const tunnelX = side === -1 ? c - 1 : c + 2;
+          const terraceX = side === -1 ? c - 2 : c + 3;
+          const farX = side === -1 ? c + 2 : c - 1;
+          if (terraceX < 1 || terraceX > w - 2)
+            continue;
+          const p = ground[c];
+          if (p >= hgt)
+            continue;
+          if (ground[c + 1] !== p || ground[tunnelX] !== p || ground[farX] !== p || ground[terraceX] !== p)
+            continue;
+          const e = p - 1;
+          if (e < ALCOVE_H_MAX + 1)
+            continue;
+          for (let h = ALCOVE_H_MIN;h <= ALCOVE_H_MAX; h++) {
+            let ok = true;
+            for (let r = e - h;r <= e && ok; r++) {
+              if (!fillable(r, c) || !fillable(r, c + 1))
+                ok = false;
+            }
+            for (let r = e - h + 1;r <= e && ok; r++) {
+              if (!fillable(r, tunnelX) || !fillable(r, farX)) {
+                ok = false;
+              }
+            }
+            if (ok)
+              sites.push({ col: c, entryRow: e, h, side });
+          }
+        }
+      }
+      if (sites.length === 0)
+        return null;
+      const base = cragHash((this.seedResolved ^ Math.imul(attempt + 1, 2654435761)) >>> 0);
+      if (base / 4294967296 >= CRAG_CHANCE)
+        return null;
+      const site = sites[cragHash((base ^ sites.length ^ 12648430) >>> 0) % sites.length];
+      const { col: c, entryRow: e, h, side } = site;
+      const tunnelX = side === -1 ? c - 1 : c + 2;
+      const farX = side === -1 ? c + 2 : c - 1;
+      const saved = [];
+      for (let r = e - h;r <= e; r++) {
+        for (const x of [c, c + 1]) {
+          saved.push({ r, x, prev: tiles[r][x] });
+          tiles[r][x] = 1;
+        }
+      }
+      for (let r = e - h + 1;r <= e; r++) {
+        for (const x of [tunnelX, farX]) {
+          saved.push({ r, x, prev: tiles[r][x] });
+          tiles[r][x] = 1;
+        }
+      }
+      const filled = new Set(saved.map((s) => s.r * w + s.x));
+      return { site, saved, filled, forkSeed: cragHash((base ^ 15784877) >>> 0) };
+    }
+    _undoStampCrag(trial) {
+      for (const s of trial.saved)
+        this.tiles[s.r][s.x] = s.prev;
+    }
+    placeAlcove() {
+      this.alcove = null;
+      if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN)
+        return;
+      const forbidden = this._alcoveForbiddenCells();
+      const cands = this._findAlcoveCandidates(forbidden, this.cragSite);
+      if (cands.length === 0)
+        return;
+      const site = cands[Math.floor(this.rng() * cands.length)];
+      this._carveAlcove(site);
+    }
+    _alcoveForbiddenCells() {
+      const w = this.width, h = this.height;
+      const m = ALCOVE_FORBID_MARGIN;
+      const bad = new Set;
+      const addRect = (x0, y0, x1, y1) => {
+        for (let y = Math.max(0, y0);y <= Math.min(h - 1, y1); y++) {
+          for (let x = Math.max(0, x0);x <= Math.min(w - 1, x1); x++) {
+            bad.add(y * w + x);
+          }
+        }
+      };
+      for (let r = 0;r < h; r++) {
+        for (let c = 0;c < w; c++) {
+          if (this.tiles[r][c] === 2)
+            addRect(c - m, r - m, c + m, r + m);
+        }
+      }
+      if (this.portalTile) {
+        const p = this.portalTile;
+        addRect(p.x - m, p.y - m - 1, p.x + m, p.y + m);
+      }
+      const T = this.tileSize;
+      for (const e of this.enemyManager.enemies) {
+        const row = Math.floor(e.y / T);
+        const c0 = Math.floor(e.minX / T);
+        const c1 = Math.floor((e.maxX - 1) / T);
+        addRect(c0 - m, row - m, c1 + m, row + m);
+      }
+      for (const pad of this.pads) {
+        addRect(pad.col - m, pad.row - m, pad.col + m, pad.row + m);
+      }
+      for (const crate of this.crates) {
+        addRect(crate.channelLeft - m, crate.row - m, crate.channelRight + m, crate.row + m);
+      }
+      for (const coin of this.coins) {
+        const cx = Math.floor((coin.x + coin.width / 2) / T);
+        const cy = Math.floor((coin.y + coin.height / 2) / T);
+        addRect(cx - m, cy - m, cx + m, cy + m);
+      }
+      addRect(this.spawnTile.x - 2, this.spawnTile.y - 2, this.spawnTile.x + 2, this.spawnTile.y + 2);
+      return bad;
+    }
+    _findAlcoveCandidates(forbidden, stamp = null) {
+      const out = [];
+      const w = this.width, hgt = this.height;
+      const key = (x, y) => y * w + x;
+      for (let e = 1;e <= hgt - 2; e++) {
+        for (let c = 1;c <= w - 3; c++) {
+          for (const side of [-1, 1]) {
+            const terraceX = side === -1 ? c - 2 : c + 3;
+            if (terraceX < 0 || terraceX > w - 1)
+              continue;
+            if (!this.reachableTiles.has(key(terraceX, e)))
+              continue;
+            for (let hh = ALCOVE_H_MIN;hh <= ALCOVE_H_MAX; hh++) {
+              const site = { col: c, entryRow: e, h: hh, side };
+              if (!alcoveGeometryValid(this.tiles, w, hgt, site))
+                continue;
+              if (stamp !== null && stamp.col === c && stamp.entryRow === e && stamp.h === hh && stamp.side === side) {
+                out.push(site);
+                continue;
+              }
+              let ok = true;
+              const fx0 = side === -1 ? c - 2 : c - 1;
+              const fx1 = side === -1 ? c + 2 : c + 3;
+              for (let r = e - hh;r <= e && ok; r++) {
+                for (let x = fx0;x <= fx1 && ok; x++) {
+                  if (forbidden.has(key(x, r)))
+                    ok = false;
+                }
+              }
+              if (ok)
+                out.push(site);
+            }
+          }
+        }
+      }
+      return out;
+    }
+    _carveAlcove(site) {
+      const { col: c, entryRow: e, h, side } = site;
+      const tunnelX = side === -1 ? c - 1 : c + 2;
+      const flipped = [{ x: tunnelX, r: e }];
+      for (let r = e - h + 1;r <= e; r++) {
+        for (const x of [c, c + 1]) {
+          this.tiles[r][x] = 0;
+          flipped.push({ x, r });
+        }
+      }
+      this.tiles[e][tunnelX] = 0;
+      this.platforms = this.extractPlatforms();
+      const interior = flipped.filter((f) => f.r < e);
+      const k = SECRET_COIN_MIN + Math.floor(this.rng() * (SECRET_COIN_MAX - SECRET_COIN_MIN + 1));
+      shuffle(interior, this.rng);
+      for (let i = 0;i < Math.min(k, interior.length); i++) {
+        this.coins.push({
+          x: interior[i].x * this.tileSize,
+          y: interior[i].r * this.tileSize,
+          width: 16,
+          height: 16,
+          collected: false,
+          secret: true
+        });
+      }
+      this.alcove = {
+        col: c,
+        entryRow: e,
+        topRow: e - h + 1,
+        h,
+        side,
+        tunnel: { x: tunnelX, r: e },
+        flipped,
+        coins: Math.min(k, interior.length)
+      };
+    }
     movingDeckLegal(a, b, S) {
       const inGrid = (cx, cy) => cx >= 0 && cx < this.width && cy >= 0 && cy < this.height;
       for (let cx = a;cx <= b; cx++) {
@@ -3772,6 +4053,9 @@
     }
     getCrates() {
       return this.crates;
+    }
+    getAlcove() {
+      return this.alcove;
     }
     getCoins() {
       return this.collectibles.getCoins();
@@ -6311,6 +6595,212 @@
     }
   }
 
+  // js/metrics.js
+  var GRAVITY = 980;
+  var JUMP_FORCE = 350;
+  var STOMP_BOUNCE = 260;
+  var WEIGHT_FORKS = 1;
+  var WEIGHT_GREED = 0.5;
+  var WEIGHT_TOOL = 0.75;
+  var WEIGHT_SECRET = 1.5;
+  var FORK_CAP = 3;
+  var GREED_SIGMA_REF = 4;
+  var GREED_NEAR_D = 1;
+  var GREED_FAR_D = 6;
+  var TOOL_SHELF_DROP_ROWS = 2;
+  var TOOL_REACH_COLS = 2;
+  var TOOL_ISOLATION_COLS = 4;
+  var PLAIN_RISE_PX = JUMP_FORCE * JUMP_FORCE / (2 * GRAVITY);
+  var STOMP_APEX_PX = ENEMY_WIDTH + STOMP_BOUNCE * STOMP_BOUNCE / (2 * GRAVITY);
+  function buildBaseGraph(level) {
+    const w = level.width;
+    const cells = level.reachableTiles;
+    const adj = new Map;
+    const radj = new Map;
+    for (const t of level.modelTransitions || []) {
+      const a = t.ay * w + t.ax;
+      const b = t.by * w + t.bx;
+      if (!cells.has(a) || !cells.has(b))
+        continue;
+      if (!adj.has(a))
+        adj.set(a, []);
+      adj.get(a).push(b);
+      if (!radj.has(b))
+        radj.set(b, []);
+      radj.get(b).push(a);
+    }
+    const sk = level.spawnTile ? level.spawnTile.y * w + level.spawnTile.x : -1;
+    const pk = level.portalTile ? level.portalTile.y * w + level.portalTile.x : -1;
+    return { cells, adj, radj, spawnKey: sk, portalKey: pk, w };
+  }
+  function hopDistances(startKeys, adj) {
+    const dist = new Map;
+    const queue = [];
+    for (const s of startKeys) {
+      if (!dist.has(s)) {
+        dist.set(s, 0);
+        queue.push(s);
+      }
+    }
+    for (let qi = 0;qi < queue.length; qi++) {
+      const v = queue[qi];
+      const d = dist.get(v) + 1;
+      for (const n of adj.get(v) || []) {
+        if (!dist.has(n)) {
+          dist.set(n, d);
+          queue.push(n);
+        }
+      }
+    }
+    return dist;
+  }
+  function routeForks(graph) {
+    const { cells, adj, spawnKey, portalKey } = graph;
+    if (!cells.has(spawnKey) || !cells.has(portalKey) || spawnKey === portalKey) {
+      return 0;
+    }
+    const CAP_INF = cells.size + 1;
+    const edges = new Map;
+    const addEdge = (u, v, cap) => {
+      if (!edges.has(u))
+        edges.set(u, []);
+      edges.get(u).push([v, cap]);
+      if (!edges.has(v))
+        edges.set(v, []);
+      edges.get(v).push([u, 0]);
+    };
+    for (const v of cells) {
+      addEdge(v * 2, v * 2 + 1, v === spawnKey || v === portalKey ? CAP_INF : 1);
+    }
+    for (const [a, outs] of adj) {
+      for (const b of outs)
+        addEdge(a * 2 + 1, b * 2, 1);
+    }
+    const src = spawnKey * 2 + 1;
+    const dst = portalKey * 2;
+    let flow = 0;
+    for (;; ) {
+      const prev = new Map([[src, null]]);
+      const q = [src];
+      let found = false;
+      for (let qi = 0;qi < q.length && !found; qi++) {
+        const u = q[qi];
+        for (const e of edges.get(u) || []) {
+          if (e[1] > 0 && !prev.has(e[0])) {
+            prev.set(e[0], [u, e]);
+            if (e[0] === dst) {
+              found = true;
+              break;
+            }
+            q.push(e[0]);
+          }
+        }
+      }
+      if (!found)
+        break;
+      for (let at = dst;at !== src; ) {
+        const [u, e] = prev.get(at);
+        e[1] -= 1;
+        const back = edges.get(at).find((b) => b[0] === u && b[1] === 0);
+        back[1] += 1;
+        at = u;
+      }
+      flow++;
+    }
+    return flow;
+  }
+  function greedGradient(level, graph = buildBaseGraph(level)) {
+    const { cells, adj, radj, spawnKey, portalKey } = graph;
+    const empty = { score: 0, sigma: 0, near: false, far: false, distances: [] };
+    if (!cells.has(spawnKey) || !cells.has(portalKey))
+      return empty;
+    const s = hopDistances([spawnKey], adj);
+    const p = hopDistances([portalKey], radj);
+    const R = s.get(portalKey);
+    if (R === undefined)
+      return empty;
+    const route = [];
+    for (const v of cells) {
+      if ((s.get(v) ?? Infinity) + (p.get(v) ?? Infinity) === R)
+        route.push(v);
+    }
+    const dRoute = hopDistances(route, adj);
+    const T = level.tileSize;
+    const distances = [];
+    for (const coin of level.coins) {
+      if (coin.secret)
+        continue;
+      const cx = Math.floor((coin.x + coin.width / 2) / T);
+      const cy = Math.floor((coin.y + coin.height / 2) / T);
+      const k = cy * level.width + cx;
+      const d = dRoute.get(k);
+      if (d === undefined)
+        continue;
+      distances.push(d);
+    }
+    if (distances.length === 0)
+      return empty;
+    const mean = distances.reduce((a, b) => a + b, 0) / distances.length;
+    const variance = distances.reduce((a, b) => a + (b - mean) * (b - mean), 0) / distances.length;
+    const sigma = Math.sqrt(variance);
+    const near = distances.some((d) => d <= GREED_NEAR_D);
+    const far = distances.some((d) => d >= GREED_FAR_D);
+    const score = 0.6 * Math.min(sigma / GREED_SIGMA_REF, 1) + (near ? 0.2 : 0) + (far ? 0.2 : 0);
+    return { score, sigma, near, far, distances };
+  }
+  function enemyAsTool(level) {
+    const T = level.tileSize;
+    const { width: w, height: h } = level;
+    const tiles = level.tiles;
+    const free = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 0;
+    const solid = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 1;
+    const standable = (r, c) => free(r, c) && solid(r + 1, c);
+    const walkers = (level.enemyManager?.enemies || []).filter((e) => e.kind === "walker");
+    const shelves = [];
+    for (const e of walkers) {
+      const rw = Math.floor(e.y / T);
+      const pc0 = Math.floor(e.minX / T);
+      const pc1 = Math.floor((e.maxX - 1) / T);
+      const sr = rw - TOOL_SHELF_DROP_ROWS;
+      if (sr < 1)
+        continue;
+      for (let c = Math.max(0, pc0 - TOOL_REACH_COLS);c <= Math.min(w - 1, pc1 + TOOL_REACH_COLS); c++) {
+        if (!standable(sr, c))
+          continue;
+        if (!free(sr - 1, c))
+          continue;
+        if (!free(sr + 2, c) || !solid(sr + 3, c))
+          continue;
+        let isolated = true;
+        for (let dr = -1;dr <= 1 && isolated; dr++) {
+          for (let dc = -TOOL_ISOLATION_COLS;dc <= TOOL_ISOLATION_COLS && isolated; dc++) {
+            const rr = sr + dr, cc = c + dc;
+            if (!standable(rr, cc))
+              continue;
+            if (dr === 0 && solid(sr + 1, cc))
+              continue;
+            isolated = false;
+          }
+        }
+        if (isolated)
+          shelves.push({ row: sr, col: c, patrol: [pc0, pc1], patrolRow: rw });
+      }
+    }
+    return { count: shelves.length, shelves };
+  }
+  function interestingnessProfile(level) {
+    const graph = buildBaseGraph(level);
+    const forks = routeForks(graph);
+    const greed = greedGradient(level, graph);
+    const tool = enemyAsTool(level);
+    const secret = level.getAlcove ? level.getAlcove() !== null : false;
+    const score = WEIGHT_FORKS * Math.min(forks, FORK_CAP) / FORK_CAP + WEIGHT_GREED * greed.score + WEIGHT_TOOL * Math.min(tool.count, 1) + WEIGHT_SECRET * (secret ? 1 : 0);
+    return { forks, greed, tool, secret, score };
+  }
+  function interestingnessScore(level) {
+    return interestingnessProfile(level).score;
+  }
+
   // js/particles.js
   var MAX_PARTICLES = 120;
   function spawnBurst(list, x, y, color, count = 10) {
@@ -7111,12 +7601,14 @@
     return best;
   }
   var SEED_CANDIDATES = 6;
+  var INTERESTING_OK = 0.49;
+  var LAZY_SCAN_EXTRA = 2;
   var LAYOUT_SIMILARITY_MAX = 0.5;
-  var GRAVITY = 980;
+  var GRAVITY2 = 980;
   var PLAYER_SPEED = 200;
-  var JUMP_FORCE = 350;
+  var JUMP_FORCE2 = 350;
   var MAX_FALL_SPEED = 600;
-  var STOMP_BOUNCE = 260;
+  var STOMP_BOUNCE2 = 260;
   var LANDING_SFX_MIN_FALL = 260;
   var LAUNCH_STRETCH_TIME = 0.14;
   var STOMP_SHAKE_TIME = 0.12;
@@ -7192,7 +7684,7 @@
       this.resize();
       window.addEventListener("resize", () => this.resize(), { signal: this._abort.signal });
       this.input = new InputHandler;
-      this.physics = new Physics(GRAVITY, MAX_FALL_SPEED);
+      this.physics = new Physics(GRAVITY2, MAX_FALL_SPEED);
       this.zoom = computeZoom(window.innerHeight);
       this.camera = new Camera(window.innerWidth / this.zoom, window.innerHeight / this.zoom);
       this.ui = new UI;
@@ -7496,7 +7988,11 @@
       if (stored !== undefined)
         return stored;
       let bestSeed = null, bestSig = null, bestScore = Infinity;
+      let pickSeed = null, pickSig = null, pickInteresting = -Infinity;
+      let firstPasserIdx = -1;
       for (let i = 0;i < SEED_CANDIDATES; i++) {
+        if (firstPasserIdx >= 0 && i >= firstPasserIdx + LAZY_SCAN_EXTRA)
+          break;
         const seed = seedCandidate(this.runSeed, levelNumber, i);
         let candidate;
         try {
@@ -7512,9 +8008,17 @@
             break;
         }
         if (worst < LAYOUT_SIMILARITY_MAX) {
-          this.levelSeeds.set(levelNumber, seed);
-          this.recentLayouts.push(sig);
-          return seed;
+          if (firstPasserIdx < 0)
+            firstPasserIdx = i;
+          const interesting = interestingnessScore(candidate);
+          if (interesting > pickInteresting) {
+            pickInteresting = interesting;
+            pickSeed = seed;
+            pickSig = sig;
+          }
+          if (interesting >= INTERESTING_OK)
+            break;
+          continue;
         }
         if (worst < bestScore) {
           bestScore = worst;
@@ -7522,12 +8026,26 @@
           bestSig = sig;
         }
       }
+      if (pickSeed !== null) {
+        this.levelSeeds.set(levelNumber, pickSeed);
+        this.recentLayouts.push(pickSig);
+        return pickSeed;
+      }
       if (bestSeed !== null) {
         this.levelSeeds.set(levelNumber, bestSeed);
         this.recentLayouts.push(bestSig);
         return bestSeed;
       }
       return seedCandidate(this.runSeed, levelNumber, 0);
+    }
+    _updateCoinHud() {
+      const required = this.collectibles.getRequiredCoins();
+      let collected = 0;
+      for (const coin of required) {
+        if (coin.collected)
+          collected++;
+      }
+      this.ui.updateCoins(collected, required.length);
     }
     tryConstructLevel(levelNumber) {
       const seed = this.seedFor(levelNumber);
@@ -7555,7 +8073,7 @@
     publishLevel(level) {
       this.level = level;
       const spawn = level.getSpawnPoint();
-      this.player = new Player(spawn.x, spawn.y, PLAYER_SPEED, JUMP_FORCE);
+      this.player = new Player(spawn.x, spawn.y, PLAYER_SPEED, JUMP_FORCE2);
       this.enemyManager = level.getEnemyManager();
       this.collectibles = level.getCollectibles();
       this.hazards = level.getHazards();
@@ -7567,7 +8085,7 @@
       this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
       this._crateWalls = this.crate ? crateContainmentWalls(level.width * level.tileSize, level.height * level.tileSize) : [];
       this._crateDustT = 0;
-      this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
+      this._updateCoinHud();
       this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
       this.levelCompleteTimer = 0;
@@ -7867,7 +8385,7 @@
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
           playSfx("stomp");
-          this.player.vy = -STOMP_BOUNCE;
+          this.player.vy = -STOMP_BOUNCE2;
           this.player.coyoteTimer = 0;
           this.player.jumpCutAvailable = false;
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height, "#c96bf5", 10);
@@ -7936,7 +8454,7 @@
           this.levelCoinPoints += collectedCoins * COIN_POINTS;
           for (let i = 0;i < collectedCoins; i++)
             this.timer.addCoinBonus();
-          this.ui.updateCoins(this.collectibles.getCoins().length - this.collectibles.getUncollectedCoins().length, this.collectibles.getCoins().length);
+          this._updateCoinHud();
           if (FX.popups) {
             const [sx, sy] = this._worldToScreen(this.player.x + this.player.width / 2, this.player.y + 4);
             spawnPopup(this.popups, sx, sy, `+${collectedCoins * COIN_POINTS}`, "#ffd23f");

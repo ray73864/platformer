@@ -69,12 +69,24 @@ export class Collectibles {
     // accidental brush-past. With no coins at all the gate opens trivially
     // (generation ships >= 5 per level; Game.publishLevel warns below the
     // spec floor of 3).
+    // M4/R4 ruling: SECRET coins (alcove interiors, capability program Task 6)
+    // are excluded from the requirement — secrets must never gate progress,
+    // because reaching them demands the wall-jump chimney skill the base
+    // fairness proofs treat as unreachable. The HUD shows the REQUIRED count
+    // only (Game.updateCoins call sites read getRequiredCoins), so "Coins:
+    // n/n" always means "portal unlocked", never a hidden extra ask.
     meetsPortalRequirement() {
-        const total = this.coins.length;
-        if (total === 0) return true;
+        const required = this.getRequiredCoins();
+        if (required.length === 0) return true;
+        const collected = required.filter(coin => coin.collected).length;
+        return collected >= required.length;
+    }
 
-        const collected = this.coins.filter(coin => coin.collected).length;
-        return collected >= total;
+    // The portal-gate subset: every coin except the secret ones. Shared by
+    // meetsPortalRequirement and the HUD writers so the displayed count can
+    // never drift from the actual gate.
+    getRequiredCoins() {
+        return this.coins.filter(coin => !coin.secret);
     }
 
     checkCollection(player) {

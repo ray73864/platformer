@@ -845,7 +845,12 @@ test("late-level densities stay plateaued (Phase 3 caps)", () => {
     for (const n of [90, 95, 99, 100]) {
         for (let i = 0; i < 10; i++) {
             const level = new Level(n, 32);
-            expect(level.getCoins().length).toBeLessThanOrEqual(30);
+            // R8 carve-aware: REQUIRED (non-secret) coins obey the plateau
+            // cap; alcove secret coins ride on top by design (R4 ruling —
+            // at most one pick of up to 3 per shipped alcove).
+            const coins = level.getCoins();
+            expect(coins.filter(c => !c.secret).length).toBeLessThanOrEqual(30);
+            expect(coins.filter(c => c.secret).length).toBeLessThanOrEqual(3);
             expect(level.countTilesOfType(2)).toBeLessThanOrEqual(20);
             expect(level.deriveEnemySpawns().length).toBeLessThanOrEqual(14);
             expect(level.hasValidPath()).toBe(true);

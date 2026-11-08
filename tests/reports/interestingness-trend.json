@@ -1,0 +1,2219 @@
+{
+ "generatedBy": "scripts/interestingness-trend.mjs",
+ "seedsPerBand": 40,
+ "weights": {
+  "forks": 1,
+  "greed": 0.5,
+  "tool": 0.75,
+  "secret": 1.5,
+  "forkCap": 3
+ },
+ "bands": [
+  {
+   "level": 3,
+   "tier": 0,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1.6,
+     "min": 1,
+     "p50": 2,
+     "p90": 2,
+     "max": 2
+    },
+    "histogram": {
+     "1": 16,
+     "2": 24
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2698,
+     "min": 0.2,
+     "p50": 0.2726,
+     "p90": 0.275,
+     "max": 0.3061
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.6682,
+     "min": 0.4581,
+     "p50": 0.7991,
+     "p90": 0.8042,
+     "max": 0.8197
+    }
+   },
+   "rows": [
+    {
+     "seed": 267658992,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 2913840163,
+     "forks": 2,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7991
+    },
+    {
+     "seed": 1264923218,
+     "forks": 2,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7991
+    },
+    {
+     "seed": 3911104901,
+     "forks": 2,
+     "greed": 0.2496,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7915
+    },
+    {
+     "seed": 2262187828,
+     "forks": 2,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7991
+    },
+    {
+     "seed": 613385575,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3259436182,
+     "forks": 2,
+     "greed": 0.2,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7667
+    },
+    {
+     "seed": 1618514633,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 506468472,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 3219759019,
+     "forks": 2,
+     "greed": 0.3044,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8189
+    },
+    {
+     "seed": 1570858458,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 4217039629,
+     "forks": 1,
+     "greed": 0.2496,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4581
+    },
+    {
+     "seed": 2568123068,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 919337199,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 3565387294,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 1924449361,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 275532672,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 2384843059,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 803034978,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 3449216661,
+     "forks": 2,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8042
+    },
+    {
+     "seed": 1800381636,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 151464567,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 2805510566,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 1156593625,
+     "forks": 1,
+     "greed": 0.2496,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4581
+    },
+    {
+     "seed": 3802774792,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 2153841851,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 1041926890,
+     "forks": 2,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7991
+    },
+    {
+     "seed": 3755085853,
+     "forks": 2,
+     "greed": 0.3061,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8197
+    },
+    {
+     "seed": 2106299980,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 457383423,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 3111445294,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 1462528353,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 4108710032,
+     "forks": 2,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7991
+    },
+    {
+     "seed": 2459793091,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 811007090,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 2920170405,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 1338493396,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 3992932103,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    },
+    {
+     "seed": 2343622326,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 694705385,
+     "forks": 2,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.803
+    }
+   ]
+  },
+  {
+   "level": 7,
+   "tier": 1,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1,
+     "min": 1,
+     "p50": 1,
+     "p90": 1,
+     "max": 1
+    },
+    "histogram": {
+     "1": 40
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2926,
+     "min": 0.265,
+     "p50": 0.296,
+     "p90": 0.3146,
+     "max": 0.3293
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.4796,
+     "min": 0.4658,
+     "p50": 0.4813,
+     "p90": 0.4906,
+     "max": 0.498
+    }
+   },
+   "rows": [
+    {
+     "seed": 927330652,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 2501671823,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 1943332350,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 3517935145,
+     "forks": 1,
+     "greed": 0.3293,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.498
+    },
+    {
+     "seed": 3194480792,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 473846475,
+     "forks": 1,
+     "greed": 0.2935,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4801
+    },
+    {
+     "seed": 4210481978,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 1489585509,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 646041556,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 2270709767,
+     "forks": 1,
+     "greed": 0.3139,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4903
+    },
+    {
+     "seed": 1695593078,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 3286973601,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 2711856400,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 242888515,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 3962743218,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 1241846781,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 685612076,
+     "forks": 1,
+     "greed": 0.3083,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4875
+    },
+    {
+     "seed": 3063154335,
+     "forks": 1,
+     "greed": 0.3146,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4906
+    },
+    {
+     "seed": 392986830,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 4112976185,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 1409184616,
+     "forks": 1,
+     "greed": 0.3118,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4892
+    },
+    {
+     "seed": 834076123,
+     "forks": 1,
+     "greed": 0.3118,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4892
+    },
+    {
+     "seed": 2676581898,
+     "forks": 1,
+     "greed": 0.2935,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4801
+    },
+    {
+     "seed": 2084692085,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3659033252,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 3100693271,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 111893830,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 3882076081,
+     "forks": 1,
+     "greed": 0.3061,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4864
+    },
+    {
+     "seed": 1161445856,
+     "forks": 1,
+     "greed": 0.3139,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4903
+    },
+    {
+     "seed": 603114067,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 2177184898,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 1872608973,
+     "forks": 1,
+     "greed": 0.296,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4813
+    },
+    {
+     "seed": 3428067132,
+     "forks": 1,
+     "greed": 0.3118,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4892
+    },
+    {
+     "seed": 2855051631,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 149367774,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 2529137673,
+     "forks": 1,
+     "greed": 0.3118,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4892
+    },
+    {
+     "seed": 2004229752,
+     "forks": 1,
+     "greed": 0.3275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4971
+    },
+    {
+     "seed": 3578697899,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 3003187482,
+     "forks": 1,
+     "greed": 0.3146,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4906
+    },
+    {
+     "seed": 299469637,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    }
+   ]
+  },
+  {
+   "level": 12,
+   "tier": 2,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1.4,
+     "min": 1,
+     "p50": 1,
+     "p90": 2,
+     "max": 2
+    },
+    "histogram": {
+     "1": 24,
+     "2": 16
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2763,
+     "min": 0.2572,
+     "p50": 0.2738,
+     "p90": 0.2908,
+     "max": 0.3044
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.6048,
+     "min": 0.4626,
+     "p50": 0.4783,
+     "p90": 0.8094,
+     "max": 0.8185
+    }
+   },
+   "rows": [
+    {
+     "seed": 3644458165,
+     "forks": 2,
+     "greed": 0.2717,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8025
+    },
+    {
+     "seed": 2070122086,
+     "forks": 2,
+     "greed": 0.2572,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7953
+    },
+    {
+     "seed": 2645233687,
+     "forks": 1,
+     "greed": 0.2908,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4788
+    },
+    {
+     "seed": 1070635968,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 1343757681,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 4064388898,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 344534739,
+     "forks": 2,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8036
+    },
+    {
+     "seed": 3065426060,
+     "forks": 2,
+     "greed": 0.2636,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.7985
+    },
+    {
+     "seed": 3372104253,
+     "forks": 2,
+     "greed": 0.29,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8117
+    },
+    {
+     "seed": 1764212206,
+     "forks": 1,
+     "greed": 0.2585,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4626
+    },
+    {
+     "seed": 2339325855,
+     "forks": 2,
+     "greed": 0.2717,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8025
+    },
+    {
+     "seed": 764725576,
+     "forks": 2,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8041
+    },
+    {
+     "seed": 1339838713,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 3758480042,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 38624347,
+     "forks": 2,
+     "greed": 0.2717,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8025
+    },
+    {
+     "seed": 2759517716,
+     "forks": 1,
+     "greed": 0.2748,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 3332532677,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 1491858294,
+     "forks": 2,
+     "greed": 0.2882,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8108
+    },
+    {
+     "seed": 4178801959,
+     "forks": 2,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8041
+    },
+    {
+     "seed": 458816720,
+     "forks": 1,
+     "greed": 0.2695,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4681
+    },
+    {
+     "seed": 3179382401,
+     "forks": 2,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8041
+    },
+    {
+     "seed": 3754494002,
+     "forks": 1,
+     "greed": 0.2717,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4692
+    },
+    {
+     "seed": 1911985123,
+     "forks": 2,
+     "greed": 0.2855,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8094
+    },
+    {
+     "seed": 2453542300,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 879206221,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 1454319358,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 3906250927,
+     "forks": 2,
+     "greed": 0.3037,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8185
+    },
+    {
+     "seed": 152842840,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 2873472009,
+     "forks": 1,
+     "greed": 0.3044,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4855
+    },
+    {
+     "seed": 3448586170,
+     "forks": 1,
+     "greed": 0.29,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4783
+    },
+    {
+     "seed": 1874510187,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2179091236,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 573297365,
+     "forks": 2,
+     "greed": 0.2683,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8008
+    },
+    {
+     "seed": 1146311814,
+     "forks": 1,
+     "greed": 0.2908,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4788
+    },
+    {
+     "seed": 3868778039,
+     "forks": 2,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8041
+    },
+    {
+     "seed": 2025873888,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 2567564177,
+     "forks": 2,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8036
+    },
+    {
+     "seed": 993094978,
+     "forks": 1,
+     "greed": 0.2738,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 1568601331,
+     "forks": 1,
+     "greed": 0.29,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4783
+    },
+    {
+     "seed": 4289101484,
+     "forks": 1,
+     "greed": 0.2663,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4665
+    }
+   ]
+  },
+  {
+   "level": 30,
+   "tier": 3,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1.025,
+     "min": 1,
+     "p50": 1,
+     "p90": 1,
+     "max": 2
+    },
+    "histogram": {
+     "1": 39,
+     "2": 1
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2797,
+     "min": 0.265,
+     "p50": 0.2749,
+     "p90": 0.2964,
+     "max": 0.2986
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.4815,
+     "min": 0.4658,
+     "p50": 0.4708,
+     "p90": 0.4817,
+     "max": 0.8039
+    }
+   },
+   "rows": [
+    {
+     "seed": 798409019,
+     "forks": 2,
+     "greed": 0.2745,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.8039
+    },
+    {
+     "seed": 2379172840,
+     "forks": 1,
+     "greed": 0.2745,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 1795675545,
+     "forks": 1,
+     "greed": 0.2728,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4698
+    },
+    {
+     "seed": 3380371022,
+     "forks": 1,
+     "greed": 0.2942,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4804
+    },
+    {
+     "seed": 2796869887,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 82666156,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3794135901,
+     "forks": 1,
+     "greed": 0.2861,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4764
+    },
+    {
+     "seed": 1075475714,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 1045626803,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2676717664,
+     "forks": 1,
+     "greed": 0.2875,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4771
+    },
+    {
+     "seed": 2109964817,
+     "forks": 1,
+     "greed": 0.265,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4658
+    },
+    {
+     "seed": 3677883590,
+     "forks": 1,
+     "greed": 0.2747,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 3111163255,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 380182308,
+     "forks": 1,
+     "greed": 0.2746,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 4108425685,
+     "forks": 1,
+     "greed": 0.2744,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4705
+    },
+    {
+     "seed": 1389765530,
+     "forks": 1,
+     "greed": 0.2855,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4761
+    },
+    {
+     "seed": 806267979,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2923902712,
+     "forks": 1,
+     "greed": 0.2964,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4815
+    },
+    {
+     "seed": 264220841,
+     "forks": 1,
+     "greed": 0.2968,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4817
+    },
+    {
+     "seed": 3992205662,
+     "forks": 1,
+     "greed": 0.2722,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4694
+    },
+    {
+     "seed": 1261257487,
+     "forks": 1,
+     "greed": 0.2732,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4699
+    },
+    {
+     "seed": 694537660,
+     "forks": 1,
+     "greed": 0.2715,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4691
+    },
+    {
+     "seed": 2270844525,
+     "forks": 1,
+     "greed": 0.2687,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4677
+    },
+    {
+     "seed": 1687343122,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 3268106947,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2684609392,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 511208737,
+     "forks": 1,
+     "greed": 0.2986,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4826
+    },
+    {
+     "seed": 4289787862,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 1575580039,
+     "forks": 1,
+     "greed": 0.2934,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.48
+    },
+    {
+     "seed": 992082484,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2568357093,
+     "forks": 1,
+     "greed": 0.2873,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.477
+    },
+    {
+     "seed": 2001637034,
+     "forks": 1,
+     "greed": 0.2835,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4751
+    },
+    {
+     "seed": 3565623131,
+     "forks": 1,
+     "greed": 0.2983,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4825
+    },
+    {
+     "seed": 3003093256,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 271850425,
+     "forks": 1,
+     "greed": 0.2864,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4765
+    },
+    {
+     "seed": 2389484654,
+     "forks": 1,
+     "greed": 0.2857,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4762
+    },
+    {
+     "seed": 1873096223,
+     "forks": 1,
+     "greed": 0.2747,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 3449661644,
+     "forks": 1,
+     "greed": 0.2747,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 2882679165,
+     "forks": 1,
+     "greed": 0.2864,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4765
+    },
+    {
+     "seed": 151698210,
+     "forks": 1,
+     "greed": 0.2956,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4811
+    }
+   ]
+  },
+  {
+   "level": 60,
+   "tier": 4,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1.05,
+     "min": 1,
+     "p50": 1,
+     "p90": 1,
+     "max": 2
+    },
+    "histogram": {
+     "1": 38,
+     "2": 2
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2756,
+     "min": 0.2632,
+     "p50": 0.2737,
+     "p90": 0.2875,
+     "max": 0.2935
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.4878,
+     "min": 0.4649,
+     "p50": 0.4702,
+     "p90": 0.4796,
+     "max": 0.804
+    }
+   },
+   "rows": [
+    {
+     "seed": 4252240037,
+     "forks": 1,
+     "greed": 0.2747,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 1596818038,
+     "forks": 1,
+     "greed": 0.272,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4693
+    },
+    {
+     "seed": 3118799879,
+     "forks": 1,
+     "greed": 0.274,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 463378384,
+     "forks": 1,
+     "greed": 0.2682,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4674
+    },
+    {
+     "seed": 1951797601,
+     "forks": 1,
+     "greed": 0.2739,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4703
+    },
+    {
+     "seed": 3591351090,
+     "forks": 1,
+     "greed": 0.2737,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 818356931,
+     "forks": 1,
+     "greed": 0.2875,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4771
+    },
+    {
+     "seed": 2465774748,
+     "forks": 1,
+     "greed": 0.2665,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4666
+    },
+    {
+     "seed": 3970971181,
+     "forks": 1,
+     "greed": 0.2685,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4676
+    },
+    {
+     "seed": 1298772478,
+     "forks": 1,
+     "greed": 0.2678,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4672
+    },
+    {
+     "seed": 2938194831,
+     "forks": 1,
+     "greed": 0.2855,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4761
+    },
+    {
+     "seed": 165332312,
+     "forks": 1,
+     "greed": 0.2714,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.469
+    },
+    {
+     "seed": 1804754153,
+     "forks": 1,
+     "greed": 0.2665,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4666
+    },
+    {
+     "seed": 3293304506,
+     "forks": 1,
+     "greed": 0.2837,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4752
+    },
+    {
+     "seed": 637751371,
+     "forks": 1,
+     "greed": 0.2844,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4755
+    },
+    {
+     "seed": 2150951428,
+     "forks": 1,
+     "greed": 0.273,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4698
+    },
+    {
+     "seed": 3807143381,
+     "forks": 1,
+     "greed": 0.285,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4758
+    },
+    {
+     "seed": 2091253606,
+     "forks": 1,
+     "greed": 0.2925,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4796
+    },
+    {
+     "seed": 3713890615,
+     "forks": 1,
+     "greed": 0.2694,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.468
+    },
+    {
+     "seed": 1058468032,
+     "forks": 1,
+     "greed": 0.2935,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4801
+    },
+    {
+     "seed": 2580515473,
+     "forks": 1,
+     "greed": 0.2735,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4701
+    },
+    {
+     "seed": 4219929634,
+     "forks": 1,
+     "greed": 0.27,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4683
+    },
+    {
+     "seed": 1438162931,
+     "forks": 2,
+     "greed": 0.2746,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.804
+    },
+    {
+     "seed": 3060799884,
+     "forks": 1,
+     "greed": 0.2726,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4696
+    },
+    {
+     "seed": 271160157,
+     "forks": 1,
+     "greed": 0.2687,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4677
+    },
+    {
+     "seed": 1927359214,
+     "forks": 1,
+     "greed": 0.2685,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4676
+    },
+    {
+     "seed": 3432686783,
+     "forks": 1,
+     "greed": 0.2921,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4794
+    },
+    {
+     "seed": 760364616,
+     "forks": 1,
+     "greed": 0.2714,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4691
+    },
+    {
+     "seed": 2399909913,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3921884074,
+     "forks": 1,
+     "greed": 0.2673,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.467
+    },
+    {
+     "seed": 1274334587,
+     "forks": 1,
+     "greed": 0.2856,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4761
+    },
+    {
+     "seed": 2779531060,
+     "forks": 1,
+     "greed": 0.2632,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4649
+    },
+    {
+     "seed": 107339461,
+     "forks": 1,
+     "greed": 0.2722,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4694
+    },
+    {
+     "seed": 1612535958,
+     "forks": 1,
+     "greed": 0.2745,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 3268858407,
+     "forks": 2,
+     "greed": 0.2747,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.804
+    },
+    {
+     "seed": 1552838128,
+     "forks": 1,
+     "greed": 0.272,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4693
+    },
+    {
+     "seed": 3175606145,
+     "forks": 1,
+     "greed": 0.2829,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4748
+    },
+    {
+     "seed": 528441682,
+     "forks": 1,
+     "greed": 0.2855,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4761
+    },
+    {
+     "seed": 2033252579,
+     "forks": 1,
+     "greed": 0.2737,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 3689444028,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    }
+   ]
+  },
+  {
+   "level": 90,
+   "tier": 5,
+   "maps": 40,
+   "alcovePrevalence": 0,
+   "forks": {
+    "summary": {
+     "mean": 1,
+     "min": 1,
+     "p50": 1,
+     "p90": 1,
+     "max": 1
+    },
+    "histogram": {
+     "1": 40
+    }
+   },
+   "greed": {
+    "summary": {
+     "mean": 0.2757,
+     "min": 0.2663,
+     "p50": 0.2745,
+     "p90": 0.2843,
+     "max": 0.2934
+    }
+   },
+   "tool": {
+    "summary": {
+     "mean": 0,
+     "min": 0,
+     "p50": 0,
+     "p90": 0,
+     "max": 0
+    }
+   },
+   "score": {
+    "summary": {
+     "mean": 0.4712,
+     "min": 0.4665,
+     "p50": 0.4706,
+     "p90": 0.4755,
+     "max": 0.48
+    }
+   },
+   "rows": [
+    {
+     "seed": 2329038895,
+     "forks": 1,
+     "greed": 0.2741,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4704
+    },
+    {
+     "seed": 680254204,
+     "forks": 1,
+     "greed": 0.2934,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.48
+    },
+    {
+     "seed": 3460514957,
+     "forks": 1,
+     "greed": 0.2663,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4665
+    },
+    {
+     "seed": 1815662426,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 66079211,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 2712269752,
+     "forks": 1,
+     "greed": 0.2733,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.47
+    },
+    {
+     "seed": 1197570633,
+     "forks": 1,
+     "greed": 0.2737,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 3848201238,
+     "forks": 1,
+     "greed": 0.2728,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4697
+    },
+    {
+     "seed": 2601938599,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 986704244,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3632730885,
+     "forks": 1,
+     "greed": 0.2744,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4705
+    },
+    {
+     "seed": 2122096082,
+     "forks": 1,
+     "greed": 0.2749,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 473171043,
+     "forks": 1,
+     "greed": 0.2742,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4704
+    },
+    {
+     "seed": 3018690096,
+     "forks": 1,
+     "greed": 0.2741,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4704
+    },
+    {
+     "seed": 1369770177,
+     "forks": 1,
+     "greed": 0.2748,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 4153586318,
+     "forks": 1,
+     "greed": 0.2934,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.48
+    },
+    {
+     "seed": 2504670559,
+     "forks": 1,
+     "greed": 0.2743,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4705
+    },
+    {
+     "seed": 184788972,
+     "forks": 1,
+     "greed": 0.2843,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4755
+    },
+    {
+     "seed": 2868584893,
+     "forks": 1,
+     "greed": 0.2694,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.468
+    },
+    {
+     "seed": 1219536970,
+     "forks": 1,
+     "greed": 0.275,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4708
+    },
+    {
+     "seed": 3999912475,
+     "forks": 1,
+     "greed": 0.2746,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 2350996648,
+     "forks": 1,
+     "greed": 0.2746,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 572442489,
+     "forks": 1,
+     "greed": 0.2737,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4702
+    },
+    {
+     "seed": 3252044038,
+     "forks": 1,
+     "greed": 0.2723,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4695
+    },
+    {
+     "seed": 1737477079,
+     "forks": 1,
+     "greed": 0.2768,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4717
+    },
+    {
+     "seed": 88568420,
+     "forks": 1,
+     "greed": 0.2743,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4705
+    },
+    {
+     "seed": 3141336117,
+     "forks": 1,
+     "greed": 0.282,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4743
+    },
+    {
+     "seed": 1525966530,
+     "forks": 1,
+     "greed": 0.2745,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4706
+    },
+    {
+     "seed": 4172144787,
+     "forks": 1,
+     "greed": 0.2929,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4798
+    },
+    {
+     "seed": 2657446688,
+     "forks": 1,
+     "greed": 0.2694,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.468
+    },
+    {
+     "seed": 1012045297,
+     "forks": 1,
+     "greed": 0.2735,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4701
+    },
+    {
+     "seed": 3523878846,
+     "forks": 1,
+     "greed": 0.2806,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4736
+    },
+    {
+     "seed": 1908639311,
+     "forks": 1,
+     "greed": 0.2748,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 398131228,
+     "forks": 1,
+     "greed": 0.2748,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4707
+    },
+    {
+     "seed": 3044051629,
+     "forks": 1,
+     "greed": 0.2663,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4665
+    },
+    {
+     "seed": 724055418,
+     "forks": 1,
+     "greed": 0.2707,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4687
+    },
+    {
+     "seed": 3403792139,
+     "forks": 1,
+     "greed": 0.2743,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4705
+    },
+    {
+     "seed": 1759066584,
+     "forks": 1,
+     "greed": 0.2685,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4676
+    },
+    {
+     "seed": 244752489,
+     "forks": 1,
+     "greed": 0.273,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4698
+    },
+    {
+     "seed": 2890803766,
+     "forks": 1,
+     "greed": 0.284,
+     "tool": 0,
+     "secret": 0,
+     "score": 0.4753
+    }
+   ]
+  }
+ ]
+}

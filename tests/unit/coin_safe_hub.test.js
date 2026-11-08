@@ -152,8 +152,23 @@ function probeSafeHub(level) {
     return { hub, reachable };
 }
 
-const coinCellKeys = level => level.coins.map(c =>
-    Math.floor(c.y / T) * level.width + Math.floor(c.x / T));
+// R8/M-1 carve-aware helpers: the stamp+carve adds EXACTLY the two
+// shaft-floor standable cells post-validation (headroom-aware BFS drops the
+// tunnel cell), and secret coins are exempt from safe-hub membership by the
+// documented R4 ruling (they are never required). Required-coin density and
+// hub parity assertions therefore run on the pre-carve base set plus the
+// pinned +2 delta, and over non-secret coins only.
+const requiredCoinKeys = level => level.coins
+    .filter(c => !c.secret)
+    .map(c => Math.floor(c.y / T) * level.width + Math.floor(c.x / T));
+const carveAdditions = level => {
+    const a = level.getAlcove && level.getAlcove();
+    if (!a) return new Set();
+    return new Set([
+        a.entryRow * level.width + a.col,
+        a.entryRow * level.width + a.col + 1
+    ]);
+};
 
 // ---------------------------------------------------------------------------
 // Mutation-style sanity case: the probe MUST flag a coin in a hand-built
@@ -247,14 +262,19 @@ test("named repro seeds ship zero dead-pocket coins", () => {
         const level = new Level(r.lvl, T, r.seed);
         expect(level.direction).toBe('vertical');
         const { hub, reachable } = probeSafeHub(level);
-        // Mirror parity: the test-side graph IS the constructor's flood.
-        expect(reachable.size).toBe(level.reachableTiles.size);
+        // Mirror parity: the test-side graph IS the constructor's flood,
+        // plus the pinned carve delta (+2 shaft-floor leaves on stamped
+        // maps; nothing else may differ).
         for (const k of level.reachableTiles) expect(reachable.has(k)).toBe(true);
-        const dead = coinCellKeys(level).filter(k => !hub.has(k));
+        const added = [...reachable].filter(k => !level.reachableTiles.has(k));
+        expect(new Set(added)).toEqual(carveAdditions(level));
+        const dead = requiredCoinKeys(level).filter(k => !hub.has(k));
         expect(dead.length,
             `L${r.lvl} seed=${r.seed} (pre-fix dead=${r.preFixDead})`).toBe(0);
-        // Relocation, not starvation: these maps still fill the coin target.
-        expect(level.coins.length).toBe(Math.min(5 + r.lvl, 30));
+        // Relocation, not starvation: these maps still fill the coin target
+        // (REQUIRED coins; secrets ride on top by design, R4).
+        expect(level.coins.filter(c => !c.secret).length)
+            .toBe(Math.min(5 + r.lvl, 30));
     }
 });
 
@@ -270,8 +290,13 @@ test("structural sweep: every deployed coin is in the safe hub (L5..60 x 10)", (
             const seed = lvl * 1000 + s;
             const level = new Level(lvl, T, seed);
             const { hub, reachable } = probeSafeHub(level);
-            expect(reachable.size).toBe(level.reachableTiles.size);
-            for (const k of coinCellKeys(level)) {
+            // Mirror parity + pinned carve delta (+2 shaft-floor leaves on
+            // stamped maps only). Secret coins are exempt from hub
+            // membership by the R4 ruling — they gate nothing.
+            for (const k of level.reachableTiles) expect(reachable.has(k)).toBe(true);
+            const added = [...reachable].filter(k => !level.reachableTiles.has(k));
+            expect(new Set(added)).toEqual(carveAdditions(level));
+            for (const k of requiredCoinKeys(level)) {
                 expect(hub.has(k),
                     `L${lvl} seed=${seed} coin cell ${Math.floor(k / level.width)},` +
                     `${Math.floor(k % level.width)}`).toBe(true);

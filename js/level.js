@@ -1574,6 +1574,169 @@ const CRATE_CHANCE = 0.5;
 // readable, and inside the pocket's sightline.
 const CRATE_MAX_TRAVEL_PAST_END = 3;
 
+// ── M4 secret alcoves (SPEC M4 / Task 6) ───────────────────────────────────
+// The generator carves AT MOST ONE alcove per map, tiers >= 2 only (the same
+// tierIndexFor boundary authority the pads/crates pass reads): a chimney of
+// EXACTLY 2 cells width, ALCOVE_H_MIN..ALCOVE_H_MAX rows tall, capped on top,
+// solid walls on both sides, entered through a one-cell TUNNEL mouth cut at
+// the base of the shaft, flush onto an existing standable surface (the
+// "floor/wall junction" of SPEC M4). Coins inside carry secret:true and are
+// excluded from the portal gate (R4 ruling).
+//
+// Why the tunnel mouth: the shipped horizontal generator is a PURE HEIGHTMAP
+// (measured: zero solid-with-air-below cells across sampled maps), so no
+// natural cave mouth or overhang exists for a bottom-open shaft to hide in.
+// The carve therefore cuts into cliff bodies: shaft columns sit inside the
+// massif (their side walls and cap are surrounding rock), and a one-cell
+// tunnel connects the shaft floor to a terrace cell at the same row. The
+// left flank wall keeps every row ABOVE the tunnel, so the alternating-kick
+// chain has both walls from its first exchange — the repo-side physics test
+// family pins THIS shipped shape (plus plain 2-walled chimneys) across
+// h=3..5 with the real engine (wjchimney doctrine, R5), never per-generation.
+//
+// Base-model effect of the carve (the fairness story, property-tested):
+// flipping tunnel+shaft cells ADDS the shaft-floor standable pair and
+// removes no support from any previously standable cell (every flipped
+// cell's up-neighbour is either another flipped cell or the pinned-solid
+// cap/wall rock; heightmap columns are solid below every surface). The
+// TUNNEL cell does NOT become standable in practice: the headroom-aware
+// base BFS drops it (rock directly overhead at the flank row), so the
+// measured shipped delta on verticals is +2/-0, not the naive +3/-0 —
+// a STRONGER guarantee than "three dead-end cells". Interior cells (rows
+// above the shaft floor) stay NON-standable forever — the base BFS only ever
+// marks standable cells, so every interior cell and every secret coin inside
+// is unreachable in the base model BY CONSTRUCTION, independently asserted
+// per shipped alcove against a fresh computeReachable on the carved grid.
+// All validators consume that base BFS: gauntlet articulation points cannot
+// shift (adding leaf cells never changes which OLD cells separate spawn from
+// portal), safe-hub reverse-BFS keeps every existing coin's portal path, and
+// routeFair routes stay byte-valid. Secret coins are exempt from safe-hub
+// membership for the documented reason of R4: secrets are never required.
+//
+// Climbability is the cheap geometric predicate R5 (alcoveGeometryValid):
+// width exactly 2, side walls solid over the shaft height (left flank above
+// the tunnel row), cap solid, tunnel + shaft floors solid, terrace cell free
+// + floored, height bounds enforced. Entry reachability and hazard clearance
+// are placement policy (_findAlcoveCandidates).
+//
+// Carve sites keep Chebyshev clearance >= ALCOVE_FORBID_MARGIN+1 from spikes,
+// the portal, deployed patrol spans, pads, crates and coin bodies (zone set
+// below marks +/- margin rects around each; footprint must miss every zone).
+// Route/must-pass cells need NO ban: the dead-end argument above means the
+// carve cannot alter any validated route.
+//
+// RNG discipline: this pass is the LAST consumer of this.rng (it runs after
+// placeCapabilityObjects; nothing reads rng afterwards), mirroring the pads/
+// crates precedent — terrain, decks, enemies, coins, pads and crates stay
+// byte-identical versus BASE for every seed, and the deck-schedule ruling
+// applies unchanged: deck PRESENCE is untouched because the draw sits behind
+// every upstream consumer. Terrain byte-identity vs BASE intentionally ENDS
+// here for carved maps only (documented delta: the Task 6 report enumerates
+// % maps changed and tiles flipped). Retry-exact-map holds: same seed => the
+// same rolls => the same site and carve.
+// NO budget roll at the finder itself: natural eligible sites are ZERO on
+// horizontal heightmaps (steps <= 1 row) and ZERO on verticals too (the full
+// fix-round study — see the CRAG_ header); what hosts alcoves is the crag
+// STAMP, whose own chance gate (CRAG_CHANCE, shipped 1.0) lives upstream in
+// the attempt loop. Measured shipped prevalence with the stamp: ~2.4-3.2% of
+// tier>=2 maps carry a carved alcove (bands in the Task 6 report fix-round
+// section). The "<= 1 per map" budget is structural (one pick), and
+// candidate preference scoring still differentiates seeds by SITE PRESENCE.
+const ALCOVE_TIER_MIN = 2;
+const ALCOVE_H_MIN = 3;   // shaft rows (interior above the shaft floor = h-1)
+const ALCOVE_H_MAX = 5;
+const ALCOVE_FORBID_MARGIN = 2;
+const SECRET_COIN_MIN = 1;
+const SECRET_COIN_MAX = 3;
+
+// R8 crag stamp (controller ruling, Task 6 follow-up): the horizontal grammar
+// is a pure heightmap (surface steps 0/±1 between solid columns), so NO
+// natural site satisfies alcoveGeometryValid — measured 0 sites / 1,017,120
+// windows over 1200 tier>=2 maps. The stamp therefore manufactures the host
+// INSIDE generateLevel's consumer chain BEFORE computeReachable/routeFair run,
+// so every validator adjudicates the FINAL grid (validated == shipped holds;
+// this is what rules out any post-validation stamp). Stream position: called
+// once per generation attempt immediately after generateLevel returns (post
+// mirror, post markers); with the fix-round hash protocol it draws NOTHING
+// from the main stream ever (decision/site-pick/fork-seed come from cragHash;
+// stamped validation runs on a fork and a failed stamp is UNDONE), so maps
+// that do not ship a stamp replay BASE bit-for-bit — terrain, floats AND
+// attempt counts. Deck discipline follows the pads/crates precedent read
+// backwards: deck PRESENCE and gap geometry are decided inside generateLevel
+// upstream of the trial, so they are untouched; downstream floats (deck
+// speed/phase, coin placement, pad/crate picks) draw from the fork on
+// STAMPED maps only — documented intentional delta.
+// SHIPPED VALUE (fix round 1 frontier under the fork/undo protocol,
+// L10..60 x 20 numeric seeds/tree + disjoint 2040-seed exhaustion band,
+// /tmp/opencode/t6-alcove): chance {0.25, 0.55, 1.0} all satisfy mean
+// attempts <= BASE+1.0 and ms < 15% with ZERO exhaustion; 1.0 maximizes
+// prevalence (~3% of tier>=2 maps ship a carved alcove — vertical habitat).
+// Stamped maps INTENTIONALLY differ from BASE; unstamped maps are verified
+// byte-identical on the unstamped subset (report fix-round gate (a)).
+const CRAG_CHANCE = 1;
+
+// Hash for the stamp's decision/site-pick/fork-seed (fix round 1): a pure
+// avalanche mix, NOT the level rng — the stamp must never consume main-
+// stream draws so unstamped maps replay BASE bit-for-bit.
+function cragHash(v) {
+    v ^= v >>> 16;
+    v = Math.imul(v, 0x7feb352d);
+    v ^= v >>> 15;
+    v = Math.imul(v, 0x846ca68b);
+    return (v ^ (v >>> 16)) >>> 0;
+}
+
+/**
+ * R5 climbability predicate — PURE geometry on the pre-carve grid. A site is
+ * { col, entryRow, h, side }: shaft columns col..col+1 rise h rows ending at
+ * the shaft-floor row entryRow INSIDE solid massif; side (-1 | +1) names the
+ * direction of the terrace, whose cell (col+side*2, entryRow) is free and
+ * floored; the tunnel cell (col+side, entryRow) is solid rock to cut. The
+ * flank wall on the terrace side stays solid for every shaft row ABOVE the
+ * tunnel; the far wall spans the full shaft height; the cap row closes the
+ * top. Exported for tests; reachability/clearance live in the finder.
+ */
+export function alcoveGeometryValid(tiles, width, height, site) {
+    const { col: c, entryRow: e, h, side } = site;
+    if (!Number.isInteger(h) || h < ALCOVE_H_MIN || h > ALCOVE_H_MAX) {
+        return false;
+    }
+    if (side !== -1 && side !== 1) return false;
+    const t = (r, x) =>
+        (r >= 0 && r < height && x >= 0 && x < width) ? tiles[r][x] : -1;
+    // Columns relative to the shaft (which occupies c and c+1): the tunnel
+    // cuts the flank NEAREST the terrace, the far wall is the opposite one.
+    const tunnelX = side === -1 ? c - 1 : c + 2;
+    const terraceX = side === -1 ? c - 2 : c + 3;
+    const flankX = side === -1 ? c + 2 : c - 1;
+    // Bounds: everything referenced must sit in-grid.
+    if (terraceX < 0 || terraceX > width - 1) return false;
+    if (flankX < 0 || flankX > width - 1) return false;
+    if (e - h < 0 || e + 1 > height - 1) return false;
+    // Terrace: free cell standing on solid ground (the existing surface).
+    if (t(e, terraceX) !== 0 || t(e + 1, terraceX) !== 1) return false;
+    // Tunnel mouth: solid rock to cut, solid floor beneath it.
+    if (t(e, tunnelX) !== 1 || t(e + 1, tunnelX) !== 1) return false;
+    // Shaft columns: solid massif from the shaft floor up through interior.
+    for (let r = e - h + 1; r <= e; r++) {
+        if (t(r, c) !== 1 || t(r, c + 1) !== 1) return false;
+    }
+    // Shaft floors stay rock under the flipped cells (newly standable).
+    if (t(e + 1, c) !== 1 || t(e + 1, c + 1) !== 1) return false;
+    // Terrace-side flank wall: solid for every shaft row ABOVE the tunnel.
+    for (let r = e - h + 1; r <= e - 1; r++) {
+        if (t(r, tunnelX) !== 1) return false;
+    }
+    // Far wall: solid over the FULL shaft height (first kick needs it at the
+    // bottom row).
+    for (let r = e - h + 1; r <= e; r++) {
+        if (t(r, flankX) !== 1) return false;
+    }
+    // Cap solid above both shaft columns.
+    if (t(e - h, c) !== 1 || t(e - h, c + 1) !== 1) return false;
+    return true;
+}
+
 export class Level {
     constructor(levelNumber, tileSize, seed) {
         this.levelNumber = levelNumber;
@@ -1631,12 +1794,13 @@ export class Level {
         let physRejects = 0;
         let gateEngaged = false;
         const REWIND_BUDGET = 4;
-        while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
-            // Terrain, spike tiles (type 2), and enemy markers (type 4) are
-            // all laid down before computeReachable runs, so the validation
-            // BFS sees the final geometry. If spikes wall off the map, no
-            // portal candidate survives and the retry regenerates.
-            this.tiles = this.generateLevel();
+        // One validation pass over the CURRENT grid (reachability BFS,
+        // portal pick, integrity + Phase-2 presence gates, physics route).
+        // Extracted verbatim from the loop body so the R8 stamp trial can
+        // run it twice (stamped, then rolled-back unstamped) without any
+        // semantic drift. Consumes this.rng exactly like the old inline
+        // code did; returns { valid, fair }.
+        const evaluateAttempt = () => {
             this.spawnTile = this.getSpawnTile();
             // Coin safe-hub record (see computeCoinSafeHub): every modelled
             // transition of THIS attempt's flood. The accepted attempt's
@@ -1661,7 +1825,7 @@ export class Level {
                 this.modelTransitions
             );
             this.portalTile = this.pickPortalTile();
-            valid = this.portalTile !== null && this.bridgeIntact() &&
+            let valid = this.portalTile !== null && this.bridgeIntact() &&
                 this.shaftIntact();
             // Patrol AI from level 5 onward is a product contract (README).
             // Jagged Phase-2 terrain can leave no legal marker site inside
@@ -1686,9 +1850,48 @@ export class Level {
                     (this.direction === 'vertical' ||
                         this.countTilesOfType(2) > 0);
             }
+            return { valid, fair: valid && this.routeFair() };
+        };
+        while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
+            // Terrain, spike tiles (type 2), and enemy markers (type 4) are
+            // all laid down before computeReachable runs, so the validation
+            // BFS sees the final geometry. If spikes wall off the map, no
+            // portal candidate survives and the retry regenerates.
+            this.tiles = this.generateLevel();
+            // R8: crag stamp runs BEFORE computeReachable so every validator
+            // below adjudicates the FINAL shipped grid (see the CRAG_ header).
+            // Stream discipline (fix round 1): the decision + site pick come
+            // from a DERIVED HASH (zero main-stream draws), the stamped
+            // validation chain runs on a FORKED rng, and a failed stamp is
+            // UNDONE before the unstamped chain re-runs on the untouched
+            // main stream. Consequences, all measured in the Task 6 report:
+            //  * maps that never ship a stamp replay BASE bit-for-bit
+            //    (same stream position, same acceptance decisions, same
+            //    attempt count);
+            //  * stamped maps INTENTIONALLY differ (terrain + downstream
+            //    floats draw from the fork);
+            //  * a failing stamp costs NO generation attempt (the unstamped
+            //    verdict for the same terrain still stands), so the stamp
+            //    cannot burn the retry budget.
+            const stampTrial = this._beginStampCrag(attempt);
+            const mainRng = this.rng;
+            if (stampTrial) this.rng = makeRng(stampTrial.forkSeed);
+            let outcome = evaluateAttempt();
+            if (stampTrial && !outcome.fair) {
+                this._undoStampCrag(stampTrial);
+                this.rng = mainRng;
+                outcome = evaluateAttempt();
+            } else if (stampTrial) {
+                this.cragSite = stampTrial.site;
+                this.cragFilled = stampTrial.filled;
+            } else {
+                this.cragSite = null;
+                this.cragFilled = null;
+            }
+            valid = outcome.valid;
             attempt++;
             if (valid) {
-                if (this.routeFair()) {
+                if (outcome.fair) {
                     fair = true; // shipped grid walks clean
                 } else {
                     valid = false;
@@ -1807,6 +2010,10 @@ export class Level {
         // Capability objects (M3 pads + crates): LAST consumer of this.rng,
         // pure placement over the accepted grid — see the constant header.
         this.placeCapabilityObjects();
+        // Secret alcoves (M4): the true last consumer of this.rng — see the
+        // alcove constant header for the stream-position and invariance
+        // contract.
+        this.placeAlcove();
     }
 
     // Standing tile per direction on the forced flat ground band: canonical
@@ -4261,6 +4468,294 @@ export class Level {
         return false;
     }
 
+    // ── M4 secret alcoves ───────────────────────────────────────────────────
+    // Uniform site pick in scan order (house discipline; no budget roll — see
+    // the constant header). An empty candidate list simply ships no alcove —
+    // the map is NEVER invalidated by carving (zero extra generation
+    // attempts, R6 economy rule), and every rng draw sits behind all other
+    // consumers.
+    /**
+     * R8 crag stamp — manufactures the ONE alcove host shape the pure-height
+     * grammar cannot produce (see CRAG_ header). FIX ROUND 1 protocol (no
+     * main-stream rng, ever):
+     *   1. enumerate legal host sites on the fresh grid (pure read);
+     *   2. decide + pick via HASH32(seedResolved, attempt ordinal) — zero
+     *      draws, so an un-fired or rolled-back stamp leaves the stream at
+     *      EXACTLY the position BASE would have it;
+     *   3. the caller validates the stamped grid on a FORKED rng
+     *      (forkSeed), then either keeps it (shipped stamped map, floats
+     *      draw from the fork — documented intentional delta) or calls
+     *      _undoStampCrag and re-validates the untouched unstamped grid on
+     *      the main stream (bit-for-bit BASE replay for every unstamped
+     *      map, including attempt counts).
+     * Fills only air/solid rock cells — spike (2) and marker (4) cells are
+     * never overwritten (a footprint touching one is rejected), and bridge
+     * corridors stay untouched.
+     */
+    _beginStampCrag(attempt) {
+        // Inert guard FIRST: at chance 0 nothing here may even enumerate —
+        // byte identity vs BASE must hold for EVERY map.
+        if (CRAG_CHANCE <= 0) return null;
+        // Measured habitat study (Task 6 + fix round 1, full data in the
+        // report): horizontal flat-ground massifs and void-gap islands fail
+        // the validators structurally (single-file corridors sealed by the
+        // predicate's full-height far wall); VERTICAL wide ledges are the
+        // viable habitat (multi-path ascents, >= 5-column flats on every
+        // sampled map), so the stamp targets vertical maps only.
+        if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN) return null;
+        if (this.direction !== 'vertical') return null;
+        const w = this.width, hgt = this.height, tiles = this.tiles;
+        const ground = new Array(w);
+        for (let x = 0; x < w; x++) {
+            let r = 0;
+            while (r < hgt && tiles[r][x] !== 1) r++;
+            ground[x] = r;
+        }
+        const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
+        const sites = [];
+        for (const side of [-1, 1]) {
+            for (let c = 2; c <= w - 3; c++) {
+                const tunnelX = side === -1 ? c - 1 : c + 2;
+                const terraceX = side === -1 ? c - 2 : c + 3;
+                const farX = side === -1 ? c + 2 : c - 1;
+                if (terraceX < 1 || terraceX > w - 2) continue;
+                const p = ground[c];
+                if (p >= hgt) continue;
+                if (ground[c + 1] !== p || ground[tunnelX] !== p ||
+                    ground[farX] !== p || ground[terraceX] !== p) continue;
+                const e = p - 1;                       // entry row
+                if (e < ALCOVE_H_MAX + 1) continue;    // cap headroom
+                for (let h = ALCOVE_H_MIN; h <= ALCOVE_H_MAX; h++) {
+                    let ok = true;
+                    for (let r = e - h; r <= e && ok; r++) {
+                        if (!fillable(r, c) || !fillable(r, c + 1)) ok = false;
+                    }
+                    for (let r = e - h + 1; r <= e && ok; r++) {
+                        if (!fillable(r, tunnelX) || !fillable(r, farX)) {
+                            ok = false;
+                        }
+                    }
+                    if (ok) sites.push({ col: c, entryRow: e, h, side });
+                }
+            }
+        }
+        if (sites.length === 0) return null;           // zero everything
+        const base = cragHash((this.seedResolved ^
+            Math.imul(attempt + 1, 0x9E3779B1)) >>> 0);
+        if (base / 0x100000000 >= CRAG_CHANCE) return null;
+        const site = sites[cragHash((base ^ sites.length ^
+            0xC0FFEE) >>> 0) % sites.length];
+        const { col: c, entryRow: e, h, side } = site;
+        const tunnelX = side === -1 ? c - 1 : c + 2;
+        const farX = side === -1 ? c + 2 : c - 1;
+        const saved = [];
+        for (let r = e - h; r <= e; r++) {
+            for (const x of [c, c + 1]) {
+                saved.push({ r, x, prev: tiles[r][x] });
+                tiles[r][x] = 1;
+            }
+        }
+        for (let r = e - h + 1; r <= e; r++) {
+            for (const x of [tunnelX, farX]) {
+                saved.push({ r, x, prev: tiles[r][x] });
+                tiles[r][x] = 1;
+            }
+        }
+        const filled = new Set(saved.map((s) => s.r * w + s.x));
+        return { site, saved, filled, forkSeed: cragHash((base ^ 0xF0DBAD) >>> 0) };
+    }
+
+    // Roll a failed stamp back exactly (every written cell restored to its
+    // prior value); the grid becomes bit-identical to the pre-trial state.
+    _undoStampCrag(trial) {
+        for (const s of trial.saved) this.tiles[s.r][s.x] = s.prev;
+    }
+
+    placeAlcove() {
+        this.alcove = null;
+        if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN) return;
+        // M-1 EXEMPTION + SAFETY PROOF (fix round 1, controller-mandated):
+        // a stamped host's new shelf ATTRACTS coin placement onto the cap —
+        // those coins' +/- margin proximity rects then veto the very site
+        // the stamp manufactured (measured: 45/45 validator survivors died
+        // here). We exempt EXACTLY the stamp-written cells (this.cragFilled)
+        // from the proximity test, and nothing else. Why that is safe:
+        //  1. _carveAlcove flips ONLY solid rock to air (tunnel cell + shaft
+        //     columns rows entry-h+1..entry); every hazard body (enemy/pad/
+        //     crate/deck band/spike/portal/spawn/coin) occupies a FREE cell
+        //     pre-carve, so no body can physically be inside a flipped cell.
+        //  2. No body loses support either: bodies standing on the stamped
+        //     surfaces rest on the CAP row (entry-h) or on ground at/below
+        //     the shaft floor row — carve never touches the cap row, and
+        //     nothing ever stood ON the shaft-floor pair pre-carve because
+        //     those cells were solid rock until the flip.
+        //  3. Non-exempt footprint cells (terrace column etc.) keep full
+        //     protection: a body sitting at the mouth APPROACH still vetoes.
+        // Property-pinned per shipped alcove (tests/unit/alcove_predicate
+        // .test.js sweep): no hazard body center lands in a carved cell;
+        // standable delta is pure addition (+2/-0 on verticals — headroom-
+        // aware BFS drops the tunnel cell, see m-1 note in ALCOVE header);
+        // secret coins stay base-BFS-unreachable; meetsPortalRequirement
+        // counts required (non-secret) coins only.
+        const forbidden = this._alcoveForbiddenCells();
+        const cands = this._findAlcoveCandidates(forbidden, this.cragSite);
+        if (cands.length === 0) return;
+        const site = cands[Math.floor(this.rng() * cands.length)];
+        this._carveAlcove(site);
+    }
+
+    /**
+     * Hazard zones an alcove footprint must stay out of: +/- ALCOVE_FORBID_
+     * MARGIN rects around every spike tile, the portal body column band
+     * (+1 row of approach above), each DEPLOYED patrol span on its own row,
+     * each placed pad cell, each crate channel cell, each coin body cell and
+     * the spawn neighbourhood. Conservative by design (over-ban costs one
+     * missed alcove, never a broken proof). Route cells deliberately absent
+     * — see the carve-invariance argument in the constant header.
+     */
+    _alcoveForbiddenCells() {
+        const w = this.width, h = this.height;
+        const m = ALCOVE_FORBID_MARGIN;
+        const bad = new Set();
+        const addRect = (x0, y0, x1, y1) => {
+            for (let y = Math.max(0, y0); y <= Math.min(h - 1, y1); y++) {
+                for (let x = Math.max(0, x0); x <= Math.min(w - 1, x1); x++) {
+                    bad.add(y * w + x);
+                }
+            }
+        };
+        for (let r = 0; r < h; r++) {
+            for (let c = 0; c < w; c++) {
+                if (this.tiles[r][c] === 2) addRect(c - m, r - m, c + m, r + m);
+            }
+        }
+        if (this.portalTile) {
+            // Portal body spans its cell plus half a row up (32x48 anchor):
+            // ban the union expanded by the margin.
+            const p = this.portalTile;
+            addRect(p.x - m, p.y - m - 1, p.x + m, p.y + m);
+        }
+        const T = this.tileSize;
+        for (const e of this.enemyManager.enemies) {
+            const row = Math.floor(e.y / T);
+            const c0 = Math.floor(e.minX / T);
+            const c1 = Math.floor((e.maxX - 1) / T);
+            addRect(c0 - m, row - m, c1 + m, row + m);
+        }
+        for (const pad of this.pads) {
+            addRect(pad.col - m, pad.row - m, pad.col + m, pad.row + m);
+        }
+        for (const crate of this.crates) {
+            addRect(crate.channelLeft - m, crate.row - m,
+                crate.channelRight + m, crate.row + m);
+        }
+        for (const coin of this.coins) {
+            const cx = Math.floor((coin.x + coin.width / 2) / T);
+            const cy = Math.floor((coin.y + coin.height / 2) / T);
+            addRect(cx - m, cy - m, cx + m, cy + m);
+        }
+        addRect(this.spawnTile.x - 2, this.spawnTile.y - 2,
+            this.spawnTile.x + 2, this.spawnTile.y + 2);
+        return bad;
+    }
+
+    // Candidate enumeration in deterministic scan order (row, col, height,
+    // side). The TERRACE cell must be base-reachable (R5: the mouth opens
+    // onto ground the player already stands on); geometry via the exported
+    // predicate; footprint (terrace through far wall, cap through shaft
+    // floor) must miss every hazard zone — except, for the candidate that IS
+    // the stamped host (`stamp` = {site, cells}), hits landing on stamp-written
+    // cells (see placeAlcove SAFETY PROOF; the exemption is bound to the
+    // stamped geometry so no OTHER candidate — e.g. a taller co-located shaft
+    // whose carve would flip the cap under a shelf coin — inherits it).
+    _findAlcoveCandidates(forbidden, stamp = null) {
+        const out = [];
+        const w = this.width, hgt = this.height;
+        const key = (x, y) => y * w + x;
+        for (let e = 1; e <= hgt - 2; e++) {
+            for (let c = 1; c <= w - 3; c++) {
+                for (const side of [-1, 1]) {
+                    const terraceX = side === -1 ? c - 2 : c + 3;
+                    if (terraceX < 0 || terraceX > w - 1) continue;
+                    if (!this.reachableTiles.has(key(terraceX, e))) continue;
+                    for (let hh = ALCOVE_H_MIN; hh <= ALCOVE_H_MAX; hh++) {
+                        const site = { col: c, entryRow: e, h: hh, side };
+                        if (!alcoveGeometryValid(this.tiles, w, hgt, site)) continue;
+                        // M-1 exemption (see placeAlcove SAFETY PROOF): the
+                        // candidate that IS the stamped host skips the hazard
+                        // proximity rects over its own footprint. Bound to
+                        // the EXACT stamped geometry (col, entryRow, h, side)
+                        // so no other candidate inherits it.
+                        if (stamp !== null && stamp.col === c &&
+                            stamp.entryRow === e && stamp.h === hh &&
+                            stamp.side === side) {
+                            out.push(site);
+                            continue;
+                        }
+                        let ok = true;
+                        // Footprint rect: far wall .. terrace, cap .. shaft floor.
+                        const fx0 = side === -1 ? c - 2 : c - 1;
+                        const fx1 = side === -1 ? c + 2 : c + 3;
+                        for (let r = e - hh; r <= e && ok; r++) {
+                            for (let x = fx0; x <= fx1 && ok; x++) {
+                                if (forbidden.has(key(x, r))) ok = false;
+                            }
+                        }
+                        if (ok) out.push(site);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    // Execute the carve: flip the tunnel cell plus the shaft columns from
+    // the shaft floor up through the interior (all solid rock pre-carve),
+    // re-derive the platform colliders from the carved grid (extractPlatforms
+    // is a pure scan — without this the chimney would ship ghost-rock AABBs
+    // exactly where the shaft now is), then drop 1..3 secret coins into
+    // distinct INTERIOR cells (rows above the shaft floor — the floor pair
+    // and tunnel are reachable dead-end cells, secrets live out of the base
+    // BFS's standable-only view). rng order: k roll, then the house Fisher-
+    // Yates over the interior pool.
+    _carveAlcove(site) {
+        const { col: c, entryRow: e, h, side } = site;
+        const tunnelX = side === -1 ? c - 1 : c + 2;
+        const flipped = [{ x: tunnelX, r: e }];
+        for (let r = e - h + 1; r <= e; r++) {
+            for (const x of [c, c + 1]) {
+                this.tiles[r][x] = 0;
+                flipped.push({ x, r });
+            }
+        }
+        this.tiles[e][tunnelX] = 0;
+        this.platforms = this.extractPlatforms();
+        const interior = flipped.filter((f) => f.r < e);
+        const k = SECRET_COIN_MIN +
+            Math.floor(this.rng() * (SECRET_COIN_MAX - SECRET_COIN_MIN + 1));
+        shuffle(interior, this.rng);
+        for (let i = 0; i < Math.min(k, interior.length); i++) {
+            this.coins.push({
+                x: interior[i].x * this.tileSize,
+                y: interior[i].r * this.tileSize,
+                width: 16,
+                height: 16,
+                collected: false,
+                secret: true
+            });
+        }
+        this.alcove = {
+            col: c,
+            entryRow: e,
+            topRow: e - h + 1,
+            h,
+            side,
+            tunnel: { x: tunnelX, r: e },
+            flipped,
+            coins: Math.min(k, interior.length)
+        };
+    }
+
     // Swept-volume legality for one gap candidate [a..b] with flush flank
     // top row S (deck occupies rows S..S+1 across the gap for its whole
     // shuttle). Returns false on any contact with terrain, teeth, patrols,
@@ -4431,6 +4926,12 @@ export class Level {
 
     getCrates() {
         return this.crates;
+    }
+
+    // M4 secret alcove descriptor ({col, entryRow, topRow, h, flipped,
+    // coins}) or null when this map ships none. See the constant header.
+    getAlcove() {
+        return this.alcove;
     }
 
     getCoins() {

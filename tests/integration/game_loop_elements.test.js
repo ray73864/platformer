@@ -499,20 +499,31 @@ test("a single exhausted construction self-heals via the inline re-attempt", () 
         calls++;
         return calls <= 200 ? null : original.apply(this, args);
     };
+    // startGame() rolls runSeed from Math.random; under R7 lazy scan the
+    // post-exhaustion build count depends on that seed's candidate scores
+    // (a bar-met candidate ships immediately, a sub-bar one keeps the scan
+    // alive within the LAZY_SCAN_EXTRA cap). Pin the roll so this asserts a
+    // deterministic self-heal path instead of a coin flip between counts.
+    const originalRandom = Math.random;
+    Math.random = () => 0.5; // -> runSeed 0x7FFFFFFF
     try {
         expect(game.startGame()).toBe(true);
-        // 2026-11-05 randomness wave: seedFor now walks the anti-repeat
-        // candidate chain, so the exhausted first construction (200 calls) is
-        // followed by CHAIN CANDIDATE 1 succeeding on its first attempt
-        // (call 201) and the caller rebuilding that stored seed for
-        // publication (call 202). Same self-heal contract as the old inline
-        // re-attempt — one failure absorbed silently, no message — just one
-        // extra pickPortalTile through the stored-seed path.
-        expect(calls).toBe(202);
+        // 2026-11-05 randomness wave + 2026-11-09 R7 lazy scan: seedFor
+        // walks the anti-repeat chain sequentially and ships the FIRST
+        // guard-passer meeting the INTERESTING_OK bar. The exhausted first
+        // construction (200 calls) is followed by chain candidate 1 (call
+        // 201, score 0.471 — SUB-BAR, so the scan stays alive within the
+        // LAZY_SCAN_EXTRA cap), candidate 2 (call 202, score 0.795 — meets
+        // the bar, ships immediately), and the caller's rebuild of that
+        // stored seed for publication (call 203). Same self-heal contract
+        // as BASE — one failure absorbed silently, no message — plus the
+        // lazy continuation is exercised ON the self-heal path.
+        expect(calls).toBe(203);
         expect(game.state).toBe(STATE.PLAYING);
         // Self-healed: no error message reaches the player.
         expect(document.getElementById('error-message').classList.contains('hidden')).toBe(true);
     } finally {
+        Math.random = originalRandom;
         console.error = originalConsole;
         Level.prototype.pickPortalTile = original;
     }
