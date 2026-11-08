@@ -557,24 +557,28 @@ test("coin glints fire on a 3 s duty cycle, staggered so coins never blink toget
 
 test("flowers respect the shelf budget: <=3 per contiguous run, >=4 cells apart", () => {
     const sprites = new Sprites();
+    // Wide synthetic shelves (96 cells) so ~20% growth rolls regularly
+    // generate >3 flower candidates per run — the budget genuinely engages
+    // (mutation-checked: disabling the guard produces cap AND spacing
+    // violations across this exact sweep; the old 40-cell fixtures did not).
     const wideShelf = (n) => {
-        const width = 40, height = 10;
+        const width = 96, height = 10;
         const tiles = Array(height).fill(null).map(() => Array(width).fill(0));
         for (let tx = 0; tx < width; tx++) { tiles[8][tx] = 1; tiles[9][tx] = 1; }
         return { levelNumber: n, width, height, tiles, tileSize: 32 };
     };
-    let sawFlower = 0;
-    for (const n of [1, 4, 7, 2, 5, 8]) {
+    let atCap = 0;
+    for (let n = 1; n <= 60; n++) {
         const flowers = sprites._ensureDecor(wideShelf(n))
             .filter(d => d.kind === 'flower')
             .map(d => d.tx).sort((a, b) => a - b);
-        sawFlower += flowers.length > 0 ? 1 : 0;
         expect(flowers.length, `L${n}: shelf flower cap`).toBeLessThanOrEqual(3);
+        if (flowers.length === 3) atCap++;
         for (let i = 1; i < flowers.length; i++) {
             expect(flowers[i] - flowers[i - 1], `L${n}: flower spacing`)
                 .toBeGreaterThanOrEqual(4);
         }
     }
-    // Not just vacuously true: the budget actually engaged on real rolls.
-    expect(sawFlower).toBeGreaterThan(0);
+    // Non-vacuity: the cap actually bound real rolls (measured 26/60).
+    expect(atCap).toBeGreaterThanOrEqual(10);
 });
