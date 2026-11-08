@@ -221,23 +221,23 @@ test("collected coins add 10 points each to the running total across levels", ()
     expect(game.score).toBe(2 * COIN_POINTS);
 
     // Advance to level 2 through the real LEVEL_COMPLETE path. The flawless
-    // L1 clear pays its bonus (clearBonusFor(0, 1) = 100) into the carried
-    // total — adapted 2026-11-04 for the score-economy ruling; the point of
-    // this test (coin accumulation, never overwrite) is untouched.
+    // L1 clear pays its bonus (clearBonusFor(0, 1) = 100) plus the M5
+    // no-damage bonus (+50) into the carried total — adapted for Task 7; the
+    // point of this test (coin accumulation, never overwrite) is untouched.
     advanceToNextLevel(game);
     expect(game.currentLevel).toBe(2);
-    expect(game.score).toBe(2 * COIN_POINTS + 100);
-    expect(game.levelStartScore).toBe(2 * COIN_POINTS + 100);
+    expect(game.score).toBe(2 * COIN_POINTS + 150);
+    expect(game.levelStartScore).toBe(2 * COIN_POINTS + 150);
 
     // Level 2 collections accumulate onto the carried total. The fresh fake
     // reports its OWN score as 3 * COIN_POINTS = 30; if the loop assigned
     // per-level getScore() over the running total, score would read 30 here
-    // instead of 150.
+    // instead of 180.
     clearGeneratedThreats(game);
     game.collectibles = coinsAtPlayer(game, 3);
     game.update(DT);
     expect(game.collectibles.getScore()).toBe(3 * COIN_POINTS);
-    expect(game.score).toBe(2 * COIN_POINTS + 100 + 3 * COIN_POINTS);
+    expect(game.score).toBe(2 * COIN_POINTS + 150 + 3 * COIN_POINTS);
 });
 
 test("retrying keeps banked coins but costs DEATH_SCORE_PENALTY_RATE of score", () => {
@@ -245,28 +245,28 @@ test("retrying keeps banked coins but costs DEATH_SCORE_PENALTY_RATE of score", 
     clearGeneratedThreats(game);
 
     // Bank 10 points on level 1, then complete it: the flawless clear bonus
-    // (+100, clearBonusFor(0, 1)) rides into level 2's carried total, so it
-    // starts at 110. (Adapted 2026-11-04 for the score-economy ruling.)
+    // (+100, clearBonusFor(0, 1)) plus the M5 no-damage bonus (+50) ride into
+    // level 2's carried total, so it starts at 160. (Adapted for Task 7.)
     game.collectibles = coinsAtPlayer(game, 1);
     game.update(DT);
     expect(game.score).toBe(COIN_POINTS);
     advanceToNextLevel(game);
-    expect(game.levelStartScore).toBe(COIN_POINTS + 100);
+    expect(game.levelStartScore).toBe(COIN_POINTS + 150);
 
-    // Farm 2 more coins mid-level-2, then die: 110 + 20 = 130.
+    // Farm 2 more coins mid-level-2, then die: 160 + 20 = 180.
     clearGeneratedThreats(game);
     game.collectibles = coinsAtPlayer(game, 2);
     game.update(DT);
-    expect(game.score).toBe(130);
+    expect(game.score).toBe(180);
 
     game.player.y = game.level.height * game.level.tileSize + 200;
     game.update(DT);
     expect(game.state).toBe(STATE.GAME_OVER);
     // Owner ruling (cause and effect): the death itself already charged the
     // penalty — before any retry click.
-    const penalty = Math.floor(130 * DEATH_SCORE_PENALTY_RATE);
-    expect(penalty).toBe(32); // floor(32.5): whole points, rounded down
-    expect(game.score).toBe(130 - penalty);
+    const penalty = Math.floor(180 * DEATH_SCORE_PENALTY_RATE);
+    expect(penalty).toBe(45); // floor(45): whole points, rounded down
+    expect(game.score).toBe(180 - penalty);
 
     document.getElementById('retry-btn').click();
 
@@ -276,8 +276,8 @@ test("retrying keeps banked coins but costs DEATH_SCORE_PENALTY_RATE of score", 
     // not re-charge the penalty. Element systems are rewired to the rebuilt
     // level instance.
     expect(game.state).toBe(STATE.PLAYING);
-    expect(game.score).toBe(98);
-    expect(game.levelStartScore).toBe(98);
+    expect(game.score).toBe(135);
+    expect(game.levelStartScore).toBe(135);
     expect(game.collectibles).toBe(game.level.getCollectibles());
     expect(game.enemyManager).toBe(game.level.getEnemyManager());
     expect(game.hazards).toBe(game.level.getHazards());
@@ -673,8 +673,9 @@ test("two deaths compound on the reduced score; completion pays the reduced clea
     game.update(DT);
     expect(game.state).toBe(STATE.LEVEL_COMPLETE);
     expect(game.score).toBe(before + 40);
+    // M5 fields ride every breakdown; the reduced clear carries no-damage 0.
     expect(game.lastClearBreakdown).toEqual({
-        coins: 0, combat: 0, clearBonus: 40, enemiesBested: 0,
-        deaths: 2, flawless: false
+        coins: 0, combat: 0, clearBonus: 40, noDamageBonus: 0, enemiesBested: 0,
+        deaths: 2, flawless: false, secretsFound: 0, secretsTotal: 0
     });
 });

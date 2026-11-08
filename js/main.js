@@ -4,7 +4,7 @@ import { Player, wallContactSide } from './player.js';
 import { Level } from './level.js';
 import { Camera } from './camera.js';
 import { UI } from './ui.js';
-import { COIN_POINTS } from './collectibles.js';
+import { COIN_POINTS, SECRET_COIN_SCORE } from './collectibles.js';
 import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
@@ -224,6 +224,20 @@ export function deathScorePenalty(score) {
 // the backbone income (every level demands ALL of them through the portal
 // gate), so every award below is justified as a multiple of that coin.
 //
+// Full payout table (updated for M5 style rewards, Task 7):
+//   normal coin              +10  COIN_POINTS          (popup '+N' gold)
+//   secret coin              +25  SECRET_COIN_SCORE    (popup 'SECRET +N' grass)
+//   walker stomp             +25  STOMP_POINTS         (popup '+N STOMP!' purple)
+//   charger/bombardier kill  +40  CHARGER_STOMP_POINTS
+//   dodge past               +5   DODGE_POINTS         (popup '+5' cream)
+//   stomp chain (>=2 air)    +30  STOMP_CHAIN_BONUS    (popup '+30 CHAIN!' amber)
+//   clear, any deaths        floor((100+10*tier)*0.4)  CLEAR_BONUS_REDUCED_RATE
+//   clear, flawless          100 + 10*tier             CLEAR_BONUS_BASE/STEP
+//   clear, no damage         +50  NO_DAMAGE_CLEAR_BONUS (same gate as flawless)
+// Death cut unchanged: each death floors away DEATH_SCORE_PENALTY_RATE (25%)
+// of the RUNNING TOTAL — per-total, not per-component — so every row above
+// (secrets and chain included) shrinks identically once banked.
+//
 // Flawless clear bonus base: 10 coins' worth. Measured against generation
 // (25-seed survey): extractCoins TARGETS min(5 + level, 30) but reachability/
 // patrol/spike exclusions place ~6 coins at L1 and ~13 at L60, so real coin
@@ -270,6 +284,33 @@ export const DODGE_POINTS = 5;
 // tracker WITHOUT paying, so a seam drop across an enemy's centre line can
 // never mint free points.
 const DODGE_MAX_CROSS_STEP = 40;
+
+// --- M5 style rewards (SPEC §M5, capability program Task 7) ------------------
+// No-damage clear bonus: +50 on top of clearBonusFor whenever this level's
+// attempt series took ZERO deaths. Damage-model finding (Task 7): every
+// deadly contact in this game — enemy body, spiny back, cannonball, spike,
+// pit — is INSTANT DEATH routed through handleGameOver, which is also the
+// only writer of deathsOnCurrentLevel. So "no damage taken" has exactly one
+// real meaning: cleared without dying on any attempt of this level (it also
+// covers timeout deaths, which share the handler — documented honestly).
+// The condition therefore co-fires 1:1 with clearBonusFor's flawless tier;
+// it is shipped as its own component per spec so a future HP model can
+// decouple them without touching the payout site.
+export const NO_DAMAGE_CLEAR_BONUS = 50;
+// Pure guard mirroring clearBonusFor's conservative style: only the exact
+// integer 0 counts as no-damage; corrupt state never mints the bonus.
+export function noDamageBonusFor(deathsOnThisLevel) {
+    return deathsOnThisLevel === 0 ? NO_DAMAGE_CLEAR_BONUS : 0;
+}
+// Stomp-chain bonus: two or more stomps WITHOUT touching ground in between
+// pays a flat +30 once per chain (not escalating, not per extra step — owner
+// spec pins it flat). The chain counter lives on Game (stompChain), counts
+// kills from resolvePlayerContact's per-tick list (a simultaneous multi-kill
+// frame counts every kill in it), and resets whenever the player is grounded.
+// A chain that reaches 3+ pays exactly one bonus (_chainBonusPaid latch,
+// cleared with the counter on landing).
+export const STOMP_CHAIN_BONUS = 30;
+export const STOMP_CHAIN_MIN = 2;
 
 // Pure clear-bonus math, exported for unit tests (guard style mirrors
 // deathScorePenalty: never throws, always returns whole points). Full bonus
@@ -474,8 +515,22 @@ export class Game {
         this.levelCombatPoints = 0;
         this.levelEnemiesKilled = 0;
         this.levelEnemiesDodged = 0;
+        // M5 stomp-chain tracker: consecutive enemy kills accumulated while
+        // airborne; reset to 0 (with the paid latch) on any grounded frame
+        // and on every publishLevel (a retry starts fresh at spawn). Not a
+        // per-level economy accumulator — it must NOT survive a retry, so it
+        // deliberately lives outside resetLevelEconomyTrackers().
+        this.stompChain = 0;
+        this._chainBonusPaid = false;
+        // M5 run-stats: secrets banked through the loop across the WHOLE run
+        // (session-only by design — nothing here touches localStorage; future
+        // Wave C screens read it live). Incremented only by the scoring loop,
+        // never by seam collectCoin() calls, mirroring levelCoinPoints'
+        // "loop-scored only" doctrine. Reset on run start.
+        this.runSecretsFound = 0;
         // Breakdown handed to the LEVEL_COMPLETE overlay by handleWin
-        // {coins, combat, clearBonus, enemiesBested, deaths, flawless}.
+        // {coins, combat, clearBonus, noDamageBonus, enemiesBested, deaths,
+        //  flawless, secretsFound, secretsTotal}.
         this.lastClearBreakdown = null;
         this.currentLevel = 1;
         this.lastTime = 0;
@@ -871,6 +926,8 @@ export class Game {
         // A brand-new run starts with a clean economy sheet: no deaths, no
         // per-level accumulators carried over from the previous run.
         this.resetLevelEconomyTrackers();
+        // M5 run-stats are session-scoped to THIS run (never persisted).
+        this.runSecretsFound = 0;
         // A brand-new run always gets a fresh clock; whether it ticks at all
         // is decided per level by publishLevel's difficulty-tier gate.
         this.timer.timeRemaining = this.timer.baseTime;
@@ -1067,6 +1124,10 @@ export class Game {
         this._portalUnlocked = this.collectibles.meetsPortalRequirement();
         // Snapshot before any of this level's coins can be collected.
         this.levelStartScore = this.score;
+        // M5: a fresh attempt (first play, retry, or loop recovery) starts
+        // with no airborne stomp history — the chain is earned on THIS attempt.
+        this.stompChain = 0;
+        this._chainBonusPaid = false;
         this.levelCompleteTimer = 0;
         // Spec §Error Handling (level transition): the run clock carries over
         // untouched, but verify the carried value survived intact; an invalid
@@ -1163,14 +1224,29 @@ export class Game {
         // (the death penalty stays a handleGameOver-exclusive cost); this is
         // the reward half of cause-and-effect.
         const clearBonus = clearBonusFor(this.deathsOnCurrentLevel, this.currentLevel);
-        this.score = Math.min(this.score + clearBonus, Number.MAX_SAFE_INTEGER);
+        // M5 no-damage clear bonus: gated on the SAME zero-death predicate as
+        // the flawless tier because every hit in this game IS a death (see
+        // NO_DAMAGE_CLEAR_BONUS). Its own component so the overlay can name
+        // it and a future HP model can split the gates.
+        const noDamageBonus = noDamageBonusFor(this.deathsOnCurrentLevel);
+        this.score = Math.min(this.score + clearBonus + noDamageBonus,
+            Number.MAX_SAFE_INTEGER);
+        // M5 run-stats for the LEVEL_COMPLETE line: secrets banked on this
+        // level's attempt series over the secrets it shipped. Collected flags
+        // transfer across retries (restartCurrentLevel), so an alcove cleared
+        // before a death still counts here — same "earned on this level" rule
+        // as levelCoinPoints.
+        const secretCoins = this.collectibles.getCoins().filter(c => c.secret);
         this.lastClearBreakdown = {
             coins: this.levelCoinPoints,
             combat: this.levelCombatPoints,
             clearBonus,
+            noDamageBonus,
             enemiesBested: this.levelEnemiesKilled + this.levelEnemiesDodged,
             deaths: this.deathsOnCurrentLevel,
-            flawless: this.deathsOnCurrentLevel === 0
+            flawless: this.deathsOnCurrentLevel === 0,
+            secretsFound: secretCoins.filter(c => c.collected).length,
+            secretsTotal: secretCoins.length
         };
         this.setState(STATE.LEVEL_COMPLETE);
         // Win sting over the top of the still-running music: the transition
@@ -1610,6 +1686,14 @@ export class Game {
             // Chargers need the player reference for their trigger zone
             // (walkers/spinies ignore it); see enemies.js header.
             this.enemyManager.updateAll(dt, this.player);
+            // M5 stomp-chain bookkeeping (see STOMP_CHAIN_BONUS): any grounded
+            // frame clears the airborne kill streak BEFORE this tick's contact
+            // can extend it, so a chain only ever links kills that happened
+            // without touching ground in between.
+            if (this.player.grounded) {
+                this.stompChain = 0;
+                this._chainBonusPaid = false;
+            }
             // Stomp-aware enemy contact: falling feet-first from above
             // squashes the enemy (with a bounce and a poof); any other
             // contact is fatal.
@@ -1657,6 +1741,27 @@ export class Game {
                         mark.x + mark.width / 2, mark.y);
                     spawnPopup(this.popups, sx, sy,
                         `+${stompPoints} STOMP!`, '#c96bf5', true);
+                }
+                // M5 stomp-chain bonus: every kill this tick extends the
+                // airborne streak (a simultaneous multi-kill frame counts all
+                // of its kills). The flat +30 pays ONCE when the streak first
+                // reaches STOMP_CHAIN_MIN; the latch keeps a 3+ chain on the
+                // same flat payout until landing clears everything. Popup at
+                // the hero (the enemy-position STOMP popup may share the
+                // frame — different text, so the pool dedupe never eats it).
+                this.stompChain += contact.stomped;
+                if (this.stompChain >= STOMP_CHAIN_MIN && !this._chainBonusPaid) {
+                    this._chainBonusPaid = true;
+                    this.levelCombatPoints += STOMP_CHAIN_BONUS;
+                    this.score = Math.min(this.score + STOMP_CHAIN_BONUS,
+                        Number.MAX_SAFE_INTEGER);
+                    if (FX.popups) {
+                        const [cx, cy] = this._worldToScreen(
+                            this.player.x + this.player.width / 2,
+                            this.player.y - 14);
+                        spawnPopup(this.popups, cx, cy,
+                            `+${STOMP_CHAIN_BONUS} CHAIN!`, '#f4a460', true);
+                    }
                 }
             }
             if (contact.deadly) {
@@ -1744,9 +1849,15 @@ export class Game {
             // levels; the per-collectibles getScore() is this level's score
             // only and must never be assigned over the total. Capped at
             // MAX_SAFE_INTEGER (spec §Error Handling) so no accumulation
-            // length can wrap the score into negative territory.
-            const collectedCoins = this.collectibles.checkCollection(this.player);
-            if (collectedCoins > 0) {
+            // length can wrap the score into negative territory. M5: the
+            // detailed pass splits SECRET coins so they pay their premium in
+            // the same tick (portal gate and HUD stay REQUIRED-only — T6
+            // semantics untouched).
+            const pickups = this.collectibles.checkCollectionDetailed(this.player);
+            if (pickups.count > 0) {
+                const normalCount = pickups.count - pickups.secretCount;
+                const coinPoints = normalCount * COIN_POINTS +
+                    pickups.secretCount * SECRET_COIN_SCORE;
                 audio.playSfx('coin');
                 // Sparkle at the player: pickups read as events, not silent
                 // counter bumps. The burst inherits the coin sheet's gold.
@@ -1755,29 +1866,48 @@ export class Game {
                     this.player.y + this.player.height / 2,
                     COIN_BURST_COLOR, 12);
                 this.score = Math.min(
-                    this.score + collectedCoins * COIN_POINTS,
+                    this.score + coinPoints,
                     Number.MAX_SAFE_INTEGER
                 );
                 // Per-level coin tracker for the LEVEL_COMPLETE breakdown:
                 // only loop-scored pickups land here, matching exactly what
                 // entered this.score (seam-collectCoin() calls never scored
                 // either side). Coins banked before a death stay counted —
-                // they were earned on THIS level's attempt series.
-                this.levelCoinPoints += collectedCoins * COIN_POINTS;
+                // they were earned on THIS level's attempt series. The line
+                // carries secret premiums too: it mirrors the coin income of
+                // the clear, tier by tier.
+                this.levelCoinPoints += coinPoints;
+                // M5 run-stats (session-only): every secret banked through
+                // the loop counts once ever — collected flags make repeat
+                // pickups impossible, and retry transfers via seam calls
+                // deliberately do NOT re-count.
+                this.runSecretsFound += pickups.secretCount;
                 // Spec: +2 s per coin, unconditionally. The run clock is one
                 // object across the whole game, so coins banked before the
                 // timer tier (level 5) are already on it when it starts
                 // ticking — no separate pending-bonus ledger needed.
-                for (let i = 0; i < collectedCoins; i++) this.timer.addCoinBonus();
+                for (let i = 0; i < pickups.count; i++) this.timer.addCoinBonus();
                 this._updateCoinHud();
                 // Wave B: one '+N' popup per pickup event (multi-coin frames
                 // pay a single aggregated number above the hero — chip gold).
-                if (FX.popups) {
+                if (FX.popups && normalCount > 0) {
                     const [sx, sy] = this._worldToScreen(
                         this.player.x + this.player.width / 2,
                         this.player.y + 4);
                     spawnPopup(this.popups, sx, sy,
-                        `+${collectedCoins * COIN_POINTS}`, '#ffd23f');
+                        `+${normalCount * COIN_POINTS}`, '#ffd23f');
+                }
+                // M5: the secret premium announces itself — grass-green
+                // (palette --grass, unmistakable against the coin gold and
+                // ink outline) one tier above the hero so a mixed frame shows
+                // both lines. Same pool, same FX.popups gate as its siblings.
+                if (FX.popups && pickups.secretCount > 0) {
+                    const [sx, sy] = this._worldToScreen(
+                        this.player.x + this.player.width / 2,
+                        this.player.y - 12);
+                    spawnPopup(this.popups, sx, sy,
+                        `SECRET +${pickups.secretCount * SECRET_COIN_SCORE}`,
+                        '#3ecf6a', true);
                 }
             }
 

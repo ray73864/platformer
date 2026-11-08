@@ -83,9 +83,10 @@ function finishTransition(game) {
 
 // A run parked at GAME_COMPLETE with score 250 banked before the final win.
 // The flawless FINAL_LEVEL clear adds its bonus (clearBonusFor(0, 100) =
-// 100 base + 10 × five tier boundaries = 150), so the finished run totals
-// 400 — literal here because every downstream assertion compares against it.
-const FINAL_RUN_SCORE = 400;
+// 100 base + 10 × five tier boundaries = 150) plus the M5 no-damage bonus
+// (+50), so the finished run totals 450 — literal here because every
+// downstream assertion compares against it.
+const FINAL_RUN_SCORE = 450;
 
 function reachGameComplete() {
     const game = startPlaying();

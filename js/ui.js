@@ -257,9 +257,14 @@ export class UI {
     //   flawless → "Flawless clear +100"
     //   issues   → "Cleared after 2 deaths +40"
     //   combat   → "Enemies bested +N" only when N > 0.
+    // M5 additions ride the same node conventions (aria-live polite, hidden
+    // with nothing to report):
+    //   no damage → "No-damage bonus +50" (zero-death clears only)
+    //   secrets   → "Secrets: 1/2" on levels that shipped alcove coins.
     setLevelCompleteBreakdown(breakdown) {
         const { clearBonus = 0, enemiesBested = 0, deaths = 0,
-            flawless = false } = breakdown || {};
+            flawless = false, noDamageBonus = 0, secretsFound = 0,
+            secretsTotal = 0 } = breakdown || {};
         const bonusEl = document.getElementById('clear-bonus');
         if (bonusEl) {
             const text = clearBonus > 0
@@ -274,6 +279,20 @@ export class UI {
         if (bestedEl) {
             bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : '';
             bestedEl.hidden = !(enemiesBested > 0);
+        }
+        const noDamageEl = document.getElementById('no-damage-bonus');
+        if (noDamageEl) {
+            noDamageEl.textContent = noDamageBonus > 0
+                ? `No-damage bonus +${noDamageBonus}` : '';
+            noDamageEl.hidden = !(noDamageBonus > 0);
+        }
+        const secretsEl = document.getElementById('secrets-found');
+        if (secretsEl) {
+            // Only meaningful when the level actually hid secrets; a plain
+            // level shows no line rather than a hollow "Secrets: 0/0".
+            secretsEl.textContent = secretsTotal > 0
+                ? `Secrets: ${secretsFound}/${secretsTotal}` : '';
+            secretsEl.hidden = !(secretsTotal > 0);
         }
     }
 

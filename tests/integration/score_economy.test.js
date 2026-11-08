@@ -89,17 +89,25 @@ test("a flawless clear pays the full bonus into the score and the overlay", () =
 
     winCurrentLevel(game);
 
-    // 20 coins + 100 flawless basic-tier clear bonus, hand-computed.
-    expect(game.score).toBe(120);
+    // 20 coins + 100 flawless basic-tier clear bonus + 50 M5 no-damage
+    // bonus, hand-computed.
+    expect(game.score).toBe(170);
     expect(game.lastClearBreakdown).toEqual({
-        coins: 20, combat: 0, clearBonus: 100, enemiesBested: 0,
-        deaths: 0, flawless: true
+        coins: 20, combat: 0, clearBonus: 100, noDamageBonus: 50,
+        enemiesBested: 0, deaths: 0, flawless: true,
+        secretsFound: 0, secretsTotal: 0
     });
     const bonusEl = document.getElementById('clear-bonus');
     expect(bonusEl.hidden).toBe(false);
     expect(bonusEl.textContent).toBe('Flawless clear +100');
     // Nothing bested on a coin-only L1: the combat line stays hidden.
     expect(document.getElementById('enemies-bested').hidden).toBe(true);
+    // M5: the zero-death run shows its own payout line; this generated L1
+    // ships no alcove coins, so the secrets line stays hidden.
+    expect(document.getElementById('no-damage-bonus').hidden).toBe(false);
+    expect(document.getElementById('no-damage-bonus').textContent)
+        .toBe('No-damage bonus +50');
+    expect(document.getElementById('secrets-found').hidden).toBe(true);
 });
 
 test("one death then a clear pays the reduced bonus with matching copy", () => {
@@ -118,15 +126,18 @@ test("one death then a clear pays the reduced bonus with matching copy", () => {
     game.update(DT);
     winCurrentLevel(game);
 
-    // 10 coins + floor(100 * 0.4) = 40 reduced bonus, hand-computed.
+    // 10 coins + floor(100 * 0.4) = 40 reduced bonus, hand-computed. The M5
+    // no-damage bonus is NOT paid (a death happened): total unchanged at 50.
     expect(game.score).toBe(50);
     expect(game.lastClearBreakdown).toEqual({
-        coins: 10, combat: 0, clearBonus: 40, enemiesBested: 0,
-        deaths: 1, flawless: false
+        coins: 10, combat: 0, clearBonus: 40, noDamageBonus: 0,
+        enemiesBested: 0, deaths: 1, flawless: false,
+        secretsFound: 0, secretsTotal: 0
     });
     const bonusEl = document.getElementById('clear-bonus');
     expect(bonusEl.hidden).toBe(false);
     expect(bonusEl.textContent).toBe('Cleared after 1 death +40');
+    expect(document.getElementById('no-damage-bonus').hidden).toBe(true);
 });
 
 test("a stomp pays walker points, counts as bested, and shows the overlay line", () => {
@@ -151,8 +162,9 @@ test("a stomp pays walker points, counts as bested, and shows the overlay line",
     expect(game.levelEnemiesKilled).toBe(1);
 
     winCurrentLevel(game);
-    // 25 stomp + 100 flawless bonus.
-    expect(game.score).toBe(125);
+    // 25 stomp + 100 flawless bonus + 50 no-damage (single stomp never
+    // chains: STOMP_CHAIN_MIN is 2).
+    expect(game.score).toBe(175);
     expect(game.lastClearBreakdown.combat).toBe(25);
     expect(game.lastClearBreakdown.enemiesBested).toBe(1);
     const bestedEl = document.getElementById('enemies-bested');
@@ -391,12 +403,14 @@ test("end-to-end: coins + stomp + dodge + flawless bonus sum by hand", () => {
     for (let x = ex - 70; x <= ex + 100; x += 30) stepAt(game, x, ey - 60);
     expect(game.score).toBe(50);
 
-    // Flawless clear: +100 -> 150, every component visible in the overlay.
+    // Flawless clear: +100 clear +50 no-damage -> 200, every component
+    // visible in the overlay.
     winCurrentLevel(game);
-    expect(game.score).toBe(150);
+    expect(game.score).toBe(200);
     expect(game.lastClearBreakdown).toEqual({
-        coins: 20, combat: 30, clearBonus: 100, enemiesBested: 2,
-        deaths: 0, flawless: true
+        coins: 20, combat: 30, clearBonus: 100, noDamageBonus: 50,
+        enemiesBested: 2, deaths: 0, flawless: true,
+        secretsFound: 0, secretsTotal: 0
     });
     expect(document.getElementById('clear-bonus').textContent)
         .toBe('Flawless clear +100');

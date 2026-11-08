@@ -18,7 +18,7 @@ installGameTestScaffolding();
 
 import { Game } from "../../js/main.js";
 import { Level } from "../../js/level.js";
-import { COIN_POINTS } from "../../js/collectibles.js";
+import { COIN_POINTS, SECRET_COIN_SCORE } from "../../js/collectibles.js";
 
 const DT = 1 / 60;
 const T = 32;
@@ -150,9 +150,15 @@ test("climbing the carved chimney collects the secret coins and scores them", ()
     expect(entered).toBe(true);
     expect(collectedAllAt).toBeGreaterThan(-1);
     // Every coin banked during the run (the two terrace coins brushed on the
-    // walk in, plus all secrets) pays COIN_POINTS each through the loop.
-    const banked = game.level.coins.filter((c) => c.collected).length;
-    expect(game.score - scoreBefore).toBe(banked * COIN_POINTS);
+    // walk in, plus all secrets) pays through the loop at its tier: normal
+    // coins COIN_POINTS, M5 secret coins SECRET_COIN_SCORE each.
+    const bankedNormal = game.level.coins.filter(
+        (c) => c.collected && !c.secret).length;
+    const bankedSecret = game.level.coins.filter(
+        (c) => c.collected && c.secret).length;
+    expect(bankedSecret).toBeGreaterThanOrEqual(1);
+    expect(game.score - scoreBefore)
+        .toBe(bankedNormal * COIN_POINTS + bankedSecret * SECRET_COIN_SCORE);
     expect(secrets.every((c) => c.collected)).toBe(true);
 });
 

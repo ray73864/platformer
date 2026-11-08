@@ -5,12 +5,14 @@
  * - Coins are plain objects `{x, y, width, height, collected}` in pixel
  *   space. `loadCoins(coins)` adopts an externally generated array by
  *   reference so the level's renderer and this class share coin objects.
- * - Each newly collected coin is worth COIN_POINTS (10). Collecting an
+ * - Each newly collected coin is worth COIN_POINTS (10); SECRET coins
+ *   (M5, `secret: true`) are worth SECRET_COIN_SCORE (25). Collecting an
  *   already-collected coin (by index or via overlap) never scores twice.
  * - `checkCollection(player)` tests the player AABB against every
  *   uncollected coin and returns the number of coins collected by that
  *   single call (0 when nothing overlaps), so a player straddling two
- *   coins picks both up at once.
+ *   coins picks both up at once. `checkCollectionDetailed(player)` is the
+ *   same pass reporting the secret split for the scoring loop.
  */
 import { aabbOverlap } from './physics.js';
 
@@ -19,6 +21,13 @@ const COIN_HEIGHT = 16;
 // Exported so the game loop scores collections through the same constant
 // rather than mirroring a magic number (the running total lives in Game).
 export const COIN_POINTS = 10;
+// M5 style reward (SPEC §M5, owner-approved capability program): a coin that
+// carries `secret: true` — an alcove interior placed by level.js's M4 carver —
+// pays 2.5 coins instead of one. Secrets demand the wall-jump chimney skill and
+// are never required by the portal gate (see meetsPortalRequirement), so the
+// premium buys risk-reward, never progress. Same unit discipline as the combat
+// tiers in main.js: whole multiples of COIN_POINTS.
+export const SECRET_COIN_SCORE = 25;
 
 export class Collectibles {
     constructor() {
@@ -47,7 +56,9 @@ export class Collectibles {
         if (coin.collected) return;
 
         coin.collected = true;
-        this.score += COIN_POINTS;
+        // M5: secret coins pay the premium tier on this ledger too, so a
+        // caller reading getScore() sees the same value the loop awards.
+        this.score += coin.secret ? SECRET_COIN_SCORE : COIN_POINTS;
     }
 
     getScore() {
@@ -89,8 +100,13 @@ export class Collectibles {
         return this.coins.filter(coin => !coin.secret);
     }
 
-    checkCollection(player) {
+    // Same pass as checkCollection, reporting the secret split so the game
+    // loop can price each pickup tier without a second AABB sweep. Returns
+    // {count, secretCount} — count is every coin collected by this call,
+    // secretCount the `secret: true` subset.
+    checkCollectionDetailed(player) {
         let collectedNow = 0;
+        let secretNow = 0;
 
         for (let i = 0; i < this.coins.length; i++) {
             const coin = this.coins[i];
@@ -100,9 +116,14 @@ export class Collectibles {
             if (aabbOverlap(player, coin)) {
                 this.collectCoin(i);
                 collectedNow++;
+                if (coin.secret) secretNow++;
             }
         }
 
-        return collectedNow;
+        return { count: collectedNow, secretCount: secretNow };
+    }
+
+    checkCollection(player) {
+        return this.checkCollectionDetailed(player).count;
     }
 }

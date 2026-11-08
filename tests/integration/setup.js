@@ -91,5 +91,7 @@ export function mountFixture() {
         <div id="final-score"></div>
         <p id="clear-bonus" aria-live="polite" hidden></p>
         <p id="enemies-bested" aria-live="polite" hidden></p>
+        <p id="no-damage-bonus" aria-live="polite" hidden></p>
+        <p id="secrets-found" aria-live="polite" hidden></p>
     `;
 }

@@ -49,7 +49,10 @@
     FINAL_LEVEL: () => FINAL_LEVEL,
     Game: () => Game,
     INTERESTING_OK: () => INTERESTING_OK,
+    NO_DAMAGE_CLEAR_BONUS: () => NO_DAMAGE_CLEAR_BONUS,
     STATE: () => STATE,
+    STOMP_CHAIN_BONUS: () => STOMP_CHAIN_BONUS,
+    STOMP_CHAIN_MIN: () => STOMP_CHAIN_MIN,
     STOMP_POINTS: () => STOMP_POINTS,
     TILE_SIZE: () => TILE_SIZE,
     clearBonusFor: () => clearBonusFor,
@@ -59,6 +62,7 @@
     init: () => init2,
     layoutSignature: () => layoutSignature,
     layoutSimilarity: () => layoutSimilarity,
+    noDamageBonusFor: () => noDamageBonusFor,
     seedCandidate: () => seedCandidate
   });
 
@@ -506,6 +510,7 @@
   var COIN_WIDTH = 16;
   var COIN_HEIGHT = 16;
   var COIN_POINTS = 10;
+  var SECRET_COIN_SCORE = 25;
 
   class Collectibles {
     constructor() {
@@ -531,7 +536,7 @@
       if (coin.collected)
         return;
       coin.collected = true;
-      this.score += COIN_POINTS;
+      this.score += coin.secret ? SECRET_COIN_SCORE : COIN_POINTS;
     }
     getScore() {
       return this.score;
@@ -552,8 +557,9 @@
     getRequiredCoins() {
       return this.coins.filter((coin) => !coin.secret);
     }
-    checkCollection(player) {
+    checkCollectionDetailed(player) {
       let collectedNow = 0;
+      let secretNow = 0;
       for (let i = 0;i < this.coins.length; i++) {
         const coin = this.coins[i];
         if (coin.collected)
@@ -561,9 +567,14 @@
         if (aabbOverlap(player, coin)) {
           this.collectCoin(i);
           collectedNow++;
+          if (coin.secret)
+            secretNow++;
         }
       }
-      return collectedNow;
+      return { count: collectedNow, secretCount: secretNow };
+    }
+    checkCollection(player) {
+      return this.checkCollectionDetailed(player).count;
     }
   }
 
@@ -4370,7 +4381,10 @@
         clearBonus = 0,
         enemiesBested = 0,
         deaths = 0,
-        flawless = false
+        flawless = false,
+        noDamageBonus = 0,
+        secretsFound = 0,
+        secretsTotal = 0
       } = breakdown || {};
       const bonusEl = document.getElementById("clear-bonus");
       if (bonusEl) {
@@ -4382,6 +4396,16 @@
       if (bestedEl) {
         bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : "";
         bestedEl.hidden = !(enemiesBested > 0);
+      }
+      const noDamageEl = document.getElementById("no-damage-bonus");
+      if (noDamageEl) {
+        noDamageEl.textContent = noDamageBonus > 0 ? `No-damage bonus +${noDamageBonus}` : "";
+        noDamageEl.hidden = !(noDamageBonus > 0);
+      }
+      const secretsEl = document.getElementById("secrets-found");
+      if (secretsEl) {
+        secretsEl.textContent = secretsTotal > 0 ? `Secrets: ${secretsFound}/${secretsTotal}` : "";
+        secretsEl.hidden = !(secretsTotal > 0);
       }
     }
     getScore() {
@@ -7645,6 +7669,12 @@
   var CHARGER_STOMP_POINTS = 40;
   var DODGE_POINTS = 5;
   var DODGE_MAX_CROSS_STEP = 40;
+  var NO_DAMAGE_CLEAR_BONUS = 50;
+  function noDamageBonusFor(deathsOnThisLevel) {
+    return deathsOnThisLevel === 0 ? NO_DAMAGE_CLEAR_BONUS : 0;
+  }
+  var STOMP_CHAIN_BONUS = 30;
+  var STOMP_CHAIN_MIN = 2;
   function clearBonusFor(deathsOnThisLevel, levelNumber) {
     const base = CLEAR_BONUS_BASE + CLEAR_BONUS_TIER_STEP * tierIndexFor(levelNumber);
     const flawless = deathsOnThisLevel === 0;
@@ -7742,6 +7772,9 @@
       this.levelCombatPoints = 0;
       this.levelEnemiesKilled = 0;
       this.levelEnemiesDodged = 0;
+      this.stompChain = 0;
+      this._chainBonusPaid = false;
+      this.runSecretsFound = 0;
       this.lastClearBreakdown = null;
       this.currentLevel = 1;
       this.lastTime = 0;
@@ -7977,6 +8010,7 @@
       this.score = 0;
       this.currentLevel = 1;
       this.resetLevelEconomyTrackers();
+      this.runSecretsFound = 0;
       this.timer.timeRemaining = this.timer.baseTime;
       this.publishLevel(level);
       this.ui.showHUD();
@@ -8088,6 +8122,8 @@
       this._updateCoinHud();
       this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
+      this.stompChain = 0;
+      this._chainBonusPaid = false;
       this.levelCompleteTimer = 0;
       if (!Number.isFinite(this.timer.timeRemaining) || this.timer.timeRemaining < 0 || this.timer.timeRemaining > 9999) {
         console.warn("Run clock invalid at level transition; using default", this.timer.baseTime, "seconds");
@@ -8129,14 +8165,19 @@
     }
     handleWin() {
       const clearBonus = clearBonusFor(this.deathsOnCurrentLevel, this.currentLevel);
-      this.score = Math.min(this.score + clearBonus, Number.MAX_SAFE_INTEGER);
+      const noDamageBonus = noDamageBonusFor(this.deathsOnCurrentLevel);
+      this.score = Math.min(this.score + clearBonus + noDamageBonus, Number.MAX_SAFE_INTEGER);
+      const secretCoins = this.collectibles.getCoins().filter((c) => c.secret);
       this.lastClearBreakdown = {
         coins: this.levelCoinPoints,
         combat: this.levelCombatPoints,
         clearBonus,
+        noDamageBonus,
         enemiesBested: this.levelEnemiesKilled + this.levelEnemiesDodged,
         deaths: this.deathsOnCurrentLevel,
-        flawless: this.deathsOnCurrentLevel === 0
+        flawless: this.deathsOnCurrentLevel === 0,
+        secretsFound: secretCoins.filter((c) => c.collected).length,
+        secretsTotal: secretCoins.length
       };
       this.setState(STATE.LEVEL_COMPLETE);
       playSfx("level_complete");
@@ -8382,6 +8423,10 @@
           this._lean = 0;
         this._prevFrameVx = this.player.vx;
         this.enemyManager.updateAll(dt, this.player);
+        if (this.player.grounded) {
+          this.stompChain = 0;
+          this._chainBonusPaid = false;
+        }
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
           playSfx("stomp");
@@ -8401,6 +8446,16 @@
             const mark = contact.stompedEnemies[0];
             const [sx, sy] = this._worldToScreen(mark.x + mark.width / 2, mark.y);
             spawnPopup(this.popups, sx, sy, `+${stompPoints} STOMP!`, "#c96bf5", true);
+          }
+          this.stompChain += contact.stomped;
+          if (this.stompChain >= STOMP_CHAIN_MIN && !this._chainBonusPaid) {
+            this._chainBonusPaid = true;
+            this.levelCombatPoints += STOMP_CHAIN_BONUS;
+            this.score = Math.min(this.score + STOMP_CHAIN_BONUS, Number.MAX_SAFE_INTEGER);
+            if (FX.popups) {
+              const [cx, cy] = this._worldToScreen(this.player.x + this.player.width / 2, this.player.y - 14);
+              spawnPopup(this.popups, cx, cy, `+${STOMP_CHAIN_BONUS} CHAIN!`, "#f4a460", true);
+            }
           }
         }
         if (contact.deadly) {
@@ -8446,18 +8501,25 @@
           enemy._dodgePrevSide = side;
           enemy._dodgePrevPx = px;
         }
-        const collectedCoins = this.collectibles.checkCollection(this.player);
-        if (collectedCoins > 0) {
+        const pickups = this.collectibles.checkCollectionDetailed(this.player);
+        if (pickups.count > 0) {
+          const normalCount = pickups.count - pickups.secretCount;
+          const coinPoints = normalCount * COIN_POINTS + pickups.secretCount * SECRET_COIN_SCORE;
           playSfx("coin");
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, COIN_BURST_COLOR, 12);
-          this.score = Math.min(this.score + collectedCoins * COIN_POINTS, Number.MAX_SAFE_INTEGER);
-          this.levelCoinPoints += collectedCoins * COIN_POINTS;
-          for (let i = 0;i < collectedCoins; i++)
+          this.score = Math.min(this.score + coinPoints, Number.MAX_SAFE_INTEGER);
+          this.levelCoinPoints += coinPoints;
+          this.runSecretsFound += pickups.secretCount;
+          for (let i = 0;i < pickups.count; i++)
             this.timer.addCoinBonus();
           this._updateCoinHud();
-          if (FX.popups) {
+          if (FX.popups && normalCount > 0) {
             const [sx, sy] = this._worldToScreen(this.player.x + this.player.width / 2, this.player.y + 4);
-            spawnPopup(this.popups, sx, sy, `+${collectedCoins * COIN_POINTS}`, "#ffd23f");
+            spawnPopup(this.popups, sx, sy, `+${normalCount * COIN_POINTS}`, "#ffd23f");
+          }
+          if (FX.popups && pickups.secretCount > 0) {
+            const [sx, sy] = this._worldToScreen(this.player.x + this.player.width / 2, this.player.y - 12);
+            spawnPopup(this.popups, sx, sy, `SECRET +${pickups.secretCount * SECRET_COIN_SCORE}`, "#3ecf6a", true);
           }
         }
         if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
