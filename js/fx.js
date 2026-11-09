@@ -9,7 +9,9 @@
  *
  * Flags:
  *   shake     — camera-space screen shake (death, stomps, shell impacts)
- *   punch     — zoom punch + death white flash (impact "hit-stop" feel)
+ *   punch     — zoom punch (impact "hit-stop" feel). NOT the death white
+ *               flash: that beat is a CSS scrim animation on
+ *               #game-over-screen (canvas overlay removed, Wave B fix r1).
  *   pulse     — one-shot celebration pulses (portal unlock ring)
  *   squash    — player squash & stretch draw transform
  *   dust      — footstep / run / land / skid dust pool (particles.js)

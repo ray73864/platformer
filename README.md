@@ -138,6 +138,16 @@ bun run test:coverage
 
 The E2E suite requires the [agent-browser](https://www.npmjs.com/package/agent-browser) CLI to be installed; it drives a real browser against a self-hosted loopback server. `bun run test` deliberately excludes it so a fresh clone passes without that external dependency.
 
+### Monotonicity guard (`bun run mono`)
+
+```bash
+bun run mono        # replay the recorded winning witnesses (tests/reports/monotonicity-corpus.json)
+```
+
+Replays every corpus witness through the CURRENT engine headlessly (happy-dom + the shipped `Game` loop, fixed-dt, synthetic key events from a staged standing cell) and checks each recorded per-frame trajectory hash plus the portal-touch win. It is the MONOTONIC ADDITION guard: a validated route must keep playing exactly as recorded. Run it after **any** change touching physics, player feel, enemies/projectiles, pads/crates/decks, or level generation. Exit code is non-zero with a per-witness table on divergence.
+
+Deliberately **not** wired into `test:all`: future waves may intentionally evolve maps, which would make a CI-embedded replay gate flaky by design — this is an owner-visible command instead. If it goes red on purpose (an intentional trajectory change), regenerate the corpus out-of-band via the search scratch and commit the new snapshot; corpus corruption (rather than drift) is caught in CI by `tests/unit/monotonicity_corpus.test.js`.
+
 ### Building, linting, assets
 
 ```bash
@@ -191,7 +201,7 @@ game/
 │   ├── kenney_pixel-platformer/  # Shipped CC0 sheets + LICENSE.txt
 │   ├── fonts/              # Press Start 2P (OFL 1.1) + OFL.txt
 │   └── dropin/             # Optional local overrides (gitignored)
-└── scripts/                # Utility scripts (verify-assets, trend)
+└── scripts/                # Utility scripts (verify-assets, trend, mono)
 ```
 
 ## License

@@ -13,6 +13,7 @@
     "test:watch": "bun test --watch tests/unit tests/integration",
     "test:coverage": "bun test --coverage tests/unit tests/integration",
     "lint": "bunx eslint js/ tests/ scripts/",
+    "mono": "bun scripts/monotonicity-check.js",
     "format": "bunx prettier --write js/ css/ index.html",
     "build": "bun run verify && bun build --target=browser --format=iife --outfile=dist/bundle.js js/main.js",
     "verify": "bun scripts/verify-assets.js"
