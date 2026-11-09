@@ -35,6 +35,33 @@
  *     ENEMIES          — no friendly fire, no enemy-vs-ball blocking.
  *     SPIKE TILES (2)  — floor teeth the ball sails over, never solids
  *                        (same reading as an arc over a spike bed).
+ *     CRATES (M3)      — B2 behaviour change (owner BETTER WAVE): die on
+ *                        contact, impact reported for the dust burst, just
+ *                        like terrain. A crate is FULL solid to the player
+ *                        (crates.js contract), so players read it as cover;
+ *                        pass-through felt like a lie. Overlap test is the
+ *                        strict </> physics.aabbOverlap over the SAME
+ *                        radius box the player-hit uses — face-stop, not
+ *                        centre-bury: the crate's drawn edge IS its surface
+ *                        (terrain keeps its documented centre-sample math,
+ *                        M1 header). Fairness: pockets are DISJOINT from
+ *                        every patrol span (_findCrateCandidates' forbidden
+ *                        set includes deployed patrols), so no shell ever
+ *                        originates inside a pocket — blocking can only ADD
+ *                        player cover, never remove it. Edge cases: a ball
+ *                        spawned already overlapping a crate cannot exist
+ *                        by that disjointness and dies cleanly on its first
+ *                        step with an impact (n6 silence applies exactly
+ *                        as for a muzzle pressed into a wall); a shoved
+ *                        crate is read at its LIVE position each frame, so
+ *                        mid-push contact resolves against the moved face;
+ *                        the crate takes NO damage (indestructible
+ *                        furniture — nothing here mutates crate state);
+ *                        stompable enemies are untouched (no code path of
+ *                        theirs reads crates or balls differently). Gunner
+ *                        line-of-fire stays terrain-only like the deck
+ *                        ruling above: a gunner behind cover still fires,
+ *                        the shot simply dies on the crate.
  *     VOID             — despawn below the margin below (silent, no impact
  *                        event: nothing was hit). MAP SIDE EDGES differ:
  *                        the terrain adapter reads out-of-range columns as
@@ -122,6 +149,20 @@ export class ProjectileManager {
     constructor(terrain) {
         this.terrain = terrain;
         this.list = [];
+        // Live crate bodies (B2): main.js publishes THIS level's Crate
+        // instance(s) per level via setCrates; positions are read fresh
+        // every step so a shoved crate blocks at its moved face. Empty
+        // array = no crates = pre-B2 behaviour byte-for-byte.
+        this.crates = [];
+    }
+
+    /**
+     * Publish the live crate bodies shells must stop on (see the CRATES
+     * clause in the header contract). Pass the Entity-like rects themselves,
+     * not snapshots — the whole point is reading their moving positions.
+     */
+    setCrates(crates) {
+        this.crates = crates || [];
     }
 
     spawn(x, y, vx, vy, owner = null) {
@@ -134,8 +175,8 @@ export class ProjectileManager {
     }
 
     /**
-     * Advance every live ball one step and resolve terrain/player/map-exit.
-     * Returns the frame's events for the game loop:
+     * Advance every live ball one step and resolve terrain/crate/player/
+     * map-exit. Returns the frame's events for the game loop:
      *   fired     — shots whose ball SURVIVED its first step since the
      *               previous call (sound hook). Counting on first-step
      *               survival is the n6 ruling: a muzzle pressed into a wall
@@ -167,9 +208,24 @@ export class ProjectileManager {
                 events.impacts.push({ x: p.x, y: p.y });
                 continue;
             }
-            if (player && aabbOverlap(player, {
+            // B2 crates: same radius box the player-hit below uses, tested
+            // against every live crate body (strict </> aabbOverlap — the
+            // game-wide convention). Order-stable scan of a generator-capped
+            // one-element list: determinism is untouched (no rng, no clock).
+            const box = {
                 x: p.x - p.r, y: p.y - p.r, width: 2 * p.r, height: 2 * p.r
-            })) {
+            };
+            let blocked = false;
+            for (const c of this.crates) {
+                if (aabbOverlap(box, c)) {
+                    p.dead = true;
+                    events.impacts.push({ x: p.x, y: p.y });
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            if (player && aabbOverlap(player, box)) {
                 p.dead = true;
                 events.hitPlayer = true;
                 continue;

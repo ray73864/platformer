@@ -728,6 +728,10 @@
     constructor(terrain) {
       this.terrain = terrain;
       this.list = [];
+      this.crates = [];
+    }
+    setCrates(crates) {
+      this.crates = crates || [];
     }
     spawn(x, y, vx, vy, owner = null) {
       const p = new Projectile(x, y, vx, vy, owner);
@@ -751,12 +755,24 @@
           events.impacts.push({ x: p.x, y: p.y });
           continue;
         }
-        if (player && aabbOverlap(player, {
+        const box = {
           x: p.x - p.r,
           y: p.y - p.r,
           width: 2 * p.r,
           height: 2 * p.r
-        })) {
+        };
+        let blocked = false;
+        for (const c of this.crates) {
+          if (aabbOverlap(box, c)) {
+            p.dead = true;
+            events.impacts.push({ x: p.x, y: p.y });
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked)
+          continue;
+        if (player && aabbOverlap(player, box)) {
           p.dead = true;
           events.hitPlayer = true;
           continue;
@@ -2495,6 +2511,7 @@
   var PAD_CHANCE = 1;
   var CRATE_CHANCE = 0.5;
   var PAD_MIN_HOP_GAIN = 2;
+  var PAD_FLUSH_APEX_ROWS = 3;
   var LEGACY_PAD_CHANCE = 0.5;
   var PAD_SIDE_SALT = 1346655025;
   var CRATE_MAX_TRAVEL_PAST_END = 3;
@@ -4034,9 +4051,9 @@
         if (cells.has(k))
           delivery.push(k);
       }
-      const aKey = aRow * w + cell.col;
-      if (cells.has(aKey))
-        delivery.push(aKey);
+      const fKey = (cell.row - PAD_FLUSH_APEX_ROWS) * w + cell.col;
+      if (cells.has(fKey))
+        delivery.push(fKey);
       if (delivery.length === 0)
         return false;
       const da = hopDistances(delivery, adj);
@@ -8742,6 +8759,7 @@
       this.pads = (level.getPads() || []).map((d) => new LaunchPad(d.x, d.y));
       const crateDescs = level.getCrates() || [];
       this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
+      this.projectiles.setCrates(this.crate ? [this.crate] : []);
       this._crateWalls = this.crate ? crateContainmentWalls(level.width * level.tileSize, level.height * level.tileSize) : [];
       this._crateDustT = 0;
       this._prevSliding = 0;
@@ -8886,9 +8904,11 @@
           this._dashGhosts.splice(i, 1);
         }
       }
-      for (const pad of this.pads) {
-        if (pad.squash > 0)
-          pad.squash = Math.max(0, pad.squash - dt);
+      if (this.state !== STATE.PAUSED) {
+        for (const pad of this.pads) {
+          if (pad.squash > 0)
+            pad.squash = Math.max(0, pad.squash - dt);
+        }
       }
       if (this.state !== STATE.PLAYING && this._lean !== 0) {
         this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));

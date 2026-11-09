@@ -13,6 +13,11 @@
 //    pad ACCEPTED; and the MIN-gain boundary on ONE map — the same grid
 //    yields gain 1 (rejected) below the plateau and gain 2 (accepted) at
 //    the foot column, straddling PAD_MIN_HOP_GAIN = 2 exactly.
+//
+// 3) The B2 dead-edge pin (B1 review Minor 2): a constructed grid where the
+//    ONLY source of accepted value was the physically-unreachable exact-r-4
+//    flush landing (rise 128 px vs the integrator's measured 123.86) — the
+//    pad must now be REJECTED (see PAD_FLUSH_APEX_ROWS in level.js).
 import { test, expect } from "bun:test";
 import {
     Level, computeReachable, jumpEnvelopeTargets
@@ -221,8 +226,10 @@ function laneGains(self, cell) {
         const k = by * w + bx;
         if (cells.has(k)) delivery.push(k);
     }
-    const aKey = aRow * w + cell.col;
-    if (cells.has(aKey)) delivery.push(aKey);
+    // B2 dead-edge fix mirrored: flush standable delivery sits at r-3
+    // (PAD_FLUSH_APEX_ROWS), not the unreachable exact-r-4 apex row.
+    const fKey = (cell.row - 3) * w + cell.col;
+    if (cells.has(fKey)) delivery.push(fKey);
     const da = hopDistances(delivery, adj);
     const dPad = (k) => {
         const via = da.get(k);
@@ -340,4 +347,63 @@ test("MIN-gain boundary on ONE map: gain 1 rejected, gain 2 accepted", () => {
     const foot = laneGains(self, { col: 7, row: 7 });
     expect(foot.route).toBe(2);
     expect(verdict(self, { col: 7, row: 7 })).toBe(true);
+});
+
+// ── 3) B2 dead-edge pin (B1 review Minor 2) ---------------------------------
+// The p->apex FLUSH delivery used to sit at exactly r-PAD_APEX_CELLS (=4):
+// a 128 px feet-line rise against the shipped integrator's MEASURED 123.86
+// px (pads.js header) — physically unreachable, so an acceptance resting on
+// it would be an uncollectable promise. (Fix-round note: the edge DOES fire
+// as graph adjacency on vertical-shaft maps, whose reachableTiles carry
+// shaft-model nodes with open below-tiles — but replaying both rules over
+// 1350 generated maps flips zero acceptances, so it never carries value
+// there. This synthetic grid is how the deadness gets demonstrated at all.)
+// Constructed grid where ONLY that dead edge grants value: a long floating
+// deck (floor row 4, cols 0..16) carries the portal at (2,3) directly above
+// the pad pocket at (2,7); the spawn sits BETWEEN pad and stair at (10,7),
+// so the only base route walks east, up the stair (cols 15..17) and back
+// west along the deck — 9 hops vs the dead edge's 3 (hop edges compress
+// flat walks). Every PHYSICALLY-reachable strictly-below delivery is dead:
+// the deck floor catches all in-board falls, off-stair ground is a walled
+// pocket outside the graph, and the honest r-3 flush probe hits deck rock
+// ((2,4) is solid). Reject.
+function deckPocketSelf() {
+    const w = 20, h = 10;
+    const rows = [];
+    for (let r = 0; r < h; r++) {
+        let line = "";
+        for (let c = 0; c < w; c++) {
+            let ch = ".";
+            if (r === 8) ch = "#";                    // ground
+            if (r === 4 && c <= 16) ch = "#";         // floating deck floor
+            if (c === 15 && r >= 7) ch = "#";         // east stair
+            if (c === 16 && r >= 6) ch = "#";
+            if (c === 17 && r >= 5) ch = "#";
+            line += ch;
+        }
+        rows.push(line);
+    }
+    return mkSelf(w, h, rows, [10, 7], [2, 3]);
+}
+
+test("dead exact-r-4 flush edge alone no longer buys a pad (B2)", () => {
+    const self = deckPocketSelf();
+    const w = 20;
+    const apexKey = 3 * w + 2;
+    // The dead edge WAS live on this grid: the apex cell is standable and
+    // graph-reachable (via the long loop), exactly the trap.
+    expect(self.reachableTiles.has(apexKey)).toBe(true);
+    // Emulate the OLD r-4 edge numerically (house pattern: agreement with
+    // the shipped verdict is evidence, not tautology): it accepted hard.
+    const graph = buildBaseGraph(self);
+    const dB = hopDistances([graph.spawnKey], graph.adj);
+    const dp = dB.get(7 * w + 2);
+    const dPortal = dB.get(3 * w + 2);
+    expect(dp).toBe(2);                               // pocket behind spawn
+    expect(dPortal).toBe(9);                          // the long loop
+    expect(dp + 1).toBeLessThanOrEqual(dPortal - 2);  // OLD edge: accepted
+    // Shipped (fixed) model: REJECTED — no strictly-below delivery clears
+    // the gain bar and the r-3 flush probe finds only rock.
+    expect(laneGains(self, { col: 2, row: 7 }).route).toBe(0);
+    expect(verdict(self, { col: 2, row: 7 })).toBe(false);
 });

@@ -1121,9 +1121,12 @@ export class Game {
     }
 
     // Wave B: wipe every transient effect state at a level publish (first
-    // play, retry, loop recovery). Without this a death's shake/flash/bursts
-    // and any live popups leak across the transition — the fresh attempt
-    // must start dead-still at spawn.
+    // play, retry, loop recovery). Without this a death's shake/bursts and
+    // any live popups leak across the transition — the fresh attempt must
+    // start dead-still at spawn. (No flash field to wipe here by design:
+    // the death white-flash beat lives in CSS on #game-over-screen — the
+    // canvas overlay was removed in the Wave B fix round, so the scrim is
+    // owned by the DOM show/hide, never by resettable game state.)
     resetEffectState() {
         this.particles.length = 0;
         this.dust.length = 0;
@@ -1373,6 +1376,10 @@ export class Game {
         this.pads = (level.getPads() || []).map(d => new LaunchPad(d.x, d.y));
         const crateDescs = level.getCrates() || [];
         this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
+        // B2: shells stop on THIS level's live crate body (cover, not
+        // scenery). Fresh publication per level keeps retries exact; empty
+        // when the map ships no crate.
+        this.projectiles.setCrates(this.crate ? [this.crate] : []);
         // Crate-only pixel walls where the pocket model reads the map edge
         // as a blocker (off-grid tiles produce no collider for anyone); X-
         // pass only — see stepCrate's split-resolution contract.
@@ -1649,10 +1656,12 @@ export class Game {
         if (this.shakeTime > 0) this.shakeTime = Math.max(0, this.shakeTime - dt);
         if (this.shakeTime === 0) this.shakeMag = 0;
         if (this.squashTimer > 0) this.squashTimer = Math.max(0, this.squashTimer - dt);
-        // Wave B visual clocks (all states, like the bursts above): punch and
-        // death-flash decay, popups rise, rings expand, and the lean relaxes
-        // to plumb whenever no acceleration drives it (outside PLAYING too,
-        // so a pause or end screen never freezes a tilted hero).
+        // Wave B visual clocks (all states, like the bursts above): punch
+        // and launch-stretch decay, popups rise, rings expand, and the lean
+        // relaxes to plumb whenever no acceleration drives it (outside
+        // PLAYING too, so a pause or end screen never freezes a tilted hero.
+        // The death white-flash is NOT one of these clocks: that beat is a
+        // CSS scrim animation on #game-over-screen, not canvas state.)
         if (this._punchTime > 0) this._punchTime = Math.max(0, this._punchTime - dt);
         if (this._launchStretch > 0) {
             this._launchStretch = Math.max(0, this._launchStretch - dt);
@@ -1669,9 +1678,16 @@ export class Game {
         }
         // Pad plate squash decays on the same visual clock: it is a draw-time
         // channel only (the collision box is never touched, FX.squash gates
-        // the compression inside drawPads).
-        for (const pad of this.pads) {
-            if (pad.squash > 0) pad.squash = Math.max(0, pad.squash - dt);
+        // the compression inside drawPads). B2 fix (T5 disclosed minor):
+        // PAUSED holds it like the bounce it mirrors — look-A ruling, same
+        // gate as the motes above: a frozen world behind the overlay must
+        // not leak the plate animating back to rest, or held time reads as
+        // a rendering stall. Other non-PLAYING states keep decaying it (the
+        // burst-family convention: end screens finish their visuals).
+        if (this.state !== STATE.PAUSED) {
+            for (const pad of this.pads) {
+                if (pad.squash > 0) pad.squash = Math.max(0, pad.squash - dt);
+            }
         }
         if (this.state !== STATE.PLAYING && this._lean !== 0) {
             this._lean += (0 - this._lean) * (1 - Math.exp(-10 * dt));

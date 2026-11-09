@@ -9,6 +9,7 @@ import { installGameTestScaffolding, mountFixture } from "./setup.js";
 import { Game, STATE, destroyAllGames } from "../../js/main.js";
 import { FX, initFX, applyReducedMotion, _resetFXInitForTests, MAX_POPUPS } from "../../js/fx.js";
 import { MAX_DUST } from "../../js/particles.js";
+import { PAD_SQUASH_TIME } from "../../js/pads.js";
 
 installGameTestScaffolding();
 
@@ -212,6 +213,37 @@ test("FX.squash off (or intensity 0) => acceleration lean stays exactly zero", (
     } finally {
         FX.squash = true;
         FX.intensity = 1;
+        destroyAllGames();
+    }
+});
+
+test("pad plate squash holds while PAUSED and decays on resume (B2)", () => {
+    // T5-disclosed minor, fixed: the plate's visual clock used to run in
+    // every state, so pausing right after a bounce leaked the squash back
+    // to rest behind the frozen overlay — held time must read as HELD
+    // (look-A ruling, same gate family as the motes). Fixture: L11
+    // s40943764 ships one pad (house fixture from pad_crate_loop).
+    mountFixture();
+    const game = new Game();
+    document.getElementById('start-btn').click();
+    game.levelSeeds.set(11, 40943764);
+    game.currentLevel = 11;
+    game.startLevel();
+    try {
+        expect(game.pads.length).toBe(1);
+        const pad = game.pads[0];
+        pad.squash = PAD_SQUASH_TIME; // identical arming to a real launch
+        game.togglePause();
+        expect(game.state).toBe(STATE.PAUSED);
+        for (let f = 0; f < 30; f++) game.update(1 / 60);
+        expect(pad.squash).toBe(PAD_SQUASH_TIME); // frozen like the world
+        game.togglePause();
+        expect(game.state).toBe(STATE.PLAYING);
+        for (let f = 0; f < 4; f++) game.update(1 / 60);
+        expect(pad.squash).toBeLessThan(PAD_SQUASH_TIME); // decaying again
+        for (let f = 0; f < 10; f++) game.update(1 / 60);
+        expect(pad.squash).toBe(0);
+    } finally {
         destroyAllGames();
     }
 });

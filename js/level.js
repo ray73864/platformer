@@ -1629,6 +1629,27 @@ const CRATE_CHANCE = 0.5;
 // the sweep sits at 2+ (histogram {2: 69, 3: 2, 4: 15}), so 2 is the first
 // threshold that separates "the bounce IS the shortcut" from walking anyway.
 export const PAD_MIN_HOP_GAIN = 2;
+// B2 dead-edge fix (B1 review Minor 2): highest row above the pad cell a
+// FLUSH standable landing may sit on, in cells. Derived from the DISCRETE
+// rise constant, not the continuous claim: the shipped semi-implicit Euler
+// integrator rises a measured 123.86 px (pads.js header, pinned by
+// tests/unit/pads.test.js), while a flush landing k rows up needs the feet
+// line to reach exactly k·T — floor(123.86 / 32) = 3, so k = 4 (128 px) is
+// physically unreachable and any acceptance resting on it would be an
+// uncollectable promise. k = 3 (96 px ≤ 123.86) is the honest ceiling.
+// Correction (B2 fix round 1): the old r-4 probe is NOT structurally
+// impossible, as an earlier note here claimed — on vertical SHAFT maps
+// reachableTiles includes shaft-model boarding nodes whose below-tile is
+// open, so a clearance-passing candidate's r-4 apex CAN sit in graph
+// cells (measured: 17 of 1350 L1..90x15 maps; an independent review
+// measured 29/1000 on another seed family). The exclusion stands on two
+// honest legs instead: PHYSICS — nobody can land flush 4 cells up (the
+// derivation above); EMPIRICS — replaying every candidate under BOTH
+// rules flips ZERO acceptances across those 1350 maps (the edge fired as
+// adjacency but never carried value), and pad placement stays
+// byte-identical to BASE over the same sweep. The constant keeps the
+// MODEL physics-honest regardless.
+export const PAD_FLUSH_APEX_ROWS = 3;
 // BASE's pad-chance value, kept ONLY as the main-stream draw-shape authority:
 // BASE consumed a pad-pick draw iff its chance roll fired AND the legality
 // pool was non-empty. Reproducing that exact consumption keeps crates and
@@ -4505,7 +4526,11 @@ export class Level {
      * step-ups the grounded envelope claims are physically dead edges, and
      * claiming them would ship pads whose "value" nobody can collect (the
      * measured full-envelope pool inflates ~3.5x on exactly those fake
-     * edges). Landing flush ON a standable apex is the brief's p->apex edge.
+     * edges). Landing flush ON the apex column keeps only its physics-honest
+     * row: the p->apex standable-delivery edge sits at r-PAD_FLUSH_APEX_ROWS
+     * (=3), derived from the measured discrete rise 123.86 px < the 128 px
+     * exact-r-4 flush line — see the constant header (B2 dead-edge fix; the
+     * old r-4 edge could theoretically credit an uncollectable promise).
      * Delivery targets are restricted to the base-reachable set (a pad's
      * value must be about something the map already validates; two-hop value
      * THROUGH off-graph pockets is not claimed — conservative, costs pads,
@@ -4537,8 +4562,12 @@ export class Level {
             const k = env[i][1] * w + env[i][0];
             if (cells.has(k)) delivery.push(k);
         }
-        const aKey = aRow * w + cell.col;
-        if (cells.has(aKey)) delivery.push(aKey);
+        // B2: flush standable-delivery row is r-PAD_FLUSH_APEX_ROWS (=3),
+        // NOT the envelope apex row r-4 — a flush landing there needs a
+        // 128 px rise against the integrator's measured 123.86 px: dead.
+        // Derivation in the PAD_FLUSH_APEX_ROWS header.
+        const fKey = (cell.row - PAD_FLUSH_APEX_ROWS) * w + cell.col;
+        if (cells.has(fKey)) delivery.push(fKey);
         if (delivery.length === 0) return false;
         const da = hopDistances(delivery, adj);
         const improved = (k) => {
