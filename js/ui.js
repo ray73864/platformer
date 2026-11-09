@@ -14,6 +14,10 @@ export class UI {
         this.scoreElement = this.ensureElement('score-display');
         this.levelElement = this.ensureElement('level-display');
         this.coinsElement = this.ensureElement('coins-display');
+        // Two-tier coin economy (owner ruling 2026-11-10): the chip fraction
+        // is REQUIRED coins only; banked secrets ride beside it as a star
+        // badge. Self-healing like every UI-owned node.
+        this.coinBonusElement = this.ensureElement('coin-bonus');
         this.finalScoreElement = this.ensureElement('final-score');
         this.gameCompleteScoreElement = this.ensureElement('game-complete-score');
         this.highScoreElement = this.ensureElement('high-score');
@@ -155,6 +159,22 @@ export class UI {
             // unlocked: readable at a glance without reading the numbers.
             this.coinsElement.classList.toggle('coins-done', collected >= total);
         }
+    }
+
+    // Two-tier coin economy (owner ruling 2026-11-10): the chip fraction is
+    // REQUIRED coins only; banked secrets ride beside it as a compact star
+    // badge ("+N★"). Hidden while zero — the HUD never hints where secrets
+    // are, only what they paid. Change-gated announcement like its siblings.
+    updateSecretBadge(found) {
+        const n = Number.isFinite(found) && found > 0 ? Math.floor(found) : 0;
+        const el = this.coinBonusElement;
+        if (!el || !el.isConnected) return;
+        const text = n > 0 ? `+${n}\u2605` : '';
+        if (el.textContent !== text) {
+            el.textContent = text;
+            if (n > 0) this._queueAnnouncement('secret', `bonus coins ${n}`);
+        }
+        el.hidden = !(n > 0);
     }
 
     updateScore(score) {
@@ -425,11 +445,15 @@ export class UI {
     // M5 additions ride the same node conventions (aria-live polite, hidden
     // with nothing to report):
     //   no damage → "No-damage bonus +50" (zero-death clears only)
-    //   secrets   → "Secrets: 1/2" on levels that shipped alcove coins.
+    //   secrets   → two-tier line on levels that shipped alcove coins
+    //               (owner ruling 2026-11-10): required completion and the
+    //               bonus tier separated —
+    //               "Coins 3/3 · Secrets 2/2★ (+50)" / "…Secrets 0/2★".
     setLevelCompleteBreakdown(breakdown) {
         const { clearBonus = 0, enemiesBested = 0, deaths = 0,
             flawless = false, noDamageBonus = 0, secretsFound = 0,
-            secretsTotal = 0 } = breakdown || {};
+            secretsTotal = 0, coinsCollected = 0, coinsRequired = 0,
+            secretBonus = 0 } = breakdown || {};
         const bonusEl = document.getElementById('clear-bonus');
         if (bonusEl) {
             const text = clearBonus > 0
@@ -454,9 +478,16 @@ export class UI {
         const secretsEl = document.getElementById('secrets-found');
         if (secretsEl) {
             // Only meaningful when the level actually hid secrets; a plain
-            // level shows no line rather than a hollow "Secrets: 0/0".
-            secretsEl.textContent = secretsTotal > 0
-                ? `Secrets: ${secretsFound}/${secretsTotal}` : '';
+            // level shows no line rather than a hollow counter. The bonus
+            // term rides only when the loop actually paid a premium, so an
+            // untouched alcove honestly reads "Coins 3/3 · Secrets 0/2★".
+            let text = '';
+            if (secretsTotal > 0) {
+                text = `Coins ${coinsCollected}/${coinsRequired} \u00b7 ` +
+                    `Secrets ${secretsFound}/${secretsTotal}\u2605`;
+                if (secretBonus > 0) text += ` (+${secretBonus})`;
+            }
+            secretsEl.textContent = text;
             secretsEl.hidden = !(secretsTotal > 0);
         }
     }

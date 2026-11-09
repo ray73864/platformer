@@ -564,6 +564,10 @@ export class Game {
         // still earned on this level). Deliberately NOT reset in publishLevel
         // — that also runs on every retry — only via resetLevelEconomyTrackers().
         this.levelCoinPoints = 0;
+        // W1 two-tier split of the coin line: the SECRET_COIN_SCORE premium
+        // portion of levelCoinPoints (loop-scored only, same doctrine), so
+        // LEVEL_COMPLETE can separate required completion from bonus points.
+        this.levelSecretPoints = 0;
         this.levelCombatPoints = 0;
         this.levelEnemiesKilled = 0;
         this.levelEnemiesDodged = 0;
@@ -1115,6 +1119,7 @@ export class Game {
     resetLevelEconomyTrackers() {
         this.deathsOnCurrentLevel = 0;
         this.levelCoinPoints = 0;
+        this.levelSecretPoints = 0;
         this.levelCombatPoints = 0;
         this.levelEnemiesKilled = 0;
         this.levelEnemiesDodged = 0;
@@ -1304,7 +1309,9 @@ export class Game {
     // HUD coin chip from the REQUIRED subset only (R4): collected/total over
     // the non-secret coins, so the number always mirrors what
     // meetsPortalRequirement actually gates. Secret pickups still score and
-    // still pop '+N' — they just never join the denominator.
+    // still pop '+N' — they just never join the denominator. W1 two-tier
+    // ruling: banked secrets surface beside the fraction as a star badge
+    // (hidden while zero, so the HUD never points at a secret).
     _updateCoinHud() {
         const required = this.collectibles.getRequiredCoins();
         let collected = 0;
@@ -1312,6 +1319,11 @@ export class Game {
             if (coin.collected) collected++;
         }
         this.ui.updateCoins(collected, required.length);
+        let secretsFound = 0;
+        for (const coin of this.collectibles.getCoins()) {
+            if (coin.secret && coin.collected) secretsFound++;
+        }
+        this.ui.updateSecretBadge(secretsFound);
     }
 
     tryConstructLevel(levelNumber) {
@@ -1418,9 +1430,12 @@ export class Game {
         // gate needs enough coins to be a goal. Generation ships more than
         // this on every tier; a level below the floor is a generator bug —
         // warn and continue (the gate itself never becomes unwinnable).
-        if (this.collectibles.getCoins().length < 3) {
-            console.warn('Level generated with fewer than 3 coins:',
-                this.collectibles.getCoins().length);
+        // W1 audit fix: measure the REQUIRED subset — secrets never join the
+        // gate, so they must not prop up the floor check either (a map with
+        // 2 route coins + 5 secrets is below the goal floor, not above it).
+        if (this.collectibles.getRequiredCoins().length < 3) {
+            console.warn('Level generated with fewer than 3 required coins:',
+                this.collectibles.getRequiredCoins().length);
         }
         // Difficulty tier is the single authority for whether the run clock
         // runs at all on this level.
@@ -1522,7 +1537,16 @@ export class Game {
             deaths: this.deathsOnCurrentLevel,
             flawless: this.deathsOnCurrentLevel === 0,
             secretsFound: secretCoins.filter(c => c.collected).length,
-            secretsTotal: secretCoins.length
+            secretsTotal: secretCoins.length,
+            // W1 two-tier split (owner ruling 2026-11-10): the required-gate
+            // completion and the loop-paid bonus premium, so the overlay can
+            // show "Coins 3/3 · Secrets 2/2★ (+50)" instead of one blended
+            // number. secretBonus mirrors levelCoinPoints' ledger exactly —
+            // seam collectCoin() replays never re-score, same doctrine.
+            coinsRequired: this.collectibles.getRequiredCoins().length,
+            coinsCollected: this.collectibles.getRequiredCoins()
+                .filter(c => c.collected).length,
+            secretBonus: this.levelSecretPoints
         };
         this.setState(STATE.LEVEL_COMPLETE);
         // Win sting over the top of the still-running music: the transition
@@ -2228,6 +2252,9 @@ export class Game {
                 // carries secret premiums too: it mirrors the coin income of
                 // the clear, tier by tier.
                 this.levelCoinPoints += coinPoints;
+                // W1: the secret premium split out of the coin line, so
+                // LEVEL_COMPLETE can price the bonus tier separately.
+                this.levelSecretPoints += pickups.secretCount * SECRET_COIN_SCORE;
                 // M5 run-stats (session-only): every secret banked through
                 // the loop counts once ever — collected flags make repeat
                 // pickups impossible, and retry transfers via seam calls

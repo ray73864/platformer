@@ -394,14 +394,19 @@ test("completing a carved alcove level reports Secrets n/n and pays every tier",
     expect(game.lastClearBreakdown).toEqual({
         coins: 20 + k * 25, combat: 0, clearBonus: 120, noDamageBonus: 50,
         enemiesBested: 0, deaths: 0, flawless: true,
-        secretsFound: k, secretsTotal: k
+        secretsFound: k, secretsTotal: k,
+        // W1 two-tier split: the gate needed the 3 terrace coins (all banked
+        // by win time — 2 loop, 1 seam), and every secret paid its premium
+        // through the loop, so the bonus half is k * 25.
+        coinsRequired: 3, coinsCollected: 3, secretBonus: k * 25
     });
 
     // The run-stats line renders with real counts, and the no-damage line
     // rides alongside it.
     const secretsEl = document.getElementById('secrets-found');
     expect(secretsEl.hidden).toBe(false);
-    expect(secretsEl.textContent).toBe(`Secrets: ${k}/${k}`);
+    expect(secretsEl.textContent)
+        .toBe(`Coins 3/3 \u00b7 Secrets ${k}/${k}\u2605 (+${k * 25})`);
     expect(document.getElementById('no-damage-bonus').textContent)
         .toBe('No-damage bonus +50');
 });
@@ -416,7 +421,9 @@ test("an untouched alcove honestly reports Secrets: 0/k on the clear", () => {
     expect(game.lastClearBreakdown.secretsTotal).toBe(k);
     const secretsEl = document.getElementById('secrets-found');
     expect(secretsEl.hidden).toBe(false); // the level DID hide secrets...
-    expect(secretsEl.textContent).toBe(`Secrets: 0/${k}`); // ...none found
+    // W1 two-tier copy: required completion plus the unfound bonus tier,
+    // with no "(+N)" term because nothing paid a premium.
+    expect(secretsEl.textContent).toBe(`Coins 3/3 \u00b7 Secrets 0/${k}\u2605`); // ...none found
     expect(game.runSecretsFound).toBe(0);
 });
 

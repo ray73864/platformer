@@ -95,7 +95,10 @@ test("a flawless clear pays the full bonus into the score and the overlay", () =
     expect(game.lastClearBreakdown).toEqual({
         coins: 20, combat: 0, clearBonus: 100, noDamageBonus: 50,
         enemiesBested: 0, deaths: 0, flawless: true,
-        secretsFound: 0, secretsTotal: 0
+        secretsFound: 0, secretsTotal: 0,
+        // W1 two-tier fields: the swapped-in ledger ships 2 required coins,
+        // both loop-banked; no secrets on this level.
+        coinsRequired: 2, coinsCollected: 2, secretBonus: 0
     });
     const bonusEl = document.getElementById('clear-bonus');
     expect(bonusEl.hidden).toBe(false);
@@ -132,7 +135,9 @@ test("one death then a clear pays the reduced bonus with matching copy", () => {
     expect(game.lastClearBreakdown).toEqual({
         coins: 10, combat: 0, clearBonus: 40, noDamageBonus: 0,
         enemiesBested: 0, deaths: 1, flawless: false,
-        secretsFound: 0, secretsTotal: 0
+        secretsFound: 0, secretsTotal: 0,
+        // W1 two-tier fields: 1 required coin (loop-banked), no secrets.
+        coinsRequired: 1, coinsCollected: 1, secretBonus: 0
     });
     const bonusEl = document.getElementById('clear-bonus');
     expect(bonusEl.hidden).toBe(false);
@@ -410,7 +415,10 @@ test("end-to-end: coins + stomp + dodge + flawless bonus sum by hand", () => {
     expect(game.lastClearBreakdown).toEqual({
         coins: 20, combat: 30, clearBonus: 100, noDamageBonus: 50,
         enemiesBested: 2, deaths: 0, flawless: true,
-        secretsFound: 0, secretsTotal: 0
+        secretsFound: 0, secretsTotal: 0,
+        // W1 two-tier fields: swapped ledger = 2 required (loop-banked),
+        // no secrets.
+        coinsRequired: 2, coinsCollected: 2, secretBonus: 0
     });
     expect(document.getElementById('clear-bonus').textContent)
         .toBe('Flawless clear +100');

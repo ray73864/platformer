@@ -344,6 +344,27 @@ button:focus-visible {
     color: var(--ink);
 }
 
+/* Two-tier coin economy (owner ruling 2026-11-10): star badge riding the
+   coin chip once ANY secret is banked this level ("+N★"). Gold pill with
+   ink text — the same high-contrast family as the HUD buttons — sized a
+   step below the chip text so it reads as a bonus tag, never a second
+   counter. Hidden while zero: the HUD never hints where secrets hide. */
+.coin-bonus {
+    display: inline-block;
+    background: var(--gold);
+    color: var(--ink);
+    border: 2px solid var(--ink);
+    box-shadow: 0 2px 0 rgba(26, 16, 10, 0.6);
+    padding: 2px 5px;
+    font-size: 0.7rem; /* still on the 11px functional-text floor */
+    line-height: 1;
+}
+
+/* The pill's display would outrank the UA [hidden] rule; be explicit. */
+.coin-bonus[hidden] {
+    display: none;
+}
+
 /* Narrow phones: four chips (score/level/time/pause) must not run past the
    viewport edge on timed levels. */
 @media (max-width: 560px) {

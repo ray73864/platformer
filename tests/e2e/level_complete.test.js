@@ -148,6 +148,7 @@ test("LEVEL_COMPLETE overlay shows the clear-bonus breakdown (score economy ruli
            noDamageHidden: document.getElementById('no-damage-bonus').hidden,
            noDamageText: document.getElementById('no-damage-bonus').textContent,
            secretsHidden: document.getElementById('secrets-found').hidden,
+           reqCount: window.game.collectibles.getRequiredCoins().length,
            breakdown: window.game.lastClearBreakdown }`
     );
     // Cause-and-effect copy: full bonus visible with its "+N" sign...
@@ -164,7 +165,11 @@ test("LEVEL_COMPLETE overlay shows the clear-bonus breakdown (score economy ruli
     expect(view.breakdown).toEqual({
         coins: 0, combat: 0, clearBonus: 100, noDamageBonus: 50,
         enemiesBested: 0, deaths: 0, flawless: true,
-        secretsFound: 0, secretsTotal: 0
+        secretsFound: 0, secretsTotal: 0,
+        // W1 two-tier fields: L1 ships no alcove coins (required == total,
+        // seed-dependent so read live), and the seam win paid no premiums.
+        coinsRequired: view.reqCount, coinsCollected: view.reqCount,
+        secretBonus: 0
     });
     screenshot(SESSION, "economy-level-complete-breakdown.png");
 

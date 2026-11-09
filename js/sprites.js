@@ -1140,6 +1140,24 @@ export function coinGlintAt(clock, index) {
     return ((clock + index * 1.37) % COIN_GLINT_PERIOD) < COIN_GLINT_WINDOW;
 }
 
+// Secret-coin premium treatment (owner ruling 2026-11-10, two-tier economy):
+// an alcove `secret: true` coin must READ as bonus treasure at shipped size —
+// never as another mandatory pickup — through three stacked cues, all
+// deterministic (clock + index only, never Math.random):
+//   1. a warmer amber aura instead of the plain gold one (hue separation);
+//   2. a static cream twinkle-star cut into the face (survives reduced
+//      motion: the distinction is identity, not juice);
+//   3. an orbiting sparkle beat on top of the shared glint, gated behind
+//      FX.pulse like every other celebration-family embellishment.
+// Normal coins keep the exact pre-ruling render path.
+export const SECRET_COIN_GLOW = '#ffb340';
+export const SECRET_STAR_COLOR = '#fff3d6';
+export const SECRET_SPARKLE_PERIOD = 2.2;
+export const SECRET_SPARKLE_WINDOW = 0.5;
+export function secretSparkleAt(clock, index) {
+    return ((clock + index * 0.83) % SECRET_SPARKLE_PERIOD) < SECRET_SPARKLE_WINDOW;
+}
+
 export class Sprites {
     constructor() {
         this.images = {};
@@ -2100,20 +2118,33 @@ export class Sprites {
         for (let i = 0; i < coins.length; i++) {
             const coin = coins[i];
             if (coin.collected) continue;
+            const secret = !!coin.secret;
             const phase = i * 0.618;
             const cx = coin.x + coin.width / 2;
             const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + i * 0.9) * 3;
             const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * spinW + phase)));
             const s = 26;
             // Faint breathing aura: pickups read as valuable from across
-            // the screen without needing the sprite itself resolved.
+            // the screen without needing the sprite itself resolved. Secret
+            // coins burn the warmer amber hue (premium tier, ruling
+            // 2026-11-10) — hue separation before any shape detail resolves.
             ctx.globalAlpha = 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(bobPhase * 0.8 + phase));
-            ctx.drawImage(glow, cx - 22, cy - 22, 44, 44);
+            ctx.drawImage(secret ? this._glowSprite(SECRET_COIN_GLOW) : glow,
+                cx - 22, cy - 22, 44, 44);
             ctx.globalAlpha = 1;
             ctx.save();
             ctx.translate(cx, cy);
             ctx.scale(spin, 1);
             this._drawSheet(ctx, 'tiles', TILES.COIN, -s / 2, -s / 2, s, s);
+            if (secret) {
+                // Static cream twinkle-star cut into the face (rides the
+                // spin transform so it squashes WITH the coin): chunky
+                // pixel bars, unmistakable against the gold ring even to a
+                // player who never opened the HUD.
+                ctx.fillStyle = SECRET_STAR_COLOR;
+                ctx.fillRect(-1, -6, 2, 12);
+                ctx.fillRect(-6, -1, 12, 2);
+            }
             ctx.restore();
             // Glint: 2px white cross flash on the face, ~every 3 s per coin,
             // staggered by index; only while the face is broadside so it
@@ -2122,6 +2153,18 @@ export class Sprites {
                 ctx.fillStyle = 'rgba(255,255,255,0.9)';
                 ctx.fillRect(cx + 3, cy - 8, 2, 6);
                 ctx.fillRect(cx + 1, cy - 6, 6, 2);
+            }
+            // Secret bonus treasure sparkle (FX.pulse family): two 2px sparks
+            // orbiting the face while the per-index window is open. Reduced
+            // motion drops the movement but keeps cues 1+2, so the premium
+            // still reads statically.
+            if (secret && FX.pulse && secretSparkleAt(this.clock, i)) {
+                const a = this.clock * 1.6 + i * 2.1;
+                ctx.fillStyle = 'rgba(255,244,214,0.95)';
+                ctx.fillRect(Math.round(cx + Math.cos(a) * 13) - 1,
+                    Math.round(cy + Math.sin(a) * 13) - 1, 2, 2);
+                ctx.fillRect(Math.round(cx + Math.cos(a + Math.PI) * 13) - 1,
+                    Math.round(cy + Math.sin(a + Math.PI) * 13) - 1, 2, 2);
             }
         }
     }

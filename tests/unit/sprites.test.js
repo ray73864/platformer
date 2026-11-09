@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE, coinGlintAt, COIN_GLINT_PERIOD, COIN_GLINT_WINDOW, COIN_SPIN_PERIOD } from "../../js/sprites.js";
+import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE, coinGlintAt, COIN_GLINT_PERIOD, COIN_GLINT_WINDOW, COIN_SPIN_PERIOD, secretSparkleAt, SECRET_COIN_GLOW, SECRET_STAR_COLOR, SECRET_SPARKLE_PERIOD, SECRET_SPARKLE_WINDOW } from "../../js/sprites.js";
+import { FX } from "../../js/fx.js";
 import { Level, motifForLevel } from "../../js/level.js";
 
 // Frame-map integrity: every index referenced by the renderer must exist
@@ -553,6 +554,91 @@ test("coin glints fire on a 3 s duty cycle, staggered so coins never blink toget
     }
     // Spin period constant shipped at the briefed ~1.2 s.
     expect(COIN_SPIN_PERIOD).toBeCloseTo(1.2, 6);
+});
+
+// W1 two-tier economy (owner ruling 2026-11-10): secret coins must read as
+// bonus treasure in the sprite path itself — warmer aura hue, static face
+// star, FX.pulse-gated orbiting sparkle — while normal coins keep the exact
+// pre-ruling render.
+test("secret sparkle fires on its own cadence, distinct from the shared glint", () => {
+    const samples = [];
+    // 22 s = exactly 10 sparkle periods on the 0.01 sample grid (2.2 s each),
+    // so the duty-cycle measurement is exact rather than boundary-quantised.
+    for (let t = 0; t < 22; t += 0.01) samples.push(t);
+    const duty = SECRET_SPARKLE_WINDOW / SECRET_SPARKLE_PERIOD;
+    const active = samples.filter(t => secretSparkleAt(t, 0)).length;
+    expect(active / samples.length).toBeCloseTo(duty, 2);
+    // The premium glow is a warmer amber than the plain coin's #ffd76a.
+    expect(SECRET_COIN_GLOW).not.toBe('#ffd76a');
+});
+
+test("drawCoins gives secrets the premium look and leaves normal coins untouched", () => {
+    // Recording ctx factory: every op stringified; glow sentinels keep
+    // _glowSprite off the offscreen-canvas path.
+    const makeCtx = () => {
+        const ops = [];
+        const ctx = {
+            ops,
+            globalAlpha: 1,
+            fillStyle: '',
+            save: () => {},
+            restore: () => {},
+            translate: () => {},
+            scale: () => {},
+            drawImage: (img) => ops.push(`drawImage ${img}`),
+            fillRect: (x, y, w, h) =>
+                ops.push(`fillRect ${ctx.fillStyle} ${x} ${y} ${w} ${h}`)
+        };
+        return ctx;
+    };
+    const premiumSprites = () => {
+        const s = new Sprites();
+        s._glows['#ffd76a'] = 'GOLD';
+        s._glows[SECRET_COIN_GLOW] = 'AMBER';
+        return s;
+    };
+    const coin = (x, secret) => ({ x, y: 0, width: 16, height: 16,
+        collected: false, ...(secret ? { secret: true } : {}) });
+
+    // clock = 1.0: neither the shared glint (indices 0/1) nor the secret's
+    // sparkle window is open, so only the identity cues draw.
+    const s = premiumSprites();
+    s.clock = 1.0;
+    const ctx = makeCtx();
+    s.drawCoins(ctx, [coin(0, false), coin(100, true)]);
+
+    // Aura hues separate the tiers before any shape detail resolves.
+    expect(ctx.ops[0]).toBe('drawImage GOLD');
+    expect(ctx.ops).toContain('drawImage AMBER');
+    // Static face star: exactly the secret's two cream bars, nothing else.
+    const stars = ctx.ops.filter(o => o.startsWith(`fillRect ${SECRET_STAR_COLOR}`));
+    expect(stars.length).toBe(2);
+    // The normal coin contributes zero fillRects of its own.
+    expect(ctx.ops.filter(o => o.startsWith('fillRect')).length).toBe(2);
+
+    // Sparkle window open -> two orbiting sparks ride along.
+    s.clock = 0.1; // secretSparkleAt(0.1, 0): window open for index 0
+    const sparkleCtx = makeCtx();
+    s.drawCoins(sparkleCtx, [coin(0, true)]);
+    expect(sparkleCtx.ops.filter(o => o.includes('rgba(255,244,214,0.95)')).length)
+        .toBe(2);
+    expect(sparkleCtx.ops.filter(o => o.startsWith(`fillRect ${SECRET_STAR_COLOR}`)).length)
+        .toBe(2);
+
+    // FX.pulse off (reduced motion): the movement cue drops, the static
+    // distinction stays.
+    const prevPulse = FX.pulse;
+    FX.pulse = false;
+    try {
+        const rmCtx = makeCtx();
+        s.drawCoins(rmCtx, [coin(0, true)]);
+        expect(rmCtx.ops.filter(o => o.includes('rgba(255,244,214,0.95)')).length)
+            .toBe(0);
+        expect(rmCtx.ops.filter(o => o.startsWith(`fillRect ${SECRET_STAR_COLOR}`)).length)
+            .toBe(2);
+    } finally {
+        FX.pulse = prevPulse;
+    }
 });
 
 test("flowers respect the shelf budget: <=3 per contiguous run, >=4 cells apart", () => {

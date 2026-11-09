@@ -674,8 +674,14 @@ test("two deaths compound on the reduced score; completion pays the reduced clea
     expect(game.state).toBe(STATE.LEVEL_COMPLETE);
     expect(game.score).toBe(before + 40);
     // M5 fields ride every breakdown; the reduced clear carries no-damage 0.
+    // W1 two-tier fields: generated L1 ships no alcove coins, so required ==
+    // total (seed-dependent count read live from the adopted ledger — the
+    // seam pass banked every one of them), and nothing paid a secret premium.
     expect(game.lastClearBreakdown).toEqual({
         coins: 0, combat: 0, clearBonus: 40, noDamageBonus: 0, enemiesBested: 0,
-        deaths: 2, flawless: false, secretsFound: 0, secretsTotal: 0
+        deaths: 2, flawless: false, secretsFound: 0, secretsTotal: 0,
+        coinsRequired: game.collectibles.getRequiredCoins().length,
+        coinsCollected: game.collectibles.getRequiredCoins().length,
+        secretBonus: 0
     });
 });

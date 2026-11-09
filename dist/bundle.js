@@ -5504,6 +5504,13 @@
   function coinGlintAt(clock, index) {
     return (clock + index * 1.37) % COIN_GLINT_PERIOD < COIN_GLINT_WINDOW;
   }
+  var SECRET_COIN_GLOW = "#ffb340";
+  var SECRET_STAR_COLOR = "#fff3d6";
+  var SECRET_SPARKLE_PERIOD = 2.2;
+  var SECRET_SPARKLE_WINDOW = 0.5;
+  function secretSparkleAt(clock, index) {
+    return (clock + index * 0.83) % SECRET_SPARKLE_PERIOD < SECRET_SPARKLE_WINDOW;
+  }
 
   class Sprites {
     constructor() {
@@ -6209,23 +6216,35 @@
         const coin = coins[i];
         if (coin.collected)
           continue;
+        const secret = !!coin.secret;
         const phase = i * 0.618;
         const cx = coin.x + coin.width / 2;
         const cy = coin.y + coin.height / 2 + Math.sin(bobPhase + i * 0.9) * 3;
         const spin = Math.max(0.35, Math.abs(Math.cos(this.clock * spinW + phase)));
         const s = 26;
         ctx.globalAlpha = 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(bobPhase * 0.8 + phase));
-        ctx.drawImage(glow, cx - 22, cy - 22, 44, 44);
+        ctx.drawImage(secret ? this._glowSprite(SECRET_COIN_GLOW) : glow, cx - 22, cy - 22, 44, 44);
         ctx.globalAlpha = 1;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.scale(spin, 1);
         this._drawSheet(ctx, "tiles", TILES.COIN, -s / 2, -s / 2, s, s);
+        if (secret) {
+          ctx.fillStyle = SECRET_STAR_COLOR;
+          ctx.fillRect(-1, -6, 2, 12);
+          ctx.fillRect(-6, -1, 12, 2);
+        }
         ctx.restore();
         if (coinGlintAt(this.clock, i) && spin > 0.6) {
           ctx.fillStyle = "rgba(255,255,255,0.9)";
           ctx.fillRect(cx + 3, cy - 8, 2, 6);
           ctx.fillRect(cx + 1, cy - 6, 6, 2);
+        }
+        if (secret && FX.pulse && secretSparkleAt(this.clock, i)) {
+          const a = this.clock * 1.6 + i * 2.1;
+          ctx.fillStyle = "rgba(255,244,214,0.95)";
+          ctx.fillRect(Math.round(cx + Math.cos(a) * 13) - 1, Math.round(cy + Math.sin(a) * 13) - 1, 2, 2);
+          ctx.fillRect(Math.round(cx + Math.cos(a + Math.PI) * 13) - 1, Math.round(cy + Math.sin(a + Math.PI) * 13) - 1, 2, 2);
         }
       }
     }
@@ -6552,6 +6571,7 @@
       this.scoreElement = this.ensureElement("score-display");
       this.levelElement = this.ensureElement("level-display");
       this.coinsElement = this.ensureElement("coins-display");
+      this.coinBonusElement = this.ensureElement("coin-bonus");
       this.finalScoreElement = this.ensureElement("final-score");
       this.gameCompleteScoreElement = this.ensureElement("game-complete-score");
       this.highScoreElement = this.ensureElement("high-score");
@@ -6651,6 +6671,19 @@
         }
         this.coinsElement.classList.toggle("coins-done", collected >= total);
       }
+    }
+    updateSecretBadge(found) {
+      const n = Number.isFinite(found) && found > 0 ? Math.floor(found) : 0;
+      const el = this.coinBonusElement;
+      if (!el || !el.isConnected)
+        return;
+      const text = n > 0 ? `+${n}★` : "";
+      if (el.textContent !== text) {
+        el.textContent = text;
+        if (n > 0)
+          this._queueAnnouncement("secret", `bonus coins ${n}`);
+      }
+      el.hidden = !(n > 0);
     }
     updateScore(score) {
       if (this.scoreElement && this.scoreElement.isConnected) {
@@ -6842,7 +6875,10 @@
         flawless = false,
         noDamageBonus = 0,
         secretsFound = 0,
-        secretsTotal = 0
+        secretsTotal = 0,
+        coinsCollected = 0,
+        coinsRequired = 0,
+        secretBonus = 0
       } = breakdown || {};
       const bonusEl = document.getElementById("clear-bonus");
       if (bonusEl) {
@@ -6862,7 +6898,13 @@
       }
       const secretsEl = document.getElementById("secrets-found");
       if (secretsEl) {
-        secretsEl.textContent = secretsTotal > 0 ? `Secrets: ${secretsFound}/${secretsTotal}` : "";
+        let text = "";
+        if (secretsTotal > 0) {
+          text = `Coins ${coinsCollected}/${coinsRequired} · ` + `Secrets ${secretsFound}/${secretsTotal}★`;
+          if (secretBonus > 0)
+            text += ` (+${secretBonus})`;
+        }
+        secretsEl.textContent = text;
         secretsEl.hidden = !(secretsTotal > 0);
       }
     }
@@ -8277,6 +8319,7 @@
       this.levelStartScore = 0;
       this.deathsOnCurrentLevel = 0;
       this.levelCoinPoints = 0;
+      this.levelSecretPoints = 0;
       this.levelCombatPoints = 0;
       this.levelEnemiesKilled = 0;
       this.levelEnemiesDodged = 0;
@@ -8599,6 +8642,7 @@
     resetLevelEconomyTrackers() {
       this.deathsOnCurrentLevel = 0;
       this.levelCoinPoints = 0;
+      this.levelSecretPoints = 0;
       this.levelCombatPoints = 0;
       this.levelEnemiesKilled = 0;
       this.levelEnemiesDodged = 0;
@@ -8722,6 +8766,12 @@
           collected++;
       }
       this.ui.updateCoins(collected, required.length);
+      let secretsFound = 0;
+      for (const coin of this.collectibles.getCoins()) {
+        if (coin.secret && coin.collected)
+          secretsFound++;
+      }
+      this.ui.updateSecretBadge(secretsFound);
     }
     tryConstructLevel(levelNumber) {
       const seed = this.seedFor(levelNumber);
@@ -8774,8 +8824,8 @@
         console.warn("Run clock invalid at level transition; using default", this.timer.baseTime, "seconds");
         this.timer.timeRemaining = this.timer.baseTime;
       }
-      if (this.collectibles.getCoins().length < 3) {
-        console.warn("Level generated with fewer than 3 coins:", this.collectibles.getCoins().length);
+      if (this.collectibles.getRequiredCoins().length < 3) {
+        console.warn("Level generated with fewer than 3 required coins:", this.collectibles.getRequiredCoins().length);
       }
       this.timerActive = this.difficulty.isTimerEnabled(this.currentLevel);
       this.ui.setTimerVisible(this.timerActive);
@@ -8822,7 +8872,10 @@
         deaths: this.deathsOnCurrentLevel,
         flawless: this.deathsOnCurrentLevel === 0,
         secretsFound: secretCoins.filter((c) => c.collected).length,
-        secretsTotal: secretCoins.length
+        secretsTotal: secretCoins.length,
+        coinsRequired: this.collectibles.getRequiredCoins().length,
+        coinsCollected: this.collectibles.getRequiredCoins().filter((c) => c.collected).length,
+        secretBonus: this.levelSecretPoints
       };
       this.setState(STATE.LEVEL_COMPLETE);
       playSfx(SFX_VOICES.LEVEL_COMPLETE);
@@ -9190,6 +9243,7 @@
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, COIN_BURST_COLOR, 12);
           this.score = Math.min(this.score + coinPoints, Number.MAX_SAFE_INTEGER);
           this.levelCoinPoints += coinPoints;
+          this.levelSecretPoints += pickups.secretCount * SECRET_COIN_SCORE;
           this.runSecretsFound += pickups.secretCount;
           for (let i = 0;i < pickups.count; i++)
             this.timer.addCoinBonus();
