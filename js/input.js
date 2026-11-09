@@ -5,6 +5,18 @@ function isButtonTarget(event) {
     return !!event.target && event.target.tagName === 'BUTTON';
 }
 
+// Wave D touch controls: virtual action -> synthetic key code. Distinct
+// spellings (not ArrowLeft/Space/KeyX) so releasing a virtual button can
+// never clear a physically-held key and vice versa, while every consumer
+// below treats each pair as ONE logical input. Lives here rather than in
+// main.js because InputHandler owns the keys set.
+const TOUCH_CODES = {
+    left: 'TouchLeft',
+    right: 'TouchRight',
+    jump: 'TouchSpace',
+    dash: 'TouchDash'
+};
+
 export class InputHandler {
     constructor() {
         this.keys = new Set();
@@ -110,17 +122,21 @@ export class InputHandler {
         }
     }
 
-    // Key state queries
+    // Key state queries. Each pairs the physical spellings with the Wave D
+    // synthetic touch code (TOUCH_CODES) — one logical input per direction
+    // regardless of which hardware drove it.
     isLeft() {
-        return this.keys.has('ArrowLeft') || this.keys.has('KeyA');
+        return this.keys.has('ArrowLeft') || this.keys.has('KeyA') ||
+            this.keys.has(TOUCH_CODES.left);
     }
 
     isRight() {
-        return this.keys.has('ArrowRight') || this.keys.has('KeyD');
+        return this.keys.has('ArrowRight') || this.keys.has('KeyD') ||
+            this.keys.has(TOUCH_CODES.right);
     }
 
     isJump() {
-        return this.keys.has('Space');
+        return this.keys.has('Space') || this.keys.has(TOUCH_CODES.jump);
     }
 
     // Walk modifier (Shift, either side): no existing binding uses it —
@@ -135,7 +151,51 @@ export class InputHandler {
     // the burst is fire-and-forget in Player.pressDash(), nothing reads a
     // held dash key per frame. Blur/visibilitychange clear it like every key.
     isDash() {
-        return this.keys.has('KeyX') || this.keys.has('KeyC');
+        return this.keys.has('KeyX') || this.keys.has('KeyC') ||
+            this.keys.has(TOUCH_CODES.dash);
+    }
+
+    // --- Touch API (Wave D) --------------------------------------------------
+    // Drive the SAME logical paths as keydown/keyup without synthesizing
+    // KeyboardEvents: the press fires the initial-press callbacks behind the
+    // same wasDown-before-add filter handleKeyDown uses (a held finger whose
+    // pointerdown re-fires can never double-jump), and the release fires the
+    // release callbacks exactly like keyup. Callbacks themselves keep their
+    // PLAYING gates — these methods only mirror the keyboard plumbing.
+    // Returns true when the action name is known (test/debug seam).
+    touchPress(action) {
+        const code = TOUCH_CODES[action];
+        if (!code) return false;
+        const wasDown = this.keys.has(code);
+        this.keys.add(code);
+        if (!wasDown) {
+            if (action === 'left') {
+                this.onMoveLeftCallback?.();
+            } else if (action === 'right') {
+                this.onMoveRightCallback?.();
+            } else if (action === 'jump') {
+                this.onJumpCallback?.();
+            } else if (action === 'dash') {
+                this.onDashCallback?.();
+            }
+        }
+        return true;
+    }
+
+    touchRelease(action) {
+        const code = TOUCH_CODES[action];
+        if (!code) return false;
+        this.keys.delete(code);
+        if (action === 'left') {
+            this.onReleaseLeftCallback?.();
+        } else if (action === 'right') {
+            this.onReleaseRightCallback?.();
+        } else if (action === 'jump') {
+            // Variable jump height applies to pad-launched arcs too (main.js
+            // routes releaseJump through the same Player contract).
+            this.onReleaseJumpCallback?.();
+        }
+        return true;
     }
 
     // Callback setters

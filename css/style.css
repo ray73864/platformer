@@ -486,3 +486,80 @@ button:focus-visible {
     z-index: 15;
     pointer-events: none;
 }
+
+/* ===========================================================================
+   Wave D — touch controls (coarse pointers only).
+   ========================================================================= */
+
+/* Hidden by construction: the container is display:none unless BOTH the
+   (pointer: coarse) media query matches AND main.js added .enabled after
+   its own matchMedia check. Fine-pointer devices never see the pad even if
+   the class were set by hand; the class is also the harness-visible seam
+   (test DOMs evaluate no stylesheet). Container is click-through; the
+   bottom clusters opt back in. z-index sits above the canvas/HUD but below
+   every overlay, so menus and end screens swallow taps while they're up —
+   the pad can never drive a paused or finished run. */
+#touch-controls {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    display: none;
+}
+
+@media (pointer: coarse) {
+    #touch-controls.enabled {
+        display: block;
+    }
+}
+
+/* Thumb-reachable bottom corners, clear of notches and home bars. */
+.tc-cluster {
+    position: absolute;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 14px;
+    pointer-events: auto;
+}
+
+.tc-left {
+    left: calc(16px + env(safe-area-inset-left, 0px));
+}
+
+.tc-right {
+    right: calc(16px + env(safe-area-inset-right, 0px));
+}
+
+/* 64 px square targets — comfortably past the 44 px WCAG 2.5.5 floor under
+   a thumb. Translucent cream so the scene reads through them; the global
+   ink border + hard shadow keep the pixel-art voice. touch-action:none
+   stops scroll/zoom gestures fighting the pad; selection is pointless here. */
+#touch-controls button {
+    width: 64px;
+    height: 64px;
+    min-height: 64px;
+    padding: 0;
+    font-size: 0.6rem;
+    background: rgba(253, 246, 232, 0.85);
+    color: var(--ink);
+    box-shadow: 0 4px 0 rgba(26, 16, 10, 0.6);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#touch-controls button:active {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 rgba(26, 16, 10, 0.6);
+    background: rgba(255, 226, 122, 0.9);
+}
+
+/* Action buttons read one tier hotter than the dpad: jump gold, dash amber
+   (both hold ink text — same contrast family as the panel CTAs). */
+#tc-jump-btn {
+    background: rgba(255, 210, 63, 0.9);
+}
+
+#tc-dash-btn {
+    background: rgba(244, 164, 96, 0.9);
+}

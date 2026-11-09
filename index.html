@@ -146,6 +146,22 @@
              click-through, invisible to assistive tech. -->
         <canvas id="celebration-canvas" aria-hidden="true"></canvas>
 
+        <!-- Wave D touch controls: dpad + jump/dash for coarse pointers only.
+             Hidden by construction — shown only when CSS (pointer: coarse)
+             matches AND main.js adds .enabled after its own matchMedia gate
+             (see bindEvents). Real <button>s with aria-labels; they drive
+             InputHandler's touch API, never synthesized key events. -->
+        <div id="touch-controls">
+            <div class="tc-cluster tc-left">
+                <button id="tc-left-btn" aria-label="Move left">LEFT</button>
+                <button id="tc-right-btn" aria-label="Move right">RIGHT</button>
+            </div>
+            <div class="tc-cluster tc-right">
+                <button id="tc-dash-btn" aria-label="Dash">DASH</button>
+                <button id="tc-jump-btn" aria-label="Jump">JUMP</button>
+            </div>
+        </div>
+
         <!-- Loop-error notice (spec §General Error Handling: state recovery
              "with error message displayed"). role=alert announces changes to
              assistive tech; UI.showErrorMessage reveals and auto-hides it. -->

@@ -70,6 +70,12 @@
   function isButtonTarget(event) {
     return !!event.target && event.target.tagName === "BUTTON";
   }
+  var TOUCH_CODES = {
+    left: "TouchLeft",
+    right: "TouchRight",
+    jump: "TouchSpace",
+    dash: "TouchDash"
+  };
 
   class InputHandler {
     constructor() {
@@ -137,19 +143,52 @@
       }
     }
     isLeft() {
-      return this.keys.has("ArrowLeft") || this.keys.has("KeyA");
+      return this.keys.has("ArrowLeft") || this.keys.has("KeyA") || this.keys.has(TOUCH_CODES.left);
     }
     isRight() {
-      return this.keys.has("ArrowRight") || this.keys.has("KeyD");
+      return this.keys.has("ArrowRight") || this.keys.has("KeyD") || this.keys.has(TOUCH_CODES.right);
     }
     isJump() {
-      return this.keys.has("Space");
+      return this.keys.has("Space") || this.keys.has(TOUCH_CODES.jump);
     }
     isWalk() {
       return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     }
     isDash() {
-      return this.keys.has("KeyX") || this.keys.has("KeyC");
+      return this.keys.has("KeyX") || this.keys.has("KeyC") || this.keys.has(TOUCH_CODES.dash);
+    }
+    touchPress(action) {
+      const code = TOUCH_CODES[action];
+      if (!code)
+        return false;
+      const wasDown = this.keys.has(code);
+      this.keys.add(code);
+      if (!wasDown) {
+        if (action === "left") {
+          this.onMoveLeftCallback?.();
+        } else if (action === "right") {
+          this.onMoveRightCallback?.();
+        } else if (action === "jump") {
+          this.onJumpCallback?.();
+        } else if (action === "dash") {
+          this.onDashCallback?.();
+        }
+      }
+      return true;
+    }
+    touchRelease(action) {
+      const code = TOUCH_CODES[action];
+      if (!code)
+        return false;
+      this.keys.delete(code);
+      if (action === "left") {
+        this.onReleaseLeftCallback?.();
+      } else if (action === "right") {
+        this.onReleaseRightCallback?.();
+      } else if (action === "jump") {
+        this.onReleaseJumpCallback?.();
+      }
+      return true;
     }
     onMoveLeft(callback) {
       this.onMoveLeftCallback = callback;
@@ -7211,12 +7250,14 @@
   __export(exports_audio, {
     MUSIC_PRESETS: () => MUSIC_PRESETS,
     MUTE_STORAGE_KEY: () => MUTE_STORAGE_KEY,
+    SFX_VOICES: () => SFX_VOICES,
     advanceScheduler: () => advanceScheduler,
     buildMelodyLoop: () => buildMelodyLoop,
     duckMusic: () => duckMusic,
     getState: () => getState,
     init: () => init,
     isMuted: () => isMuted,
+    listSfx: () => listSfx,
     loadMutedPreference: () => loadMutedPreference,
     musicVariantFor: () => musicVariantFor,
     playSfx: () => playSfx,
@@ -7444,13 +7485,15 @@
     osc.start(t);
     osc.stop(t + dur + 0.05);
   }
-  function noiseBurst({ dur, peak, bandHz, when }) {
+  function noiseBurst({ dur, peak, bandHz, endBandHz = 0, when }) {
     const t = when ?? ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = cachedNoiseBuffer();
     const bp = ctx.createBiquadFilter();
     bp.type = "bandpass";
-    bp.frequency.value = bandHz;
+    bp.frequency.setValueAtTime(bandHz, t);
+    if (endBandHz > 0)
+      bp.frequency.exponentialRampToValueAtTime(endBandHz, t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(peak, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
@@ -7460,20 +7503,84 @@
     src.start(t);
     src.stop(t + dur + 0.05);
   }
+  var SFX_VOICES = Object.freeze({
+    JUMP: "jump",
+    LAND: "land",
+    COIN: "coin",
+    COIN_SECRET: "coin_secret",
+    STOMP: "stomp",
+    BOMBARD_FIRE: "bombard_fire",
+    DEATH: "death",
+    PORTAL_UNLOCK: "portal_unlock",
+    LEVEL_COMPLETE: "level_complete",
+    DASH: "dash",
+    WALL_SLIDE: "wall_slide",
+    PAD_BOUNCE: "pad_bounce",
+    CRATE_PUSH: "crate_push"
+  });
+  function listSfx() {
+    return Object.keys(SFX);
+  }
+  var SECRET_COIN_WAVE = "sine";
+  var SECRET_COIN_LOW_HZ = 987.77;
+  var SECRET_COIN_MID_HZ = 1318.51;
+  var SECRET_COIN_HIGH_HZ = 1975.53;
+  var STOMP_BASE_HZ = 300;
+  var STOMP_END_HZ = 60;
+  var STOMP_CHAIN_SEMITONE_STEP = 3;
+  var STOMP_CHAIN_MAX_STEPS = 4;
+  var LAND_WAVE = "triangle";
+  var LAND_END_HZ = 65;
+  var LAND_FILTER_HZ = 400;
+  var DASH_NOISE_DUR = 0.16;
+  var DASH_NOISE_PEAK = 0.2;
+  var DASH_BAND_START_HZ = 500;
+  var DASH_BAND_END_HZ = 2400;
+  var DASH_BODY_WAVE = "square";
+  var DASH_BODY_HZ = 480;
+  var DASH_BODY_END_HZ = 160;
+  var WALL_SLIDE_NOISE_DUR = 0.07;
+  var WALL_SLIDE_NOISE_PEAK = 0.05;
+  var WALL_SLIDE_BAND_HZ = 1500;
+  var PAD_BOUNCE_WAVE = "triangle";
+  var PAD_BOUNCE_LOW_HZ = 170;
+  var PAD_BOUNCE_HIGH_HZ = 560;
+  var PAD_BOUNCE_SHEEN_HZ = 340;
+  var PAD_BOUNCE_SHEEN_END_HZ = 1120;
+  var CRATE_PUSH_NOISE_DUR = 0.05;
+  var CRATE_PUSH_NOISE_PEAK = 0.045;
+  var CRATE_PUSH_BAND_HZ = 260;
   var SFX = {
     jump() {
       tone({ wave: "square", freq: 220, endFreq: 600, dur: 0.12, peak: 0.28 });
     },
-    land() {
-      tone({ wave: "triangle", freq: 150, endFreq: 65, dur: 0.15, peak: 0.32, filterHz: 400 });
+    land(depth = 0.5) {
+      const d = Math.min(1, Math.max(0.25, depth));
+      tone({
+        wave: LAND_WAVE,
+        freq: 120 + 60 * d,
+        endFreq: LAND_END_HZ,
+        dur: 0.12 + 0.06 * d,
+        peak: 0.22 + 0.2 * d,
+        filterHz: LAND_FILTER_HZ
+      });
     },
     coin() {
       const t = ctx.currentTime;
       tone({ wave: "sine", freq: 987.77, dur: 0.07, peak: 0.26, when: t });
       tone({ wave: "sine", freq: 1318.51, dur: 0.16, peak: 0.26, when: t + 0.07 });
     },
-    stomp() {
-      tone({ wave: "triangle", freq: 300, endFreq: 60, dur: 0.18, peak: 0.4, filterHz: 900 });
+    stomp(step = 0) {
+      const s = Math.min(STOMP_CHAIN_MAX_STEPS, Math.max(0, Number.isFinite(step) ? Math.floor(step) : 0));
+      const mul = Math.pow(2, s * STOMP_CHAIN_SEMITONE_STEP / 12);
+      tone({
+        wave: "triangle",
+        freq: STOMP_BASE_HZ * mul,
+        endFreq: STOMP_END_HZ * mul,
+        dur: 0.18,
+        peak: 0.4,
+        filterHz: 900
+      });
     },
     bombard_fire() {
       tone({ wave: "triangle", freq: 110, endFreq: 45, dur: 0.22, peak: 0.4, filterHz: 320 });
@@ -7498,6 +7605,79 @@
         filterHz: 1600,
         when: t + i * 0.12
       }));
+    },
+    coin_secret() {
+      const t = ctx.currentTime;
+      tone({
+        wave: SECRET_COIN_WAVE,
+        freq: SECRET_COIN_LOW_HZ,
+        dur: 0.09,
+        peak: 0.24,
+        when: t
+      });
+      tone({
+        wave: SECRET_COIN_WAVE,
+        freq: SECRET_COIN_MID_HZ,
+        dur: 0.12,
+        peak: 0.24,
+        when: t + 0.08
+      });
+      tone({
+        wave: "triangle",
+        freq: SECRET_COIN_HIGH_HZ,
+        dur: 0.24,
+        peak: 0.12,
+        when: t + 0.16
+      });
+    },
+    dash() {
+      noiseBurst({
+        dur: DASH_NOISE_DUR,
+        peak: DASH_NOISE_PEAK,
+        bandHz: DASH_BAND_START_HZ,
+        endBandHz: DASH_BAND_END_HZ
+      });
+      tone({
+        wave: DASH_BODY_WAVE,
+        freq: DASH_BODY_HZ,
+        endFreq: DASH_BODY_END_HZ,
+        dur: 0.1,
+        peak: 0.1
+      });
+    },
+    wall_slide() {
+      noiseBurst({
+        dur: WALL_SLIDE_NOISE_DUR,
+        peak: WALL_SLIDE_NOISE_PEAK,
+        bandHz: WALL_SLIDE_BAND_HZ
+      });
+    },
+    pad_bounce() {
+      const t = ctx.currentTime;
+      tone({
+        wave: PAD_BOUNCE_WAVE,
+        freq: PAD_BOUNCE_LOW_HZ,
+        endFreq: PAD_BOUNCE_HIGH_HZ,
+        dur: 0.24,
+        peak: 0.32,
+        attack: 0.012,
+        when: t
+      });
+      tone({
+        wave: "sine",
+        freq: PAD_BOUNCE_SHEEN_HZ,
+        endFreq: PAD_BOUNCE_SHEEN_END_HZ,
+        dur: 0.16,
+        peak: 0.1,
+        when: t + 0.03
+      });
+    },
+    crate_push() {
+      noiseBurst({
+        dur: CRATE_PUSH_NOISE_DUR,
+        peak: CRATE_PUSH_NOISE_PEAK,
+        bandHz: CRATE_PUSH_BAND_HZ
+      });
     }
   };
   function stopScheduler() {
@@ -7708,7 +7888,7 @@
   function isMuted() {
     return muted;
   }
-  function playSfx(name) {
+  function playSfx(name, param) {
     if (muted)
       return;
     if (!ensureContext())
@@ -7718,7 +7898,7 @@
       console.warn("Unknown sound effect requested:", name);
       return;
     }
-    fn();
+    fn(param);
   }
   function startMusic(themeIndex, levelNumber) {
     if (!ensureContext())
@@ -7870,6 +8050,7 @@
   var SKID_MIN_SPEED = 150;
   var WALL_SLIDE_DUST_INTERVAL = 0.12;
   var CRATE_PUSH_DUST_INTERVAL = 0.15;
+  var CRATE_PUSH_STRAIN_INTERVAL = 0.16;
   var DASH_GHOST_MAX = 6;
   var DASH_GHOST_LIFE = 0.22;
   var LEAN_MAX_RAD = 0.07;
@@ -7969,6 +8150,8 @@
       this._prevGrounded = true;
       this._dustTx = -1;
       this._slideDustT = 0;
+      this._prevSliding = 0;
+      this._crateStrainT = 0;
       this._portalUnlocked = false;
       initFX();
       this.settings = loadSettings();
@@ -8132,7 +8315,7 @@
         const wallBefore = this.player.wallSide;
         this.player.pressJump();
         if (this.player.vy < vyBefore) {
-          playSfx("jump");
+          playSfx(SFX_VOICES.JUMP);
           if (this.player.wallLockTimer > 0 && lockBefore <= 0 && wallBefore !== 0 && FX.dust) {
             const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
             spawnDust(this.dust, wallBefore === -1 ? this.player.x : this.player.x + this.player.width, this.player.y + this.player.height / 2, dustTint(wTheme), {
@@ -8157,6 +8340,7 @@
           return;
         if (!this.player.pressDash())
           return;
+        playSfx(SFX_VOICES.DASH);
         if (FX.dust) {
           const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
           spawnDust(this.dust, this.player.dashDir === -1 ? this.player.x + this.player.width : this.player.x, this.player.y + this.player.height / 2, dustTint(dTheme), {
@@ -8197,6 +8381,44 @@
           this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
         }
       }, { signal: this._abort.signal });
+      this._bindTouchControls();
+    }
+    _bindTouchControls() {
+      const root = document.getElementById("touch-controls");
+      if (!root)
+        return;
+      let coarse;
+      try {
+        coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+      } catch {
+        coarse = false;
+      }
+      if (coarse)
+        root.classList.add("enabled");
+      const signal = this._abort.signal;
+      const bindPadButton = (id, action) => {
+        const btn = document.getElementById(id);
+        if (!btn)
+          return;
+        btn.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          if (btn.setPointerCapture && e.pointerId !== undefined) {
+            btn.setPointerCapture(e.pointerId);
+          }
+          this.input.touchPress(action);
+        }, { signal });
+        const release = (e) => {
+          e.preventDefault();
+          this.input.touchRelease(action);
+        };
+        btn.addEventListener("pointerup", release, { signal });
+        btn.addEventListener("pointercancel", release, { signal });
+        btn.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
+      };
+      bindPadButton("tc-left-btn", "left");
+      bindPadButton("tc-right-btn", "right");
+      bindPadButton("tc-jump-btn", "jump");
+      bindPadButton("tc-dash-btn", "dash");
     }
     setState(next) {
       if (!Object.values(STATE).includes(next)) {
@@ -8456,6 +8678,8 @@
       this.crate = crateDescs.length ? new Crate(crateDescs[0]) : null;
       this._crateWalls = this.crate ? crateContainmentWalls(level.width * level.tileSize, level.height * level.tileSize) : [];
       this._crateDustT = 0;
+      this._prevSliding = 0;
+      this._crateStrainT = 0;
       this._updateCoinHud();
       this._portalUnlocked = this.collectibles.meetsPortalRequirement();
       this.levelStartScore = this.score;
@@ -8517,7 +8741,7 @@
         secretsTotal: secretCoins.length
       };
       this.setState(STATE.LEVEL_COMPLETE);
-      playSfx("level_complete");
+      playSfx(SFX_VOICES.LEVEL_COMPLETE);
       this.ui.setPauseEnabled(false);
       this.levelCompleteTimer = 2;
       this.levelTransitionStalled = false;
@@ -8529,7 +8753,7 @@
       this.setState(STATE.GAME_OVER);
       this.deathsOnCurrentLevel++;
       stopMusic();
-      playSfx("death");
+      playSfx(SFX_VOICES.DEATH);
       this._impactFx(DEATH_SHAKE_TIME, DEATH_SHAKE_MAG);
       if (this.player) {
         spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, "#ff5a5a", 22);
@@ -8630,7 +8854,7 @@
         const bufferWasPending = this.player.jumpBufferTimer > 0;
         this.player.update(dt, this.input.isLeft(), this.input.isRight(), { walk: this.input.isWalk() });
         if (bufferWasPending && this.player.jumpBufferTimer === 0 && this.player.vy < 0) {
-          playSfx("jump");
+          playSfx(SFX_VOICES.JUMP);
           applyJumpBoost(this.player, this._riding);
         }
         this.physics.applyGravity(this.player, dt);
@@ -8655,7 +8879,7 @@
           if (pad && vyBeforeResolve >= 0) {
             applyPadLaunch(this.player);
             pad.squash = PAD_SQUASH_TIME;
-            playSfx("jump");
+            playSfx(SFX_VOICES.PAD_BOUNCE);
             this._launchStretch = LAUNCH_STRETCH_TIME;
             if (FX.dust) {
               const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
@@ -8687,8 +8911,9 @@
               size: 4
             });
           }
-          if (vyBeforeResolve >= LANDING_SFX_MIN_FALL)
-            playSfx("land");
+          if (vyBeforeResolve >= LANDING_SFX_MIN_FALL) {
+            playSfx(SFX_VOICES.LAND, this._landDepth);
+          }
           if (!this.input.isLeft() && !this.input.isRight()) {
             this.player.vx = 0;
           }
@@ -8725,6 +8950,10 @@
         } else {
           this._dustTx = -1;
         }
+        if (this.player.sliding && !this._prevSliding) {
+          playSfx(SFX_VOICES.WALL_SLIDE);
+        }
+        this._prevSliding = this.player.sliding;
         if (this.player.sliding && FX.dust) {
           this._slideDustT += dt;
           if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
@@ -8760,6 +8989,15 @@
         } else {
           this._crateDustT = 0;
         }
+        if (this.crate && this.crate.pushed) {
+          this._crateStrainT += dt;
+          if (this._crateStrainT >= CRATE_PUSH_STRAIN_INTERVAL) {
+            this._crateStrainT = 0;
+            playSfx(SFX_VOICES.CRATE_PUSH);
+          }
+        } else {
+          this._crateStrainT = 0;
+        }
         if (this.player.dashTimer > 0 && FX.trails) {
           this._dashGhosts.push({ x: this.player.x, y: this.player.y, age: 0 });
           if (this._dashGhosts.length > DASH_GHOST_MAX) {
@@ -8782,7 +9020,7 @@
         }
         const contact = this.enemyManager.resolvePlayerContact(this.player);
         if (contact.stomped > 0) {
-          playSfx("stomp");
+          playSfx(SFX_VOICES.STOMP, this.stompChain);
           this.player.vy = -STOMP_BOUNCE2;
           this.player.coyoteTimer = 0;
           this.player.jumpCutAvailable = false;
@@ -8817,7 +9055,7 @@
         }
         const shots = this.projectiles.updateAll(dt, this.player);
         if (shots.fired > 0)
-          playSfx("bombard_fire");
+          playSfx(SFX_VOICES.BOMBARD_FIRE);
         for (const impact of shots.impacts) {
           spawnBurst(this.particles, impact.x, impact.y, "#b9a58a", 6);
           this._impactFx(SHELL_SHAKE_TIME, SHELL_SHAKE_MAG);
@@ -8858,7 +9096,11 @@
         if (pickups.count > 0) {
           const normalCount = pickups.count - pickups.secretCount;
           const coinPoints = normalCount * COIN_POINTS + pickups.secretCount * SECRET_COIN_SCORE;
-          playSfx("coin");
+          if (normalCount > 0)
+            playSfx(SFX_VOICES.COIN);
+          if (pickups.secretCount > 0) {
+            playSfx(SFX_VOICES.COIN_SECRET);
+          }
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, COIN_BURST_COLOR, 12);
           this.score = Math.min(this.score + coinPoints, Number.MAX_SAFE_INTEGER);
           this.levelCoinPoints += coinPoints;
@@ -8877,7 +9119,7 @@
         }
         if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
           this._portalUnlocked = true;
-          playSfx("portal_unlock");
+          playSfx(SFX_VOICES.PORTAL_UNLOCK);
           const gate = this.level.getPortal();
           if (gate && FX.pulse) {
             const gx = gate.x + gate.width / 2;

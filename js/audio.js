@@ -16,7 +16,7 @@
 //
 // Pure-logic seams exported for unit tests (no audio hardware needed):
 // presetForLevel, musicVariantFor, buildMelodyLoop, advanceScheduler,
-// loadMutedPreference, getState.
+// loadMutedPreference, getState, SFX_VOICES, listSfx.
 
 const MUSIC_LEVEL = 0.35;
 const SFX_LEVEL = 0.6;
@@ -342,13 +342,16 @@ function tone({ wave = 'sine', freq, endFreq = 0, dur, peak, attack = 0.005, fil
     osc.stop(t + dur + 0.05);
 }
 
-function noiseBurst({ dur, peak, bandHz, when }) {
+// Bandpass noise one-shot. endBandHz > 0 sweeps the band across the burst
+// (Wave D dash whoosh); absent, the band holds steady like every older call.
+function noiseBurst({ dur, peak, bandHz, endBandHz = 0, when }) {
     const t = when ?? ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = cachedNoiseBuffer();
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = bandHz;
+    bp.frequency.setValueAtTime(bandHz, t);
+    if (endBandHz > 0) bp.frequency.exponentialRampToValueAtTime(endBandHz, t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(peak, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
@@ -359,16 +362,78 @@ function noiseBurst({ dur, peak, bandHz, when }) {
     src.stop(t + dur + 0.05);
 }
 
+// Voice registry: the public event→voice contract with main.js. Every
+// gameplay event site plays through one of these constants (no bare string
+// literals at call sites), and the suite pins the mapping both ways against
+// the implemented SFX table below — deleting a mapping or a voice goes red.
+export const SFX_VOICES = Object.freeze({
+    JUMP: 'jump',
+    LAND: 'land',
+    COIN: 'coin',
+    COIN_SECRET: 'coin_secret',
+    STOMP: 'stomp',
+    BOMBARD_FIRE: 'bombard_fire',
+    DEATH: 'death',
+    PORTAL_UNLOCK: 'portal_unlock',
+    LEVEL_COMPLETE: 'level_complete',
+    DASH: 'dash',
+    WALL_SLIDE: 'wall_slide',
+    PAD_BOUNCE: 'pad_bounce',
+    CRATE_PUSH: 'crate_push'
+});
+
+// Implemented voice names (registry-completeness seam; order = SFX table).
+export function listSfx() {
+    return Object.keys(SFX);
+}
+
+// Wave D tuning constants — every new/parameterised voice reads its
+// frequencies and waveforms from named values here.
+const SECRET_COIN_WAVE = 'sine';
+const SECRET_COIN_LOW_HZ = 987.77;   // B5 — the plain ping's first tone
+const SECRET_COIN_MID_HZ = 1318.51;  // E6 — the plain ping's second tone
+const SECRET_COIN_HIGH_HZ = 1975.53; // B6 — the richer tail only secrets play
+const STOMP_BASE_HZ = 300;
+const STOMP_END_HZ = 60;
+const STOMP_CHAIN_SEMITONE_STEP = 3; // minor third per chain step: clearly rising
+const STOMP_CHAIN_MAX_STEPS = 4;     // pitch caps there (chain spam stays sane)
+const LAND_WAVE = 'triangle';
+const LAND_END_HZ = 65;
+const LAND_FILTER_HZ = 400;
+const DASH_NOISE_DUR = 0.16;
+const DASH_NOISE_PEAK = 0.2;
+const DASH_BAND_START_HZ = 500;      // whoosh: band sweeps up through the burst
+const DASH_BAND_END_HZ = 2400;
+const DASH_BODY_WAVE = 'square';
+const DASH_BODY_HZ = 480;
+const DASH_BODY_END_HZ = 160;
+const WALL_SLIDE_NOISE_DUR = 0.07;   // subtle by spec: a tick, not a loop
+const WALL_SLIDE_NOISE_PEAK = 0.05;
+const WALL_SLIDE_BAND_HZ = 1500;
+const PAD_BOUNCE_WAVE = 'triangle';
+const PAD_BOUNCE_LOW_HZ = 170;       // boing: fast upward bend...
+const PAD_BOUNCE_HIGH_HZ = 560;
+const PAD_BOUNCE_SHEEN_HZ = 340;     // ...plus an octave sine sheen
+const PAD_BOUNCE_SHEEN_END_HZ = 1120;
+const CRATE_PUSH_NOISE_DUR = 0.05;
+const CRATE_PUSH_NOISE_PEAK = 0.045; // very quiet strain scuff under everything
+const CRATE_PUSH_BAND_HZ = 260;
+
 // One-shot SFX set. Punchy retro blips, each under 0.4 s except the win
-// sting. Names are the public contract with main.js.
+// sting. Names are the public contract with main.js (see SFX_VOICES).
 const SFX = {
     // Quick rising square blip.
     jump() {
         tone({ wave: 'square', freq: 220, endFreq: 600, dur: 0.12, peak: 0.28 });
     },
-    // Soft low thud, filtered: touchdown weight without a click.
-    land() {
-        tone({ wave: 'triangle', freq: 150, endFreq: 65, dur: 0.15, peak: 0.32, filterHz: 400 });
+    // Soft low thud, filtered: touchdown weight without a click. Wave D:
+    // magnitude rides the fall-speed bucket (Game passes its _landDepth,
+    // 0.25..1) — soft taps stay shallow, big drops slam. Default matches
+    // the historical fixed voice (d=0.5 reproduces 150 Hz / 0.32 / 0.15 s).
+    land(depth = 0.5) {
+        const d = Math.min(1, Math.max(0.25, depth));
+        tone({ wave: LAND_WAVE, freq: 120 + 60 * d, endFreq: LAND_END_HZ,
+            dur: 0.12 + 0.06 * d, peak: 0.22 + 0.2 * d, filterHz: LAND_FILTER_HZ });
     },
     // Classic two-tone sine ping (B5 -> E6).
     coin() {
@@ -377,8 +442,15 @@ const SFX = {
         tone({ wave: 'sine', freq: 1318.51, dur: 0.16, peak: 0.26, when: t + 0.07 });
     },
     // Downward squish for stomps: falling triangle through a closing filter.
-    stomp() {
-        tone({ wave: 'triangle', freq: 300, endFreq: 60, dur: 0.18, peak: 0.4, filterHz: 900 });
+    // Wave D: the chain step (Game passes its airborne kill streak BEFORE
+    // this hit's increment — 0 = normal stomp) raises the pitch one minor
+    // third per step so chains climb audibly; the sweep shape is untouched.
+    stomp(step = 0) {
+        const s = Math.min(STOMP_CHAIN_MAX_STEPS,
+            Math.max(0, Number.isFinite(step) ? Math.floor(step) : 0));
+        const mul = Math.pow(2, s * STOMP_CHAIN_SEMITONE_STEP / 12);
+        tone({ wave: 'triangle', freq: STOMP_BASE_HZ * mul, endFreq: STOMP_END_HZ * mul,
+            dur: 0.18, peak: 0.4, filterHz: 900 });
     },
     // Bombardier FIRE: low thump + short plosive noise — a cannon, not a
     // laser. Same helpers as every other one-shot; stays under 0.4 s.
@@ -403,6 +475,50 @@ const SFX = {
         [220, 261.63, 329.63, 440].forEach((f, i) =>
             tone({ wave: 'triangle', freq: f, dur: 0.55, peak: 0.2, attack: 0.02,
                 filterHz: 1600, when: t + i * 0.12 }));
+    },
+    // --- Wave D additions ---------------------------------------------------
+    // Secret-alcove payout: the plain ping's two-tone DNA (B5 → E6) with a
+    // high B6 triangle tail — unmistakably the richer cousin of `coin`, so
+    // the lateral-thinking find REWARDS differently by ear, not just score.
+    coin_secret() {
+        const t = ctx.currentTime;
+        tone({ wave: SECRET_COIN_WAVE, freq: SECRET_COIN_LOW_HZ, dur: 0.09,
+            peak: 0.24, when: t });
+        tone({ wave: SECRET_COIN_WAVE, freq: SECRET_COIN_MID_HZ, dur: 0.12,
+            peak: 0.24, when: t + 0.08 });
+        tone({ wave: 'triangle', freq: SECRET_COIN_HIGH_HZ, dur: 0.24,
+            peak: 0.12, when: t + 0.16 });
+    },
+    // Whoosh: bandpass noise sweeping upward through the burst plus a faint
+    // square body falling the other way — motion in both channels, <0.2 s.
+    dash() {
+        noiseBurst({ dur: DASH_NOISE_DUR, peak: DASH_NOISE_PEAK,
+            bandHz: DASH_BAND_START_HZ, endBandHz: DASH_BAND_END_HZ });
+        tone({ wave: DASH_BODY_WAVE, freq: DASH_BODY_HZ, endFreq: DASH_BODY_END_HZ,
+            dur: 0.1, peak: 0.1 });
+    },
+    // Wall-slide START only (Game edge-detects): one quiet filtered-noise
+    // tick marking the contact. Deliberately subtle — a continuous scrape
+    // would drown the music bed on every chimney.
+    wall_slide() {
+        noiseBurst({ dur: WALL_SLIDE_NOISE_DUR, peak: WALL_SLIDE_NOISE_PEAK,
+            bandHz: WALL_SLIDE_BAND_HZ });
+    },
+    // Launch-pad boing: fast upward triangle bend with an octave sine sheen
+    // riding half a beat behind — springs read as bends, not blips.
+    pad_bounce() {
+        const t = ctx.currentTime;
+        tone({ wave: PAD_BOUNCE_WAVE, freq: PAD_BOUNCE_LOW_HZ,
+            endFreq: PAD_BOUNCE_HIGH_HZ, dur: 0.24, peak: 0.32, attack: 0.012,
+            when: t });
+        tone({ wave: 'sine', freq: PAD_BOUNCE_SHEEN_HZ, endFreq: PAD_BOUNCE_SHEEN_END_HZ,
+            dur: 0.16, peak: 0.1, when: t + 0.03 });
+    },
+    // Crate-push strain: a very quiet low scuff on a capped cadence (the
+    // caller rate-limits; this is one grain of it, ~0.05 s).
+    crate_push() {
+        noiseBurst({ dur: CRATE_PUSH_NOISE_DUR, peak: CRATE_PUSH_NOISE_PEAK,
+            bandHz: CRATE_PUSH_BAND_HZ });
     }
 };
 
@@ -655,7 +771,11 @@ export function isMuted() {
     return muted;
 }
 
-export function playSfx(name) {
+// Fire a registered voice. `param` is the optional per-event modifier the
+// parameterised voices read (land depth, stomp chain step); plain voices
+// ignore it. The muted check runs BEFORE anything else: muting at trigger
+// time must start zero nodes, not silent ones (pinned by spy count).
+export function playSfx(name, param) {
     if (muted) return;
     if (!ensureContext()) return;
     const fn = SFX[name];
@@ -663,7 +783,7 @@ export function playSfx(name) {
         console.warn('Unknown sound effect requested:', name);
         return;
     }
-    fn();
+    fn(param);
 }
 
 // Start (or keep) the generative loop for a level. Identical preset+bpm+seed

@@ -174,6 +174,9 @@ const SKID_MIN_SPEED = 150;         // px/s pre-reversal speed for a skid puff
 const WALL_SLIDE_DUST_INTERVAL = 0.12;
 // Cadence for the M3 crate push-dust puffs (same deterministic-clock rule).
 const CRATE_PUSH_DUST_INTERVAL = 0.15;
+// Cadence cap for the Wave D crate-push strain tick (very quiet scuff):
+// one voice every interval while the push holds, never per frame.
+const CRATE_PUSH_STRAIN_INTERVAL = 0.16;
 // Dash streak ghosts (M2): how many hero silhouettes trail an active burst
 // and how long each fades. FX.trails gates BOTH spawn and draw; reduced-
 // motion keeps trails ON at half amplitude (fx.js gentle-family policy), so
@@ -461,6 +464,10 @@ export class Game {
         // Wall-slide dust cadence timer (M1); reset with every other dust
         // bookkeeping so retries never inherit a mid-puff phase.
         this._slideDustT = 0;
+        // Wave D SFX edge trackers: last frame's slide side (slide-START
+        // tick) and the crate-strain scuff cadence. Both reset per level.
+        this._prevSliding = 0;
+        this._crateStrainT = 0;
         // Portal-gate edge tracker for the unlock chime: seeded from the
         // level's current state in publishLevel so a retry that starts with
         // every coin already banked does not re-ring.
@@ -773,7 +780,7 @@ export class Game {
             const wallBefore = this.player.wallSide;
             this.player.pressJump();
             if (this.player.vy < vyBefore) {
-                audio.playSfx('jump');
+                audio.playSfx(audio.SFX_VOICES.JUMP);
                 // Wall jump (M1): the lock timer's rising edge identifies
                 // it uniquely (only pressJump's wall branch arms it). Skid
                 // puff at the abandoned wall face, spray biased back toward
@@ -816,6 +823,9 @@ export class Game {
         this.input.onDash(() => {
             if (this.state !== STATE.PLAYING || !this.player) return;
             if (!this.player.pressDash()) return;
+            // Wave D whoosh on accepted launches only — rejected presses
+            // (cooldown / arc spent) stay silent exactly like the dust below.
+            audio.playSfx(audio.SFX_VOICES.DASH);
             if (FX.dust) {
                 const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
                 spawnDust(this.dust,
@@ -884,6 +894,61 @@ export class Game {
                 this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
             }
         }, { signal: this._abort.signal });
+
+        this._bindTouchControls();
+    }
+
+    // Wave D touch controls: on-screen dpad + jump/dash for coarse pointers.
+    // Visibility is belt-and-braces: CSS shows #touch-controls ONLY inside a
+    // (pointer: coarse) media query AND with the .enabled class this gate
+    // adds — the class doubles as the happy-dom test seam (no stylesheet
+    // evaluation there), the query covers JS-less and mismatched cases.
+    // Buttons drive InputHandler.touchPress/touchRelease — the same logical
+    // paths the keyboard feeds (autorepeat-filtered press, release callbacks,
+    // PLAYING gates live in the existing callbacks) — never synthesized
+    // KeyboardEvents. All nodes optional: integration fixtures without them
+    // simply get no pad. Multi-touch works because every button tracks its
+    // own pointerId; capture keeps the release on the button when the finger
+    // slides off.
+    _bindTouchControls() {
+        const root = document.getElementById('touch-controls');
+        if (!root) return;
+        let coarse;
+        try {
+            coarse = !!(window.matchMedia &&
+                window.matchMedia('(pointer: coarse)').matches);
+        } catch {
+            coarse = false; // hostile/absent matchMedia: stay desktop-clean
+        }
+        if (coarse) root.classList.add('enabled');
+        const signal = this._abort.signal;
+        const bindPadButton = (id, action) => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.addEventListener('pointerdown', (e) => {
+                // preventDefault: no focus steal (focus stays where it was —
+                // WCAG focus sanity), no compat mouse events, no selection.
+                e.preventDefault();
+                if (btn.setPointerCapture && e.pointerId !== undefined) {
+                    btn.setPointerCapture(e.pointerId);
+                }
+                this.input.touchPress(action);
+            }, { signal });
+            const release = (e) => {
+                e.preventDefault();
+                this.input.touchRelease(action);
+            };
+            btn.addEventListener('pointerup', release, { signal });
+            btn.addEventListener('pointercancel', release, { signal });
+            // Long-press guards: mobile context menu / selection peek would
+            // interrupt a held run key.
+            btn.addEventListener('contextmenu', (e) => e.preventDefault(),
+                { signal });
+        };
+        bindPadButton('tc-left-btn', 'left');
+        bindPadButton('tc-right-btn', 'right');
+        bindPadButton('tc-jump-btn', 'jump');
+        bindPadButton('tc-dash-btn', 'dash');
     }
 
     // Spec §Error Handling (invalid state detection): verify the target state
@@ -1314,6 +1379,10 @@ export class Game {
         this._crateWalls = this.crate ? crateContainmentWalls(
             level.width * level.tileSize, level.height * level.tileSize) : [];
         this._crateDustT = 0;
+        // Wave D SFX trackers restart with the level (no inherited mid-slide
+        // or mid-strain phase across a retry).
+        this._prevSliding = 0;
+        this._crateStrainT = 0;
         // Coin chip reflects this level's progress: fresh on first play,
         // carried over on a retry (collected flags transfer with the seed).
         // R4: REQUIRED coins only (secret alcove coins never gate the portal
@@ -1452,7 +1521,7 @@ export class Game {
         // Win sting over the top of the still-running music: the transition
         // is a 2 s beat, not an ending, so the loop carries through to the
         // next level (crossfading only when its band/variation changes).
-        audio.playSfx('level_complete');
+        audio.playSfx(audio.SFX_VOICES.LEVEL_COMPLETE);
         // The transition is automatic and not pausable: drop the button out
         // of the tab order until publishLevel re-enables it.
         this.ui.setPauseEnabled(false);
@@ -1475,8 +1544,10 @@ export class Game {
         // never resets it; only run start and advancing to the NEXT level do.
         this.deathsOnCurrentLevel++;
         // Music stops dead at death; the falling sting carries the moment.
+        // (Wave D note: every hit in this game IS a death — the damage/death
+        // voice slot is this one descending sting, no separate hurt sound.)
         audio.stopMusic();
-        audio.playSfx('death');
+        audio.playSfx(audio.SFX_VOICES.DEATH);
         // Death feedback (visual-only): a short camera shake plus a red
         // burst at the player so the moment of loss is unmistakable. Wave B
         // enhances it — bigger burst and the zoom punch (all FX-gated; the
@@ -1657,7 +1728,7 @@ export class Game {
             // silent launch and its missing blip.
             if (bufferWasPending && this.player.jumpBufferTimer === 0 &&
                 this.player.vy < 0) {
-                audio.playSfx('jump');
+                audio.playSfx(audio.SFX_VOICES.JUMP);
                 // Buffered launch off a ridden deck inherits too (same policy
                 // as the input-callback path above).
                 applyJumpBoost(this.player, this._riding);
@@ -1734,7 +1805,9 @@ export class Game {
                 if (pad && vyBeforeResolve >= 0) {
                     applyPadLaunch(this.player);
                     pad.squash = PAD_SQUASH_TIME;
-                    audio.playSfx('jump');
+                    // Wave D: pads get their own boing now — the fixed-arc
+                    // spring should never be mistaken for a player jump.
+                    audio.playSfx(audio.SFX_VOICES.PAD_BOUNCE);
                     this._launchStretch = LAUNCH_STRETCH_TIME;
                     // Feel: soft dust at the plate + an unlock-family ring,
                     // each spawn-gated exactly like the Wave-B family above
@@ -1777,7 +1850,9 @@ export class Game {
                             speed: 0.7 + this._landDepth, alpha: 0.65, life: 0.3,
                             size: 4 });
                 }
-                if (vyBeforeResolve >= LANDING_SFX_MIN_FALL) audio.playSfx('land');
+                if (vyBeforeResolve >= LANDING_SFX_MIN_FALL) {
+                    audio.playSfx(audio.SFX_VOICES.LAND, this._landDepth);
+                }
                 // Landing brake: touching down with no direction held kills
                 // the carried horizontal speed outright. Without it, jump
                 // momentum marches the player off a narrow landing before
@@ -1842,6 +1917,12 @@ export class Game {
             // FX.dust gates the SPAWN exactly like the land/skid/run family
             // above; reduced-motion keeps the pool at half amplitude via
             // fx.js and the mechanic itself never reads any flag.
+            // Wave D SFX companion: a quiet tick on the slide-START EDGE
+            // only (not gated by FX.dust — sound is not an FX-flag domain).
+            if (this.player.sliding && !this._prevSliding) {
+                audio.playSfx(audio.SFX_VOICES.WALL_SLIDE);
+            }
+            this._prevSliding = this.player.sliding;
             if (this.player.sliding && FX.dust) {
                 this._slideDustT += dt;
                 if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
@@ -1879,6 +1960,20 @@ export class Game {
                 }
             } else {
                 this._crateDustT = 0;
+            }
+
+            // Crate push strain (Wave D): a very quiet scuff tick WHILE the
+            // push holds, on its own capped cadence so a long shove stays a
+            // rhythm, never a per-frame buzz. Deliberately NOT tied to the
+            // dust block above: FX flags gate visuals, not sound.
+            if (this.crate && this.crate.pushed) {
+                this._crateStrainT += dt;
+                if (this._crateStrainT >= CRATE_PUSH_STRAIN_INTERVAL) {
+                    this._crateStrainT = 0;
+                    audio.playSfx(audio.SFX_VOICES.CRATE_PUSH);
+                }
+            } else {
+                this._crateStrainT = 0;
             }
 
             // Dash streak (M2 feel): snapshot the hero silhouette every burst
@@ -1930,7 +2025,10 @@ export class Game {
             // contact is fatal.
             const contact = this.enemyManager.resolvePlayerContact(this.player);
             if (contact.stomped > 0) {
-                audio.playSfx('stomp');
+                // Wave D: the chain counter read BEFORE this tick's increment
+                // is the number of kills already stacked airborne — 0 plays
+                // the normal squish, each further step climbs a minor third.
+                audio.playSfx(audio.SFX_VOICES.STOMP, this.stompChain);
                 this.player.vy = -STOMP_BOUNCE;
                 // A stomp is a launch of its own: kill the coyote window or
                 // pressJump's coyote branch steals the input and upgrades
@@ -2009,7 +2107,7 @@ export class Game {
             // in the simulation), and a hit ends the run with its own
             // teachable cause.
             const shots = this.projectiles.updateAll(dt, this.player);
-            if (shots.fired > 0) audio.playSfx('bombard_fire');
+            if (shots.fired > 0) audio.playSfx(audio.SFX_VOICES.BOMBARD_FIRE);
             for (const impact of shots.impacts) {
                 spawnBurst(this.particles, impact.x, impact.y, '#b9a58a', 6);
                 // Wave B: a shell landing shakes the frame lightly and gets
@@ -2089,7 +2187,13 @@ export class Game {
                 const normalCount = pickups.count - pickups.secretCount;
                 const coinPoints = normalCount * COIN_POINTS +
                     pickups.secretCount * SECRET_COIN_SCORE;
-                audio.playSfx('coin');
+                // Wave D reward differentiation by ear: the plain ping for
+                // route coins, the richer three-tone for secrets — a mixed
+                // frame rings both (rare, and they layer cleanly).
+                if (normalCount > 0) audio.playSfx(audio.SFX_VOICES.COIN);
+                if (pickups.secretCount > 0) {
+                    audio.playSfx(audio.SFX_VOICES.COIN_SECRET);
+                }
                 // Sparkle at the player: pickups read as events, not silent
                 // counter bumps. The burst inherits the coin sheet's gold.
                 spawnBurst(this.particles,
@@ -2147,7 +2251,7 @@ export class Game {
             // a retry that starts with every coin banked never re-rings.
             if (!this._portalUnlocked && this.collectibles.meetsPortalRequirement()) {
                 this._portalUnlocked = true;
-                audio.playSfx('portal_unlock');
+                audio.playSfx(audio.SFX_VOICES.PORTAL_UNLOCK);
                 // Wave B celebration on the locked→unlocked flip: one-shot
                 // expanding ring pulse (FX.pulse) plus a themed sparkle fan
                 // through the existing burst pool.
