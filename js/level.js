@@ -1,6 +1,7 @@
 import { Collectibles } from './collectibles.js';
 import { Difficulty, PHASE2_FIRST_LEVEL, tierIndexFor } from './difficulty.js';
 import { EnemyManager, ENEMY_WIDTH } from './enemies.js';
+import { buildBaseGraph, hopDistances } from './metrics.js';
 import { Hazards } from './hazards.js';
 import { Physics, aabbOverlap } from './physics.js';
 import { Player } from './player.js';
@@ -1101,6 +1102,219 @@ function shuffle(items, rng = Math.random) {
     return items;
 }
 
+// Shared tile predicates for the movement model (B1 extraction): one source
+// of truth for computeReachable and jumpEnvelopeTargets so the two can never
+// drift. Semantics are byte-identical to the pre-extraction inline copies.
+// Out-of-bounds columns read SOLID (side-exit-to-void is a death edge, never
+// a route edge — see the computeReachable header); open sky above the grid
+// and the void below behave as documented there.
+function makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft) {
+    const solid = (x, y) => {
+        if (x < 0 || x >= width) return true;
+        if (y < 0 || y >= height) return false;
+        return tiles[y][x] === 1;
+    };
+    const hazard = (x, y) => {
+        if (x < 0 || x >= width || y < 0 || y >= height) return false;
+        return tiles[y][x] === 2;
+    };
+    // A cell you could occupy: neither solid rock nor a spike.
+    const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
+    const standable = (x, y) =>
+        freeCell(x, y) && solid(x, y + 1) &&
+        (!requireOpenHead || !solid(x, y - 1));
+
+    // Virtual deck-walkway cell (bridge corridor): rider body row S-1
+    // across the gap columns. See the computeReachable header for the rules.
+    const isCorr = (x, y) =>
+        corridor !== null && y === corridor.S - 1 &&
+        x >= corridor.a && x <= corridor.b;
+
+    // Virtual elevator-cabin cells (shaft): rider body rows A-1..B-1 across
+    // the chimney columns sx..ex. See the header for the rule set.
+    const isShaft = (x, y) =>
+        shaft !== null && x >= shaft.sx && x <= shaft.ex &&
+        y >= shaft.A - 1 && y <= shaft.B - 1;
+    // Boarding/egress exists only at the two stop rows (flush walk-on onto
+    // the pixel-exact ledges); mid-shaft cells connect nothing outside.
+    const isShaftStopRow = (y) =>
+        shaft !== null && (y === shaft.A - 1 || y === shaft.B - 1);
+
+    return { solid, hazard, freeCell, standable, isCorr, isShaft, isShaftStopRow };
+}
+
+/**
+ * Jump-envelope target generator (extracted VERBATIM from computeReachable's
+ * normal-cell expansion by B1 pad purposefulness, 2026-11-09): every landing
+ * the movement model grants FROM ONE expanded stance (x, y), in exactly the
+ * order computeReachable pushes them into its transitions record — walk/fall
+ * scans per direction (dist 1..MAX_H_JUMP, landings scanned downward), then
+ * the one-row step-ups (dist 1, 2), left side fully before right, then the
+ * corridor boarding edges, then the shaft boarding edges. Corridor/shaft
+ * SELF-expansion (zero-launch-authority dwell cells) is NOT part of the
+ * envelope and stays inside computeReachable.
+ *
+ * Returns an array of [bx, by] pairs. Duplicates are preserved positionally
+ * (they cannot arise within one cell's expansion on today's rules, but the
+ * pin compares byte-for-byte, so nothing dedupes).
+ *
+ * HARD EQUIVALENCE CONTRACT: tests/unit/jump_envelope.test.js replays this
+ * function over every reachable non-conveyance standable cell of >=500
+ * mixed-tier maps and asserts the per-source ordered output reproduces
+ * level.modelTransitions byte-for-byte. That pin is what proves the sacred
+ * validator core unchanged across the extraction.
+ */
+export function jumpEnvelopeTargets(
+    tiles,
+    width,
+    height,
+    x,
+    y,
+    requireOpenHead = false,
+    corridor = null,
+    shaft = null
+) {
+    const { solid, hazard, standable, isCorr, isShaft, isShaftStopRow } =
+        makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft);
+    const out = [];
+
+    for (const dir of [-1, 1]) {
+        // Walk or fall along/across columns at current row height. A move
+        // of distance d models a flat jump: every column between start and
+        // landing must be air at the current row, and the landing column
+        // is scanned downward from y for any standable tile (same-or-
+        // lower target). Scan bound MAX_H_JUMP = physical jump range
+        // ~143px / 32px.
+        for (let dist = 1; dist <= MAX_H_JUMP; dist++) {
+            let blocked = false;
+            let hazardRun = 0;
+            for (let m = 1; m < dist; m++) {
+                const midX = x + dir * m;
+                if (solid(midX, y)) {
+                    blocked = true;
+                    break;
+                }
+                // Physics-verified spike wall (see the computeReachable
+                // header; soft-lock wave 2026-11-05). Two clauses:
+                //  - a tooth DIRECTLY AHEAD (m=1) walls the scan: from an
+                //    adjacent stance the inset core engages within ~4px of
+                //    travel while the arc needs ~17px to rise the required
+                //    28px. A faithful late-steer policy CAN still thread it
+                //    with ~23px clearance (review measurement, stable
+                //    1/30..1/240 dt), so this is a deliberate CONSERVATIVE
+                //    wall — pixel-perfect apex control is not a fairness
+                //    contract. (The earlier 'every policy dies / 0 of 75k
+                //    attempts' census predated the faithful validator and
+                //    lacked deep takeoff policies; superseded.)
+                //  - runs of >=3 consecutive teeth stay a wall (descent
+                //    re-entry beyond hang time, the pre-existing rule).
+                // Backed crossings (first free column between launch and
+                // tooth) keep their old modelling because simulation lands
+                // them — measured clearance ~23-24px across dt 1/30..1/240
+                // — but flight-path rock can truncate the apex onto the
+                // teeth (L83 s1514804096), so routeFair() physics-executes
+                // EVERY accepted horizontal route as the second line of
+                // defence. Gate sims run fixed dt=1/60; the backed-crossing
+                // class is dt-insensitive per fixture evidence above.
+                if (hazard(midX, y)) {
+                    hazardRun++;
+                    if (m === 1 || hazardRun >= 3) {
+                        blocked = true;
+                        break;
+                    }
+                } else {
+                    hazardRun = 0;
+                }
+            }
+            if (blocked) continue;
+
+            const c = x + dir * dist;
+            for (let ly = y; ly < height; ly++) {
+                // Falling into a spike cell is death: no landing here
+                // and nothing further down the column either.
+                if (hazard(c, ly)) break;
+                if (standable(c, ly)) out.push([c, ly]);
+                if (solid(c, ly)) break;
+            }
+        }
+
+        // Jump up one tile onto a step: landing tile must be standable.
+        for (const dist of [1, 2]) {
+            const c = x + dir * dist;
+            const ty = y - 1;
+            if (!standable(c, ty)) continue;
+
+            let clear = true;
+            if (dist === 2) {
+                // ANY obstruction in the intermediate column at the
+                // TARGET row blocks the hop — both orientations are
+                // physically impossible, only by different mechanisms:
+                //  - full riser (solid at ty AND at the launch row y):
+                //    a >=2-tile-high wall whose top sits beyond jump
+                //    rise (~62px); a spike capping a one-tile riser
+                //    counts too — clearing its inset core demands feet
+                //    ≥60px above the launch row, leaving ~28.6px of
+                //    travel against a 56px overlap sweep (see header);
+                //  - overhang (solid/hazard at ty, AIR at y): the
+                //    obstruction's underside sits exactly at landing
+                //    height while its top is a full tile (64px) above
+                //    the launch floor — beyond the ~62.5px max rise —
+                //    and the 32px body fills the tile, so any transit
+                //    of the mid column at landing height ends in a
+                //    head-bonk (vy zeroed mid-rise, physics.js) or an
+                //    X-pin against the riser behind it. Simulation
+                //    evidence (edgecheck sweep, 440 seeded maps): all
+                //    729 claimed-but-impossible step-up edges share
+                //    this signature; the isolated overhang fixture
+                //    fails under every one of 66 input policies and
+                //    never once passes.
+                // Removing the old `&& solid(midX, y)` clause makes the
+                // model strictly edge-REMOVING (more conservative), so
+                // validated routes stay physically executable. Cost:
+                // vertical generation retries rise ~4.5 -> ~12 attempts
+                // on average (max observed 79 of the 200 budget, all
+                // builds succeeding across 1600+ seeded sweeps) — still
+                // ~1 ms per level load. A generator-side protection for
+                // the bounced-hop overhang case (d2MidCells paint-skip)
+                // was implemented and REMOVED: measurement showed it
+                // starved the next landing's support cell instead
+                // (attempts 11.77 vs 11.70 without it); do not
+                // reintroduce it without beating the strict-rule-only
+                // baseline.
+                const midX = x + dir;
+                if (solid(midX, ty) || hazard(midX, ty)) {
+                    clear = false;
+                }
+            }
+            if (clear) out.push([c, ty]);
+        }
+    }
+
+    // Boarding edge (bridge corridor): stepping off a lip column onto
+    // the dwelling deck — flush across, or one row down from a higher
+    // lip. Only columns ADJACENT to the corridor qualify, so only the
+    // two lips can board; every other cell treats the corridor as air.
+    if (corridor !== null) {
+        for (const nx of [x - 1, x + 1]) {
+            const ny = isCorr(nx, y) ? y :
+                (isCorr(nx, y + 1) ? y + 1 : -1);
+            if (ny >= 0) out.push([nx, ny]);
+        }
+    }
+
+    // Boarding edge (shaft): stepping off an adjacent ledge column onto
+    // the dwelling cabin AT A STOP ROW — flush only (the generator forces
+    // pixel-exact ledges, so the corridor's one-row-down variant has no
+    // analogue here). Every other cell treats the shaft as air.
+    if (shaft !== null && isShaftStopRow(y)) {
+        for (const nx of [x - 1, x + 1]) {
+            if (isShaft(nx, y)) out.push([nx, y]);
+        }
+    }
+
+    return out;
+}
+
 // Movement model for the reachability check, matching the game's physics:
 // JUMP_FORCE=350 / GRAVITY=980 gives a max jump rise of ~62px (< 2 tiles at
 // tileSize 32), so climbing more than one tile in a single jump is not
@@ -1222,36 +1436,8 @@ export function computeReachable(
     shaft = null,
     transitions = null
 ) {
-    const solid = (x, y) => {
-        if (x < 0 || x >= width) return true;
-        if (y < 0 || y >= height) return false;
-        return tiles[y][x] === 1;
-    };
-    const hazard = (x, y) => {
-        if (x < 0 || x >= width || y < 0 || y >= height) return false;
-        return tiles[y][x] === 2;
-    };
-    // A cell you could occupy: neither solid rock nor a spike.
-    const freeCell = (x, y) => !solid(x, y) && !hazard(x, y);
-    const standable = (x, y) =>
-        freeCell(x, y) && solid(x, y + 1) &&
-        (!requireOpenHead || !solid(x, y - 1));
-
-    // Virtual deck-walkway cell (bridge corridor): rider body row S-1
-    // across the gap columns. See the header for the rule set.
-    const isCorr = (x, y) =>
-        corridor !== null && y === corridor.S - 1 &&
-        x >= corridor.a && x <= corridor.b;
-
-    // Virtual elevator-cabin cells (shaft): rider body rows A-1..B-1 across
-    // the chimney columns sx..ex. See the header for the rule set.
-    const isShaft = (x, y) =>
-        shaft !== null && x >= shaft.sx && x <= shaft.ex &&
-        y >= shaft.A - 1 && y <= shaft.B - 1;
-    // Boarding/egress exists only at the two stop rows (flush walk-on onto
-    // the pixel-exact ledges); mid-shaft cells connect nothing outside.
-    const isShaftStopRow = (y) =>
-        shaft !== null && (y === shaft.A - 1 || y === shaft.B - 1);
+    const { standable, isCorr, isShaft, isShaftStopRow } =
+        makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft);
 
     const key = (x, y) => y * width + x;
     const reachable = new Set();
@@ -1317,161 +1503,21 @@ export function computeReachable(
             continue;
         }
 
-        for (const dir of [-1, 1]) {
-            // Walk or fall along/across columns at current row height. A move
-            // of distance d models a flat jump: every column between start and
-            // landing must be air at the current row, and the landing column
-            // is scanned downward from y for any standable tile (same-or-
-            // lower target). Scan bound MAX_H_JUMP = physical jump range
-            // ~143px / 32px.
-            for (let dist = 1; dist <= MAX_H_JUMP; dist++) {
-                let blocked = false;
-                let hazardRun = 0;
-                for (let m = 1; m < dist; m++) {
-                    const midX = x + dir * m;
-                    if (solid(midX, y)) {
-                        blocked = true;
-                        break;
-                    }
-                    // Physics-verified spike wall (see header; soft-lock wave
-                    // 2026-11-05). Two clauses:
-                    //  - a tooth DIRECTLY AHEAD (m=1) walls the scan: from an
-                    //    adjacent stance the inset core engages within ~4px of
-                    //    travel while the arc needs ~17px to rise the required
-                    //    28px. A faithful late-steer policy CAN still thread it
-                    //    with ~23px clearance (review measurement, stable
-                    //    1/30..1/240 dt), so this is a deliberate CONSERVATIVE
-                    //    wall — pixel-perfect apex control is not a fairness
-                    //    contract. (The earlier 'every policy dies / 0 of 75k
-                    //    attempts' census predated the faithful validator and
-                    //    lacked deep takeoff policies; superseded.)
-                    //  - runs of >=3 consecutive teeth stay a wall (descent
-                    //    re-entry beyond hang time, the pre-existing rule).
-                    // Backed crossings (first free column between launch and
-                    // tooth) keep their old modelling because simulation lands
-                    // them — measured clearance ~23-24px across dt 1/30..1/240
-                    // — but flight-path rock can truncate the apex onto the
-                    // teeth (L83 s1514804096), so routeFair() physics-executes
-                    // EVERY accepted horizontal route as the second line of
-                    // defence. Gate sims run fixed dt=1/60; the backed-crossing
-                    // class is dt-insensitive per fixture evidence above.
-                    if (hazard(midX, y)) {
-                        hazardRun++;
-                        if (m === 1 || hazardRun >= 3) {
-                            blocked = true;
-                            break;
-                        }
-                    } else {
-                        hazardRun = 0;
-                    }
-                }
-                if (blocked) continue;
-
-                const c = x + dir * dist;
-                for (let ly = y; ly < height; ly++) {
-                    // Falling into a spike cell is death: no landing here
-                    // and nothing further down the column either.
-                    if (hazard(c, ly)) break;
-                    if (standable(c, ly)) {
-                        if (transitions) transitions.push({ ax: x, ay: y, bx: c, by: ly });
-                        if (!reachable.has(key(c, ly))) {
-                            reachable.add(key(c, ly));
-                            queue.push([c, ly]);
-                        }
-                    }
-                    if (solid(c, ly)) break;
-                }
-            }
-
-            // Jump up one tile onto a step: landing tile must be standable.
-            for (const dist of [1, 2]) {
-                const c = x + dir * dist;
-                const ty = y - 1;
-                if (!standable(c, ty)) continue;
-
-                let clear = true;
-                if (dist === 2) {
-                    // ANY obstruction in the intermediate column at the
-                    // TARGET row blocks the hop — both orientations are
-                    // physically impossible, only by different mechanisms:
-                    //  - full riser (solid at ty AND at the launch row y):
-                    //    a >=2-tile-high wall whose top sits beyond jump
-                    //    rise (~62px); a spike capping a one-tile riser
-                    //    counts too — clearing its inset core demands feet
-                    //    ≥60px above the launch row, leaving ~28.6px of
-                    //    travel against a 56px overlap sweep (see header);
-                    //  - overhang (solid/hazard at ty, AIR at y): the
-                    //    obstruction's underside sits exactly at landing
-                    //    height while its top is a full tile (64px) above
-                    //    the launch floor — beyond the ~62.5px max rise —
-                    //    and the 32px body fills the tile, so any transit
-                    //    of the mid column at landing height ends in a
-                    //    head-bonk (vy zeroed mid-rise, physics.js) or an
-                    //    X-pin against the riser behind it. Simulation
-                    //    evidence (edgecheck sweep, 440 seeded maps): all
-                    //    729 claimed-but-impossible step-up edges share
-                    //    this signature; the isolated overhang fixture
-                    //    fails under every one of 66 input policies and
-                    //    never once passes.
-                    // Removing the old `&& solid(midX, y)` clause makes the
-                    // model strictly edge-REMOVING (more conservative), so
-                    // validated routes stay physically executable. Cost:
-                    // vertical generation retries rise ~4.5 -> ~12 attempts
-                    // on average (max observed 79 of the 200 budget, all
-                    // builds succeeding across 1600+ seeded sweeps) — still
-                    // ~1 ms per level load. A generator-side protection for
-                    // the bounced-hop overhang case (d2MidCells paint-skip)
-                    // was implemented and REMOVED: measurement showed it
-                    // starved the next landing's support cell instead
-                    // (attempts 11.77 vs 11.70 without it); do not
-                    // reintroduce it without beating the strict-rule-only
-                    // baseline.
-                    const midX = x + dir;
-                    if (solid(midX, ty) || hazard(midX, ty)) {
-                        clear = false;
-                    }
-                }
-                if (clear) {
-                    if (transitions) transitions.push({ ax: x, ay: y, bx: c, by: ty });
-                    if (!reachable.has(key(c, ty))) {
-                        reachable.add(key(c, ty));
-                        queue.push([c, ty]);
-                    }
-                }
-            }
-        }
-
-        // Boarding edge (bridge corridor): stepping off a lip column onto
-        // the dwelling deck — flush across, or one row down from a higher
-        // lip. Only columns ADJACENT to the corridor qualify, so only the
-        // two lips can board; every other cell treats the corridor as air.
-        if (corridor !== null) {
-            for (const nx of [x - 1, x + 1]) {
-                const ny = isCorr(nx, y) ? y :
-                    (isCorr(nx, y + 1) ? y + 1 : -1);
-                if (ny >= 0) {
-                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: ny });
-                    if (!reachable.has(key(nx, ny))) {
-                        reachable.add(key(nx, ny));
-                        queue.push([nx, ny]);
-                    }
-                }
-            }
-        }
-
-        // Boarding edge (shaft): stepping off an adjacent ledge column onto
-        // the dwelling cabin AT A STOP ROW — flush only (the generator forces
-        // pixel-exact ledges, so the corridor's one-row-down variant has no
-        // analogue here). Every other cell treats the shaft as air.
-        if (shaft !== null && isShaftStopRow(y)) {
-            for (const nx of [x - 1, x + 1]) {
-                if (isShaft(nx, y)) {
-                    if (transitions) transitions.push({ ax: x, ay: y, bx: nx, by: y });
-                    if (!reachable.has(key(nx, y))) {
-                        reachable.add(key(nx, y));
-                        queue.push([nx, y]);
-                    }
-                }
+        // Standard expansion (B1 extraction): every landing the jump
+        // envelope grants from this stance, in the exact push order the
+        // pre-extraction inline scans produced — see jumpEnvelopeTargets'
+        // equivalence pin. Corridor/shaft dwell cells took the zero-launch-
+        // authority branches above and never reach here.
+        const targets = jumpEnvelopeTargets(
+            tiles, width, height, x, y, requireOpenHead, corridor, shaft);
+        for (let i = 0; i < targets.length; i++) {
+            const bx = targets[i][0];
+            const by = targets[i][1];
+            if (transitions) transitions.push({ ax: x, ay: y, bx, by });
+            const k = key(bx, by);
+            if (!reachable.has(k)) {
+                reachable.add(k);
+                queue.push([bx, by]);
             }
         }
     }
@@ -1561,12 +1607,38 @@ export function canReach(
 // plus one pick draw per object actually placed; nothing reads rng after
 // this pass, so there is no stream shift anywhere else (the deck-schedule
 // precedent in spawnEnemies' header documents what shifting WOULD cost —
-// this pass deliberately pays none of it).
+// this pass deliberately pays none of it). B1 amendment: the pad PICK draw
+// is consumed on BASE's exact condition (legacy chance AND non-empty pool)
+// but its value feeds nothing — the live pad decision rides a derived side
+// stream — so the contract's letter ("no stream shift anywhere else") now
+// holds for every consumer downstream, including crates and the alcove.
 // Budget: max 1 pad + 1 crate per level, tiers >= 2 only (tierIndexFor, the
 // same boundary authority the score economy reads).
 const CAPABILITY_TIER_MIN = 2;
-const PAD_CHANCE = 0.5;
+// B1 pad purposefulness (owner directive 2026-11-09): a pad ships ONLY when
+// it demonstrably shortens something on THAT map under the model (see
+// _padPassesValue). The policy roll rides the side stream below, so this
+// chance sits at its ceiling — every map consults the value filter and only
+// genuinely useful pads survive. Frontier measured in the B1 report.
+const PAD_CHANCE = 1.0;
 const CRATE_CHANCE = 0.5;
+// Minimum hop-distance improvement (BFS hops on the model digraph) a pad
+// must deliver on EITHER lane to ship. Measured BASE-era shipped-pad gain
+// histogram over 750 tier>=2 maps: {0: 241, 1: 100, >=2: 8} — gains of 0/1
+// are noise-level re-routings nobody perceives; every accepting candidate in
+// the sweep sits at 2+ (histogram {2: 69, 3: 2, 4: 15}), so 2 is the first
+// threshold that separates "the bounce IS the shortcut" from walking anyway.
+export const PAD_MIN_HOP_GAIN = 2;
+// BASE's pad-chance value, kept ONLY as the main-stream draw-shape authority:
+// BASE consumed a pad-pick draw iff its chance roll fired AND the legality
+// pool was non-empty. Reproducing that exact consumption keeps crates and
+// the alcove byte-identical downstream even though the pad decision itself
+// now rides the side stream below. Do not retune this without a BASE archive
+// rerun — it is a stream fixture, not a knob.
+const LEGACY_PAD_CHANCE = 0.5;
+// Side-stream salt for pad policy rolls (chance + uniform pick), derived
+// from seedResolved like the canopy/crag precedents: zero main-stream draws.
+const PAD_SIDE_SALT = 0x50445331; // 'PDS1'
 // Seat-relative travel budget: from the midpoint seat, neither push
 // direction may exceed this many cells before the crate meets its blocker
 // (rejects runs of 8+; see the guard in _findCrateCandidates). Convention
@@ -4237,11 +4309,33 @@ export class Level {
 
         const forbidden = this._capabilityForbiddenCells();
 
-        // Pad: roll, then pick uniformly among candidates in scan order.
-        if (this.rng() < PAD_CHANCE) {
-            const cands = this._findPadCandidates(forbidden);
-            if (cands.length > 0) {
-                const cell = cands[Math.floor(this.rng() * cands.length)];
+        // Pad: B1 purposefulness pass. RNG discipline has TWO layers here:
+        //  * MAIN STREAM stays byte-frozen to BASE (87de0f7): one chance
+        //    draw always, plus one pick draw iff BASE would have consumed it
+        //    (roll < LEGACY_PAD_CHANCE AND legality pool non-empty). The pick
+        //    value itself is DISCARDED — crates and the alcove pass down-
+        //    stream read a stream identical to BASE on every seed.
+        //  * PAD POLICY rides a derived side stream (crag/canopy precedent:
+        //    zero main-stream draws), so PAD_CHANCE can sit at its shipped
+        //    value without shifting anything else. Determinism holds: the
+        //    side rng keys off seedResolved alone.
+        // A pad ships only when the side roll fires AND at least one
+        // legality candidate also PASSES THE VALUE TEST (_padPassesValue);
+        // the uniform pick runs among ACCEPTING candidates only.
+        const roll = this.rng();
+        const cands = this._findPadCandidates(forbidden);
+        if (roll < LEGACY_PAD_CHANCE && cands.length > 0) {
+            this.rng(); // BASE slot-2 parity; value intentionally unused
+        }
+        const prng = makeRng(((this.seedResolved ?? 0) ^ PAD_SIDE_SALT) >>> 0);
+        if (prng() < PAD_CHANCE && cands.length > 0) {
+            const ctx = this._padValueContext();
+            const accepting = [];
+            for (const cell of cands) {
+                if (this._padPassesValue(cell, ctx)) accepting.push(cell);
+            }
+            if (accepting.length > 0) {
+                const cell = accepting[Math.floor(prng() * accepting.length)];
                 this.pads.push({
                     x: cell.col * this.tileSize,
                     y: cell.row * this.tileSize,
@@ -4374,6 +4468,88 @@ export class Level {
             }
         }
         return out;
+    }
+
+    /**
+     * B1 pad-value context (built ONCE per placement pass, only when the
+     * chance roll fires AND the legality pool is non-empty): base digraph +
+     * spawn hop-distances + the non-secret coin cells the EXPRESS lane may
+     * improve. Pure reads over the accepted grid — zero rng, zero tile
+     * writes. Null when the graph cannot speak (no spawn/portal in the
+     * reachable set), which fails every candidate closed.
+     */
+    _padValueContext() {
+        const graph = buildBaseGraph(this);
+        const { cells, adj, spawnKey, portalKey } = graph;
+        if (!cells.has(spawnKey) || !cells.has(portalKey)) return null;
+        const dB = hopDistances([spawnKey], adj);
+        const w = this.width;
+        const T = this.tileSize;
+        const coinKeys = [];
+        for (const c of this.coins) {
+            if (c.secret) continue; // secrets live off-graph by construction
+            const k = Math.floor((c.y + c.height / 2) / T) * w +
+                Math.floor((c.x + c.width / 2) / T);
+            if (dB.has(k)) coinKeys.push(k);
+        }
+        return { graph, dB, coinKeys };
+    }
+
+    /**
+     * B1 purposefulness test for one legality-passing pad candidate p=(c,r).
+     *
+     * Pad-augmented model: ONE bounce from p is a single move delivering the
+     * player to any landing the jump envelope grants FROM THE APEX
+     * a=(c, r-PAD_APEX_CELLS) — restricted to STRICTLY-BELOW landings (by >
+     * a.y): at apex vy=0 with no air control, so same-row crossings and
+     * step-ups the grounded envelope claims are physically dead edges, and
+     * claiming them would ship pads whose "value" nobody can collect (the
+     * measured full-envelope pool inflates ~3.5x on exactly those fake
+     * edges). Landing flush ON a standable apex is the brief's p->apex edge.
+     * Delivery targets are restricted to the base-reachable set (a pad's
+     * value must be about something the map already validates; two-hop value
+     * THROUGH off-graph pockets is not claimed — conservative, costs pads,
+     * never ships a broken promise). Then:
+     *   dist_pad(x) = min(dist_base(x), dist_base(p) + 1 + hops(delivery→x))
+     * — exact for single-bounce use: any optimal path uses the pad at most
+     * once (re-bouncing returns to the same delivery set), and every
+     * pre-bounce prefix is base movement priced at dist_base(p).
+     *
+     * Accept iff EITHER lane improves by >= PAD_MIN_HOP_GAIN:
+     *   ROUTE   spawn→portal shortened; kills post-goal pads by construction
+     *           (nothing beyond the flag shortens the route TO the flag); or
+     *   EXPRESS spawn→some non-secret coin shortened.
+     */
+    _padPassesValue(cell, ctx) {
+        if (!ctx) return false;
+        const { graph, dB, coinKeys } = ctx;
+        const { cells, adj, portalKey } = graph;
+        const w = this.width;
+        const dp = dB.get(cell.row * w + cell.col);
+        if (dp === undefined) return false;
+        const aRow = cell.row - PAD_APEX_CELLS;
+        const env = jumpEnvelopeTargets(
+            this.tiles, w, this.height, cell.col, aRow,
+            this.direction === 'vertical');
+        const delivery = [];
+        for (let i = 0; i < env.length; i++) {
+            if (env[i][1] <= aRow) continue; // strictly-below only (see doc)
+            const k = env[i][1] * w + env[i][0];
+            if (cells.has(k)) delivery.push(k);
+        }
+        const aKey = aRow * w + cell.col;
+        if (cells.has(aKey)) delivery.push(aKey);
+        if (delivery.length === 0) return false;
+        const da = hopDistances(delivery, adj);
+        const improved = (k) => {
+            const via = da.get(k);
+            return via !== undefined && dp + 1 + via <= dB.get(k) - PAD_MIN_HOP_GAIN;
+        };
+        if (improved(portalKey)) return true; // ROUTE lane
+        for (let i = 0; i < coinKeys.length; i++) {
+            if (improved(coinKeys[i])) return true; // EXPRESS lane
+        }
+        return false;
     }
 
     // Crate pockets: maximal flat stand runs (open body row over continuous

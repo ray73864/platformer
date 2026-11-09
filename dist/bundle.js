@@ -1395,6 +1395,212 @@
     }
   }
 
+  // js/metrics.js
+  var GRAVITY = 980;
+  var JUMP_FORCE = 350;
+  var STOMP_BOUNCE = 260;
+  var WEIGHT_FORKS = 1;
+  var WEIGHT_GREED = 0.5;
+  var WEIGHT_TOOL = 0.75;
+  var WEIGHT_SECRET = 1.5;
+  var FORK_CAP = 3;
+  var GREED_SIGMA_REF = 4;
+  var GREED_NEAR_D = 1;
+  var GREED_FAR_D = 6;
+  var TOOL_SHELF_DROP_ROWS = 2;
+  var TOOL_REACH_COLS = 2;
+  var TOOL_ISOLATION_COLS = 4;
+  var PLAIN_RISE_PX = JUMP_FORCE * JUMP_FORCE / (2 * GRAVITY);
+  var STOMP_APEX_PX = ENEMY_WIDTH + STOMP_BOUNCE * STOMP_BOUNCE / (2 * GRAVITY);
+  function buildBaseGraph(level) {
+    const w = level.width;
+    const cells = level.reachableTiles;
+    const adj = new Map;
+    const radj = new Map;
+    for (const t of level.modelTransitions || []) {
+      const a = t.ay * w + t.ax;
+      const b = t.by * w + t.bx;
+      if (!cells.has(a) || !cells.has(b))
+        continue;
+      if (!adj.has(a))
+        adj.set(a, []);
+      adj.get(a).push(b);
+      if (!radj.has(b))
+        radj.set(b, []);
+      radj.get(b).push(a);
+    }
+    const sk = level.spawnTile ? level.spawnTile.y * w + level.spawnTile.x : -1;
+    const pk = level.portalTile ? level.portalTile.y * w + level.portalTile.x : -1;
+    return { cells, adj, radj, spawnKey: sk, portalKey: pk, w };
+  }
+  function hopDistances(startKeys, adj) {
+    const dist = new Map;
+    const queue = [];
+    for (const s of startKeys) {
+      if (!dist.has(s)) {
+        dist.set(s, 0);
+        queue.push(s);
+      }
+    }
+    for (let qi = 0;qi < queue.length; qi++) {
+      const v = queue[qi];
+      const d = dist.get(v) + 1;
+      for (const n of adj.get(v) || []) {
+        if (!dist.has(n)) {
+          dist.set(n, d);
+          queue.push(n);
+        }
+      }
+    }
+    return dist;
+  }
+  function routeForks(graph) {
+    const { cells, adj, spawnKey, portalKey } = graph;
+    if (!cells.has(spawnKey) || !cells.has(portalKey) || spawnKey === portalKey) {
+      return 0;
+    }
+    const CAP_INF = cells.size + 1;
+    const edges = new Map;
+    const addEdge = (u, v, cap) => {
+      if (!edges.has(u))
+        edges.set(u, []);
+      edges.get(u).push([v, cap]);
+      if (!edges.has(v))
+        edges.set(v, []);
+      edges.get(v).push([u, 0]);
+    };
+    for (const v of cells) {
+      addEdge(v * 2, v * 2 + 1, v === spawnKey || v === portalKey ? CAP_INF : 1);
+    }
+    for (const [a, outs] of adj) {
+      for (const b of outs)
+        addEdge(a * 2 + 1, b * 2, 1);
+    }
+    const src = spawnKey * 2 + 1;
+    const dst = portalKey * 2;
+    let flow = 0;
+    for (;; ) {
+      const prev = new Map([[src, null]]);
+      const q = [src];
+      let found = false;
+      for (let qi = 0;qi < q.length && !found; qi++) {
+        const u = q[qi];
+        for (const e of edges.get(u) || []) {
+          if (e[1] > 0 && !prev.has(e[0])) {
+            prev.set(e[0], [u, e]);
+            if (e[0] === dst) {
+              found = true;
+              break;
+            }
+            q.push(e[0]);
+          }
+        }
+      }
+      if (!found)
+        break;
+      for (let at = dst;at !== src; ) {
+        const [u, e] = prev.get(at);
+        e[1] -= 1;
+        const back = edges.get(at).find((b) => b[0] === u && b[1] === 0);
+        back[1] += 1;
+        at = u;
+      }
+      flow++;
+    }
+    return flow;
+  }
+  function greedGradient(level, graph = buildBaseGraph(level)) {
+    const { cells, adj, radj, spawnKey, portalKey } = graph;
+    const empty = { score: 0, sigma: 0, near: false, far: false, distances: [] };
+    if (!cells.has(spawnKey) || !cells.has(portalKey))
+      return empty;
+    const s = hopDistances([spawnKey], adj);
+    const p = hopDistances([portalKey], radj);
+    const R = s.get(portalKey);
+    if (R === undefined)
+      return empty;
+    const route = [];
+    for (const v of cells) {
+      if ((s.get(v) ?? Infinity) + (p.get(v) ?? Infinity) === R)
+        route.push(v);
+    }
+    const dRoute = hopDistances(route, adj);
+    const T = level.tileSize;
+    const distances = [];
+    for (const coin of level.coins) {
+      if (coin.secret)
+        continue;
+      const cx = Math.floor((coin.x + coin.width / 2) / T);
+      const cy = Math.floor((coin.y + coin.height / 2) / T);
+      const k = cy * level.width + cx;
+      const d = dRoute.get(k);
+      if (d === undefined)
+        continue;
+      distances.push(d);
+    }
+    if (distances.length === 0)
+      return empty;
+    const mean = distances.reduce((a, b) => a + b, 0) / distances.length;
+    const variance = distances.reduce((a, b) => a + (b - mean) * (b - mean), 0) / distances.length;
+    const sigma = Math.sqrt(variance);
+    const near = distances.some((d) => d <= GREED_NEAR_D);
+    const far = distances.some((d) => d >= GREED_FAR_D);
+    const score = 0.6 * Math.min(sigma / GREED_SIGMA_REF, 1) + (near ? 0.2 : 0) + (far ? 0.2 : 0);
+    return { score, sigma, near, far, distances };
+  }
+  function enemyAsTool(level) {
+    const T = level.tileSize;
+    const { width: w, height: h } = level;
+    const tiles = level.tiles;
+    const free = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 0;
+    const solid = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 1;
+    const standable = (r, c) => free(r, c) && solid(r + 1, c);
+    const walkers = (level.enemyManager?.enemies || []).filter((e) => e.kind === "walker");
+    const shelves = [];
+    for (const e of walkers) {
+      const rw = Math.floor(e.y / T);
+      const pc0 = Math.floor(e.minX / T);
+      const pc1 = Math.floor((e.maxX - 1) / T);
+      const sr = rw - TOOL_SHELF_DROP_ROWS;
+      if (sr < 1)
+        continue;
+      for (let c = Math.max(0, pc0 - TOOL_REACH_COLS);c <= Math.min(w - 1, pc1 + TOOL_REACH_COLS); c++) {
+        if (!standable(sr, c))
+          continue;
+        if (!free(sr - 1, c))
+          continue;
+        if (!free(sr + 2, c) || !solid(sr + 3, c))
+          continue;
+        let isolated = true;
+        for (let dr = -1;dr <= 1 && isolated; dr++) {
+          for (let dc = -TOOL_ISOLATION_COLS;dc <= TOOL_ISOLATION_COLS && isolated; dc++) {
+            const rr = sr + dr, cc = c + dc;
+            if (!standable(rr, cc))
+              continue;
+            if (dr === 0 && solid(sr + 1, cc))
+              continue;
+            isolated = false;
+          }
+        }
+        if (isolated)
+          shelves.push({ row: sr, col: c, patrol: [pc0, pc1], patrolRow: rw });
+      }
+    }
+    return { count: shelves.length, shelves };
+  }
+  function interestingnessProfile(level) {
+    const graph = buildBaseGraph(level);
+    const forks = routeForks(graph);
+    const greed = greedGradient(level, graph);
+    const tool = enemyAsTool(level);
+    const secret = level.getAlcove ? level.getAlcove() !== null : false;
+    const score = WEIGHT_FORKS * Math.min(forks, FORK_CAP) / FORK_CAP + WEIGHT_GREED * greed.score + WEIGHT_TOOL * Math.min(tool.count, 1) + WEIGHT_SECRET * (secret ? 1 : 0);
+    return { forks, greed, tool, secret, score };
+  }
+  function interestingnessScore(level) {
+    return interestingnessProfile(level).score;
+  }
+
   // js/hazards.js
   var SPIKE_WIDTH = 32;
   var SPIKE_HEIGHT = 32;
@@ -2096,7 +2302,7 @@
     }
     return items;
   }
-  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null, shaft = null, transitions = null) {
+  function makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft) {
     const solid = (x, y) => {
       if (x < 0 || x >= width)
         return true;
@@ -2114,6 +2320,76 @@
     const isCorr = (x, y) => corridor !== null && y === corridor.S - 1 && x >= corridor.a && x <= corridor.b;
     const isShaft = (x, y) => shaft !== null && x >= shaft.sx && x <= shaft.ex && y >= shaft.A - 1 && y <= shaft.B - 1;
     const isShaftStopRow = (y) => shaft !== null && (y === shaft.A - 1 || y === shaft.B - 1);
+    return { solid, hazard, freeCell, standable, isCorr, isShaft, isShaftStopRow };
+  }
+  function jumpEnvelopeTargets(tiles, width, height, x, y, requireOpenHead = false, corridor = null, shaft = null) {
+    const { solid, hazard, standable, isCorr, isShaft, isShaftStopRow } = makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft);
+    const out = [];
+    for (const dir of [-1, 1]) {
+      for (let dist = 1;dist <= MAX_H_JUMP; dist++) {
+        let blocked = false;
+        let hazardRun = 0;
+        for (let m = 1;m < dist; m++) {
+          const midX = x + dir * m;
+          if (solid(midX, y)) {
+            blocked = true;
+            break;
+          }
+          if (hazard(midX, y)) {
+            hazardRun++;
+            if (m === 1 || hazardRun >= 3) {
+              blocked = true;
+              break;
+            }
+          } else {
+            hazardRun = 0;
+          }
+        }
+        if (blocked)
+          continue;
+        const c = x + dir * dist;
+        for (let ly = y;ly < height; ly++) {
+          if (hazard(c, ly))
+            break;
+          if (standable(c, ly))
+            out.push([c, ly]);
+          if (solid(c, ly))
+            break;
+        }
+      }
+      for (const dist of [1, 2]) {
+        const c = x + dir * dist;
+        const ty = y - 1;
+        if (!standable(c, ty))
+          continue;
+        let clear = true;
+        if (dist === 2) {
+          const midX = x + dir;
+          if (solid(midX, ty) || hazard(midX, ty)) {
+            clear = false;
+          }
+        }
+        if (clear)
+          out.push([c, ty]);
+      }
+    }
+    if (corridor !== null) {
+      for (const nx of [x - 1, x + 1]) {
+        const ny = isCorr(nx, y) ? y : isCorr(nx, y + 1) ? y + 1 : -1;
+        if (ny >= 0)
+          out.push([nx, ny]);
+      }
+    }
+    if (shaft !== null && isShaftStopRow(y)) {
+      for (const nx of [x - 1, x + 1]) {
+        if (isShaft(nx, y))
+          out.push([nx, y]);
+      }
+    }
+    return out;
+  }
+  function computeReachable(tiles, width, height, startTile, requireOpenHead = false, corridor = null, shaft = null, transitions = null) {
+    const { standable, isCorr, isShaft, isShaftStopRow } = makeGridPredicates(tiles, width, height, requireOpenHead, corridor, shaft);
     const key = (x, y) => y * width + x;
     const reachable = new Set;
     if (!standable(startTile.x, startTile.y)) {
@@ -2168,89 +2444,16 @@
         }
         continue;
       }
-      for (const dir of [-1, 1]) {
-        for (let dist = 1;dist <= MAX_H_JUMP; dist++) {
-          let blocked = false;
-          let hazardRun = 0;
-          for (let m = 1;m < dist; m++) {
-            const midX = x + dir * m;
-            if (solid(midX, y)) {
-              blocked = true;
-              break;
-            }
-            if (hazard(midX, y)) {
-              hazardRun++;
-              if (m === 1 || hazardRun >= 3) {
-                blocked = true;
-                break;
-              }
-            } else {
-              hazardRun = 0;
-            }
-          }
-          if (blocked)
-            continue;
-          const c = x + dir * dist;
-          for (let ly = y;ly < height; ly++) {
-            if (hazard(c, ly))
-              break;
-            if (standable(c, ly)) {
-              if (transitions)
-                transitions.push({ ax: x, ay: y, bx: c, by: ly });
-              if (!reachable.has(key(c, ly))) {
-                reachable.add(key(c, ly));
-                queue.push([c, ly]);
-              }
-            }
-            if (solid(c, ly))
-              break;
-          }
-        }
-        for (const dist of [1, 2]) {
-          const c = x + dir * dist;
-          const ty = y - 1;
-          if (!standable(c, ty))
-            continue;
-          let clear = true;
-          if (dist === 2) {
-            const midX = x + dir;
-            if (solid(midX, ty) || hazard(midX, ty)) {
-              clear = false;
-            }
-          }
-          if (clear) {
-            if (transitions)
-              transitions.push({ ax: x, ay: y, bx: c, by: ty });
-            if (!reachable.has(key(c, ty))) {
-              reachable.add(key(c, ty));
-              queue.push([c, ty]);
-            }
-          }
-        }
-      }
-      if (corridor !== null) {
-        for (const nx of [x - 1, x + 1]) {
-          const ny = isCorr(nx, y) ? y : isCorr(nx, y + 1) ? y + 1 : -1;
-          if (ny >= 0) {
-            if (transitions)
-              transitions.push({ ax: x, ay: y, bx: nx, by: ny });
-            if (!reachable.has(key(nx, ny))) {
-              reachable.add(key(nx, ny));
-              queue.push([nx, ny]);
-            }
-          }
-        }
-      }
-      if (shaft !== null && isShaftStopRow(y)) {
-        for (const nx of [x - 1, x + 1]) {
-          if (isShaft(nx, y)) {
-            if (transitions)
-              transitions.push({ ax: x, ay: y, bx: nx, by: y });
-            if (!reachable.has(key(nx, y))) {
-              reachable.add(key(nx, y));
-              queue.push([nx, y]);
-            }
-          }
+      const targets = jumpEnvelopeTargets(tiles, width, height, x, y, requireOpenHead, corridor, shaft);
+      for (let i = 0;i < targets.length; i++) {
+        const bx = targets[i][0];
+        const by = targets[i][1];
+        if (transitions)
+          transitions.push({ ax: x, ay: y, bx, by });
+        const k = key(bx, by);
+        if (!reachable.has(k)) {
+          reachable.add(k);
+          queue.push([bx, by]);
         }
       }
     }
@@ -2289,8 +2492,11 @@
     return hub;
   }
   var CAPABILITY_TIER_MIN = 2;
-  var PAD_CHANCE = 0.5;
+  var PAD_CHANCE = 1;
   var CRATE_CHANCE = 0.5;
+  var PAD_MIN_HOP_GAIN = 2;
+  var LEGACY_PAD_CHANCE = 0.5;
+  var PAD_SIDE_SALT = 1346655025;
   var CRATE_MAX_TRAVEL_PAST_END = 3;
   var ALCOVE_TIER_MIN = 2;
   var ALCOVE_H_MIN = 3;
@@ -3669,10 +3875,21 @@
       if (tierIndexFor(this.levelNumber) < CAPABILITY_TIER_MIN)
         return;
       const forbidden = this._capabilityForbiddenCells();
-      if (this.rng() < PAD_CHANCE) {
-        const cands = this._findPadCandidates(forbidden);
-        if (cands.length > 0) {
-          const cell = cands[Math.floor(this.rng() * cands.length)];
+      const roll = this.rng();
+      const cands = this._findPadCandidates(forbidden);
+      if (roll < LEGACY_PAD_CHANCE && cands.length > 0) {
+        this.rng();
+      }
+      const prng = makeRng(((this.seedResolved ?? 0) ^ PAD_SIDE_SALT) >>> 0);
+      if (prng() < PAD_CHANCE && cands.length > 0) {
+        const ctx = this._padValueContext();
+        const accepting = [];
+        for (const cell of cands) {
+          if (this._padPassesValue(cell, ctx))
+            accepting.push(cell);
+        }
+        if (accepting.length > 0) {
+          const cell = accepting[Math.floor(prng() * accepting.length)];
           this.pads.push({
             x: cell.col * this.tileSize,
             y: cell.row * this.tileSize,
@@ -3779,6 +3996,61 @@
         }
       }
       return out;
+    }
+    _padValueContext() {
+      const graph = buildBaseGraph(this);
+      const { cells, adj, spawnKey, portalKey } = graph;
+      if (!cells.has(spawnKey) || !cells.has(portalKey))
+        return null;
+      const dB = hopDistances([spawnKey], adj);
+      const w = this.width;
+      const T = this.tileSize;
+      const coinKeys = [];
+      for (const c of this.coins) {
+        if (c.secret)
+          continue;
+        const k = Math.floor((c.y + c.height / 2) / T) * w + Math.floor((c.x + c.width / 2) / T);
+        if (dB.has(k))
+          coinKeys.push(k);
+      }
+      return { graph, dB, coinKeys };
+    }
+    _padPassesValue(cell, ctx) {
+      if (!ctx)
+        return false;
+      const { graph, dB, coinKeys } = ctx;
+      const { cells, adj, portalKey } = graph;
+      const w = this.width;
+      const dp = dB.get(cell.row * w + cell.col);
+      if (dp === undefined)
+        return false;
+      const aRow = cell.row - PAD_APEX_CELLS;
+      const env = jumpEnvelopeTargets(this.tiles, w, this.height, cell.col, aRow, this.direction === "vertical");
+      const delivery = [];
+      for (let i = 0;i < env.length; i++) {
+        if (env[i][1] <= aRow)
+          continue;
+        const k = env[i][1] * w + env[i][0];
+        if (cells.has(k))
+          delivery.push(k);
+      }
+      const aKey = aRow * w + cell.col;
+      if (cells.has(aKey))
+        delivery.push(aKey);
+      if (delivery.length === 0)
+        return false;
+      const da = hopDistances(delivery, adj);
+      const improved = (k) => {
+        const via = da.get(k);
+        return via !== undefined && dp + 1 + via <= dB.get(k) - PAD_MIN_HOP_GAIN;
+      };
+      if (improved(portalKey))
+        return true;
+      for (let i = 0;i < coinKeys.length; i++) {
+        if (improved(coinKeys[i]))
+          return true;
+      }
+      return false;
     }
     _findCrateCandidates(forbidden) {
       const out = [];
@@ -6820,212 +7092,6 @@
         ctx.fillRect(c.x + 6, c.y + c.height / 2 - 1, c.width - 12, 2);
       }
     }
-  }
-
-  // js/metrics.js
-  var GRAVITY = 980;
-  var JUMP_FORCE = 350;
-  var STOMP_BOUNCE = 260;
-  var WEIGHT_FORKS = 1;
-  var WEIGHT_GREED = 0.5;
-  var WEIGHT_TOOL = 0.75;
-  var WEIGHT_SECRET = 1.5;
-  var FORK_CAP = 3;
-  var GREED_SIGMA_REF = 4;
-  var GREED_NEAR_D = 1;
-  var GREED_FAR_D = 6;
-  var TOOL_SHELF_DROP_ROWS = 2;
-  var TOOL_REACH_COLS = 2;
-  var TOOL_ISOLATION_COLS = 4;
-  var PLAIN_RISE_PX = JUMP_FORCE * JUMP_FORCE / (2 * GRAVITY);
-  var STOMP_APEX_PX = ENEMY_WIDTH + STOMP_BOUNCE * STOMP_BOUNCE / (2 * GRAVITY);
-  function buildBaseGraph(level) {
-    const w = level.width;
-    const cells = level.reachableTiles;
-    const adj = new Map;
-    const radj = new Map;
-    for (const t of level.modelTransitions || []) {
-      const a = t.ay * w + t.ax;
-      const b = t.by * w + t.bx;
-      if (!cells.has(a) || !cells.has(b))
-        continue;
-      if (!adj.has(a))
-        adj.set(a, []);
-      adj.get(a).push(b);
-      if (!radj.has(b))
-        radj.set(b, []);
-      radj.get(b).push(a);
-    }
-    const sk = level.spawnTile ? level.spawnTile.y * w + level.spawnTile.x : -1;
-    const pk = level.portalTile ? level.portalTile.y * w + level.portalTile.x : -1;
-    return { cells, adj, radj, spawnKey: sk, portalKey: pk, w };
-  }
-  function hopDistances(startKeys, adj) {
-    const dist = new Map;
-    const queue = [];
-    for (const s of startKeys) {
-      if (!dist.has(s)) {
-        dist.set(s, 0);
-        queue.push(s);
-      }
-    }
-    for (let qi = 0;qi < queue.length; qi++) {
-      const v = queue[qi];
-      const d = dist.get(v) + 1;
-      for (const n of adj.get(v) || []) {
-        if (!dist.has(n)) {
-          dist.set(n, d);
-          queue.push(n);
-        }
-      }
-    }
-    return dist;
-  }
-  function routeForks(graph) {
-    const { cells, adj, spawnKey, portalKey } = graph;
-    if (!cells.has(spawnKey) || !cells.has(portalKey) || spawnKey === portalKey) {
-      return 0;
-    }
-    const CAP_INF = cells.size + 1;
-    const edges = new Map;
-    const addEdge = (u, v, cap) => {
-      if (!edges.has(u))
-        edges.set(u, []);
-      edges.get(u).push([v, cap]);
-      if (!edges.has(v))
-        edges.set(v, []);
-      edges.get(v).push([u, 0]);
-    };
-    for (const v of cells) {
-      addEdge(v * 2, v * 2 + 1, v === spawnKey || v === portalKey ? CAP_INF : 1);
-    }
-    for (const [a, outs] of adj) {
-      for (const b of outs)
-        addEdge(a * 2 + 1, b * 2, 1);
-    }
-    const src = spawnKey * 2 + 1;
-    const dst = portalKey * 2;
-    let flow = 0;
-    for (;; ) {
-      const prev = new Map([[src, null]]);
-      const q = [src];
-      let found = false;
-      for (let qi = 0;qi < q.length && !found; qi++) {
-        const u = q[qi];
-        for (const e of edges.get(u) || []) {
-          if (e[1] > 0 && !prev.has(e[0])) {
-            prev.set(e[0], [u, e]);
-            if (e[0] === dst) {
-              found = true;
-              break;
-            }
-            q.push(e[0]);
-          }
-        }
-      }
-      if (!found)
-        break;
-      for (let at = dst;at !== src; ) {
-        const [u, e] = prev.get(at);
-        e[1] -= 1;
-        const back = edges.get(at).find((b) => b[0] === u && b[1] === 0);
-        back[1] += 1;
-        at = u;
-      }
-      flow++;
-    }
-    return flow;
-  }
-  function greedGradient(level, graph = buildBaseGraph(level)) {
-    const { cells, adj, radj, spawnKey, portalKey } = graph;
-    const empty = { score: 0, sigma: 0, near: false, far: false, distances: [] };
-    if (!cells.has(spawnKey) || !cells.has(portalKey))
-      return empty;
-    const s = hopDistances([spawnKey], adj);
-    const p = hopDistances([portalKey], radj);
-    const R = s.get(portalKey);
-    if (R === undefined)
-      return empty;
-    const route = [];
-    for (const v of cells) {
-      if ((s.get(v) ?? Infinity) + (p.get(v) ?? Infinity) === R)
-        route.push(v);
-    }
-    const dRoute = hopDistances(route, adj);
-    const T = level.tileSize;
-    const distances = [];
-    for (const coin of level.coins) {
-      if (coin.secret)
-        continue;
-      const cx = Math.floor((coin.x + coin.width / 2) / T);
-      const cy = Math.floor((coin.y + coin.height / 2) / T);
-      const k = cy * level.width + cx;
-      const d = dRoute.get(k);
-      if (d === undefined)
-        continue;
-      distances.push(d);
-    }
-    if (distances.length === 0)
-      return empty;
-    const mean = distances.reduce((a, b) => a + b, 0) / distances.length;
-    const variance = distances.reduce((a, b) => a + (b - mean) * (b - mean), 0) / distances.length;
-    const sigma = Math.sqrt(variance);
-    const near = distances.some((d) => d <= GREED_NEAR_D);
-    const far = distances.some((d) => d >= GREED_FAR_D);
-    const score = 0.6 * Math.min(sigma / GREED_SIGMA_REF, 1) + (near ? 0.2 : 0) + (far ? 0.2 : 0);
-    return { score, sigma, near, far, distances };
-  }
-  function enemyAsTool(level) {
-    const T = level.tileSize;
-    const { width: w, height: h } = level;
-    const tiles = level.tiles;
-    const free = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 0;
-    const solid = (r, c) => r >= 0 && r < h && c >= 0 && c < w && tiles[r][c] === 1;
-    const standable = (r, c) => free(r, c) && solid(r + 1, c);
-    const walkers = (level.enemyManager?.enemies || []).filter((e) => e.kind === "walker");
-    const shelves = [];
-    for (const e of walkers) {
-      const rw = Math.floor(e.y / T);
-      const pc0 = Math.floor(e.minX / T);
-      const pc1 = Math.floor((e.maxX - 1) / T);
-      const sr = rw - TOOL_SHELF_DROP_ROWS;
-      if (sr < 1)
-        continue;
-      for (let c = Math.max(0, pc0 - TOOL_REACH_COLS);c <= Math.min(w - 1, pc1 + TOOL_REACH_COLS); c++) {
-        if (!standable(sr, c))
-          continue;
-        if (!free(sr - 1, c))
-          continue;
-        if (!free(sr + 2, c) || !solid(sr + 3, c))
-          continue;
-        let isolated = true;
-        for (let dr = -1;dr <= 1 && isolated; dr++) {
-          for (let dc = -TOOL_ISOLATION_COLS;dc <= TOOL_ISOLATION_COLS && isolated; dc++) {
-            const rr = sr + dr, cc = c + dc;
-            if (!standable(rr, cc))
-              continue;
-            if (dr === 0 && solid(sr + 1, cc))
-              continue;
-            isolated = false;
-          }
-        }
-        if (isolated)
-          shelves.push({ row: sr, col: c, patrol: [pc0, pc1], patrolRow: rw });
-      }
-    }
-    return { count: shelves.length, shelves };
-  }
-  function interestingnessProfile(level) {
-    const graph = buildBaseGraph(level);
-    const forks = routeForks(graph);
-    const greed = greedGradient(level, graph);
-    const tool = enemyAsTool(level);
-    const secret = level.getAlcove ? level.getAlcove() !== null : false;
-    const score = WEIGHT_FORKS * Math.min(forks, FORK_CAP) / FORK_CAP + WEIGHT_GREED * greed.score + WEIGHT_TOOL * Math.min(tool.count, 1) + WEIGHT_SECRET * (secret ? 1 : 0);
-    return { forks, greed, tool, secret, score };
-  }
-  function interestingnessScore(level) {
-    return interestingnessProfile(level).score;
   }
 
   // js/particles.js

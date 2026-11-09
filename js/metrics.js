@@ -115,7 +115,11 @@ export function buildBaseGraph(level) {
     return { cells, adj, radj, spawnKey: sk, portalKey: pk, w };
 }
 
-function hopDistances(startKeys, adj) {
+/**
+ * Multi-source BFS hop distances over an adjacency map (B1: exported for the
+ * pad-value pass in level.js; semantics unchanged).
+ */
+export function hopDistances(startKeys, adj) {
     const dist = new Map();
     const queue = [];
     for (const s of startKeys) {

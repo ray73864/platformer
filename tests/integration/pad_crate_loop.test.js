@@ -20,10 +20,16 @@ import { FX } from "../../js/fx.js";
 
 const DT = 1 / 60;
 // Fixtures harvested from the generator (deterministic per seed):
-// L11 s20261108 ships one pad at cell (7,16) — floor line y=544;
+// L11 s40943764 ships one pad at cell (7,16) — floor line y=544 — a B1
+// purposefulness survivor (EXPRESS lane gain 2; the bounce shortens a
+// non-secret coin's hop distance by two); the previous fixture L11
+// s20261108 intentionally ships NO pad now that pointless pads are
+// rejected (its BASE-era bounce measured 0 hops on both lanes — see
+// tests/integration/pad_purposefulness.test.js);
 // L25 s607974 (vertical) ships one crate seated at col 12 row 20 with a
 // 4-cell channel [11..14] — the reviewer's 64 px push-proof map.
-const PAD_SEED = 20261108;
+const PAD_LEVEL = 11;
+const PAD_SEED = 40943764;
 const CRATE_LEVEL = 25;
 const CRATE_SEED = 607974;
 
@@ -38,7 +44,7 @@ function startAt(levelNumber, seed) {
 }
 
 test("the published level carries its pad object; L1-era levels carry none", () => {
-    const padded = startAt(11, PAD_SEED);
+    const padded = startAt(PAD_LEVEL, PAD_SEED);
     expect(padded.pads.length).toBe(1);
     expect(padded.crate).toBe(null);
     const plain = startAt(3, PAD_SEED); // below tier gate
@@ -47,7 +53,7 @@ test("the published level carries its pad object; L1-era levels carry none", () 
 });
 
 test("falling onto a pad launches at exactly -PAD_IMPULSE with the measured rise", () => {
-    const game = startAt(11, PAD_SEED);
+    const game = startAt(PAD_LEVEL, PAD_SEED);
     const pad = game.pads[0];
     const p = game.player;
     // Drop from chest height above the plate, centred, zero velocity.
@@ -146,7 +152,7 @@ test("FX.dust off silences strain dust but never the engagement itself", () => {
 test("degrade-path vector draws survive game.draw() with objects on screen", () => {
     // No sheet art exists for pads/crates — the vector path IS the primary
     // path; the shared stub ctx only asserts call existence.
-    for (const [lvl, seed] of [[11, PAD_SEED], [CRATE_LEVEL, CRATE_SEED]]) {
+    for (const [lvl, seed] of [[PAD_LEVEL, PAD_SEED], [CRATE_LEVEL, CRATE_SEED]]) {
         const game = startAt(lvl, seed);
         for (let f = 0; f < 10; f++) game.update(DT);
         expect(() => game.draw()).not.toThrow();
@@ -154,7 +160,7 @@ test("degrade-path vector draws survive game.draw() with objects on screen", () 
 });
 
 test("retry rebuilds byte-identical placements (stored-seed replay)", () => {
-    const game = startAt(11, PAD_SEED);
+    const game = startAt(PAD_LEVEL, PAD_SEED);
     const padsA = JSON.parse(JSON.stringify(game.level.getPads()));
     const crateA = JSON.parse(JSON.stringify(game.level.getCrates()));
     game.startLevel(); // same stored seed path a retry takes
