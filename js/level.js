@@ -310,6 +310,56 @@ const GAUNTLET_MIN_BODIES = 3;
 const BODIES_PER_RUN_DIVISOR = 3;
 const PORTAL_SHELF_CLEAR_COLS = 1;
 
+// --- W2 presence fill (owner calibration ruling 2026-11-10: "DO IT") --------
+// The density fix (e2c6b2a) cost -52.6% mean bodies/level: the caps collapsed
+// clustered markers, and the funnel showed NOTHING else throttled counts —
+// markers 3787 -> legal 3657 -> gauntlet 3262 matched BASE byte-for-byte over
+// the same 1000 seeds; cap+portal-shelf alone dropped 1701+16 (-> 1545).
+// Nor can the demoted candidates be re-seated where they already stand: post-
+// filter deployments sit AT the per-run capacity ceiling (open strict capacity
+// measured +0.04 bodies/map; strict seats on never-patrolled runs +0.05). The
+// economy is not wasting budget — it is starved of RUNS, because the strict
+// marker pool vetoes route-ADJACENT cells and placeEnemyMarkers only reaches
+// for them when its strict pass ships ZERO enemies (the fallback pass).
+// THE FILL: after every other constructor consumer has run (see the call
+// site), seat additional patrollers on runs whose count sits below the sacred
+// cap max(1, floor(runTiles/3)) — including previously-empty multi-shelf runs
+// — using the SAME fallback-pass seat tolerance (allowRouteAdjacent: spans
+// still NEVER sweep a route cell; walkRunExtent blocks on pathCells), and the
+// same total-deployment budget DIFFICULTY.getMaxEnemies that already caps
+// markers (difficulty.js tier contract). Channels this opens and none others:
+//   (1) deployment frequency: maps deploy up to their existing budget instead
+//       of starving at ~40% of it once clusters collapse under the cap;
+//   (3) multi-shelf maps gain one-patroller runs (each legal under the caps);
+//   (4) honest per-band floors are pinned from THIS wave's measurement.
+// Channel (2) — span widths — measured ALREADY-MAXIMAL: deriveEnemySpawns
+// bounds every body by its full clamped walkable run; nothing narrows spans
+// except the fairness windows (band/bridge lips/shaft approaches), which are
+// untouched. Widening spans would mean loosening those, not allowed.
+// RNG DISCIPLINE (stronger than e2c6b2a's): the fill consumes ZERO rng draws
+// (farthest-from-occupied seat choice is pure geometry) and writes NO grid
+// cells, and it runs AFTER coins, kinds, decks, pads/crates and the alcove —
+// so terrain, spikes, coins, markers, spawn/portal, generation attempts,
+// kind rolls AND deck schedules stay byte-identical versus HEAD; only the
+// enemy SET grows. Fill bodies are always WALKERS (stompable/dodgeable): the
+// presence channel restores pressure without introducing new lethality
+// morphologies, and hostile gates (HOSTILE_MIN_RUN, joint-hostile shelf,
+// firing lane, spiny/bombardier caps) keep governing the rolled kinds alone.
+// Fairness gates the fill DOES respect beyond the two sacred rules: the
+// stacked-patrol gauntlet gate is re-checked greedily for every added body
+// (kind-blind, horizontal only — same vertical exemption as the shipped
+// gate), and fills never intersect pad cells, crate channel cells or the
+// alcove's carved geometry / secret-protection margin — symmetric with
+// _capabilityForbiddenCells and _alcoveForbiddenCells, which keep THOSE
+// objects out of patrol zones: a late arrival must not undo guarantees the
+// placement passes already made against the pre-fill enemy list.
+// Measured (this wave, same 1000-seed family as e2c6b2a): mean bodies/level
+// 1.545 -> 1.631 overall (50.0% of the pre-cap BASE 3.262; the residual gap
+// is the owner's clustering removal itself — Σ max(1,floor(w/3)) over all
+// veto-clean runs IS the ceiling); zero-enemy prevalence 38 -> 32 per 1000.
+// Full three-way tables in .superpowers/sdd/PLAN-world-program/w2-report.md.
+const PRESENCE_FILL_KIND = 'walker';
+
 // Spawn->portal articulation cells in the movement-model graph: cells on
 // one shortest path whose REMOVAL disconnects goal from spawn (any cell on
 // ALL paths is on every shortest path, so candidates are exactly the cells
@@ -2107,6 +2157,10 @@ export class Level {
         // alcove constant header for the stream-position and invariance
         // contract.
         this.placeAlcove();
+        // W2 presence fill: LAST of all, zero rng draws / zero grid writes —
+        // every byte-identity consumer above saw the pre-fill world (see the
+        // PRESENCE_FILL_KIND constant header).
+        this.applyPresenceFill();
     }
 
     // Standing tile per direction on the forced flat ground band: canonical
@@ -3578,10 +3632,14 @@ export class Level {
     // spelling so the gate cannot drift from placement while both report
     // success (same reasoning as deriveEnemySpawns sharing spawnEnemies).
     isMarkerSite(tiles, x, y, reachable, opts = {}) {
-        if (!this.hazardPlacementAllowed(
+        if (!opts.skipHazardBand && !this.hazardPlacementAllowed(
             this.direction === 'vertical' ? y : x)) {
             return false;
         }
+        // W2 fill support: skipHazardBand callers re-implement the exclusion
+        // with patrolBandBounds() — the DIRECTION-AWARE mirror of this band
+        // for the final (post-'left'-mirror) grid. Generation-space callers
+        // (placeEnemyMarkers, placeSpikes) never pass the flag.
         // Forced-boarding fairness (deck bridges): no enemy site within two
         // columns of either lip — a hostile patrolling the approach to a
         // REQUIRED boarding point is an ambush on a move the player cannot
@@ -4062,6 +4120,12 @@ export class Level {
         deploySpawns = protectPortalShelf(
             this.tiles, this.width, this.height, this.portalTile,
             this.direction, deploySpawns, this.pathCells);
+        // Stash for applyPresenceFill (W2): the surviving SITES (pre-roll)
+        // and the articulation set already computed here when its trigger
+        // fired. Re-derived fresh on every call; fixtures that swap tiles and
+        // re-run spawnEnemies refresh both together.
+        this._deployedSites = deploySpawns;
+        this._routeMustPass = routeMustPass;
 
         // Kind assignment rides the SAME marker sites/spans as walkers —
         // placement fairness rules are untouched, only what stands on a site
@@ -4196,6 +4260,237 @@ export class Level {
                 // Combat context: only bombardiers read it (their cannon
                 // pushes into this Level's projectile manager and raycasts
                 // this grid); every other kind ignores the argument.
+                { projectiles: this.projectileManager,
+                    terrain: this.projectileManager.terrain }
+            );
+        }
+    }
+
+    // W2 presence fill (see the PRESENCE_FILL_KIND header): seats additional
+    // walker patrollers on runs below the sacred bodies-per-run cap AFTER the
+    // whole constructor has finished, so every byte-identity consumer (coins,
+    // kinds, decks, pads/crates, alcove) sees the pre-fill world exactly as
+    // before and this pass adds ZERO rng draws and ZERO grid writes. Pure
+    // function of the final state => retry replays the exact same fill.
+    applyPresenceFill() {
+        // Vertical maps keep their one-patroller-per-shelf economy (the
+        // 2026-11-04 "patrols are seasoning; the climb is the difficulty"
+        // ruling) — measured uplift there was +0.12 bodies/map anyway.
+        if (this.direction === 'vertical') return;
+        if (!DIFFICULTY.hasPhase2Content(this.levelNumber)) return;
+        const sites = this._deployedSites || [];
+        const T = this.tileSize;
+        let room = DIFFICULTY.getMaxEnemies(this.levelNumber) - sites.length;
+        if (room <= 0) return;
+
+        // Occupancy per SHARED PATROL RUN — identical grouping to
+        // capBodiesPerPatrolRun (walkRunExtent keyed `${y}:${left}`).
+        const occ = new Map();
+        for (const s of sites) {
+            const ext = walkRunExtent(this.tiles, this.width, this.height,
+                s.x, s.y, this.pathCells);
+            if (!ext) continue;
+            const key = `${s.y}:${ext.left}`;
+            if (!occ.has(key)) occ.set(key, { left: ext.left, right: ext.right, cols: [] });
+            occ.get(key).cols.push(s.x);
+        }
+
+        // Late-arrival respect for placement guarantees made against the
+        // PRE-FILL enemy list: pad cells and crate channel cells share rows
+        // with patrols only by the _capabilityForbiddenCells contract (exact
+        // same-row spans), and the alcove was carved ALCOVE_FORBID_MARGIN
+        // away from existing spans. Mirroring those zones here keeps both
+        // contracts intact without moving any object.
+        const objCells = new Set();
+        for (const p of this.pads) objCells.add(p.row * this.width + p.col);
+        for (const c of this.crates) {
+            for (let x = c.channelLeft; x <= c.channelRight; x++) {
+                objCells.add(c.row * this.width + x);
+            }
+        }
+        const m = ALCOVE_FORBID_MARGIN;
+        const secretCells = [];
+        if (this.alcove) {
+            for (const f of this.alcove.flipped) {
+                objCells.add(f.r * this.width + f.x); // carved interior/tunnel
+            }
+            for (const coin of this.coins) {
+                if (!coin.secret) continue;
+                secretCells.push({
+                    x: Math.floor((coin.x + coin.width / 2) / T),
+                    y: Math.floor((coin.y + coin.height / 2) / T)
+                });
+            }
+        }
+        const blockedByObjects = (y, left, right) => {
+            for (let x = left; x <= right; x++) {
+                if (objCells.has(y * this.width + x)) return true;
+            }
+            for (const s of secretCells) {
+                if (Math.abs(y - s.y) <= m &&
+                    left <= s.x + m && s.x - m <= right) return true;
+            }
+            return false;
+        };
+
+        // Seat enumeration: strict fairness vetoes ALL apply (isMarkerSite),
+        // except the route-ADJACENCY preference — the same tolerance the
+        // marker fallback pass already ships when strict sites would mean
+        // zero enemies. Spans still never sweep a route cell (patrolSpan
+        // blocks on pathCells). Support-run legality mirrors the shipped
+        // deploy filter (ENEMY_MIN_RUN); TRAVEL gets the fill-specific rule
+        // PRESENCE_FILL_MIN_SPAN_COLS below.
+        // Fill bodies may patrol a CLAMPED SUB-RUN of their walkable run:
+        // the maximal legal sub-segment containing the seat (no max cap —
+        // spans are maximal-by-construction, clamped only by the direction
+        // band and the gap windows below). A fill body is never permitted
+        // bounds narrower than PRESENCE_FILL_MIN_SPAN_COLS (zero vibration
+        // class by construction — strictly safer than the >=1-tile-of-travel
+        // bar the rolled kinds clear), which unlocks the large single-column
+        // fallback-seat pool without ever shipping the vibrating morphology
+        // the narrow-shelf ruling bans.
+        // Minimum final span in columns for exactly the travel test below:
+        // accept cols*T - ENEMY_WIDTH >= T, i.e. integer cols >= ceil of the
+        // ratio (3 columns at T=16, 2 at T=32).
+        const PRESENCE_FILL_MIN_SPAN_COLS = Math.ceil((T + ENEMY_WIDTH) / T);
+        const [bandMin, bandMax] = this.patrolBandBounds();
+        const seatsByRun = new Map();
+        for (let y = 0; y < this.height - 1; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (!this.isMarkerSite(this.tiles, x, y,
+                    this.reachableTiles, { allowRouteAdjacent: true,
+                        skipHazardBand: true })) {
+                    continue;
+                }
+                // Direction-aware exclusion band (final post-mirror space):
+                // mirrors hazardPlacementAllowed via patrolBandBounds, so a
+                // fill seat can never sit in the spawn runway or portal
+                // apron of a LEFT-facing map (the canonical [9,w-6] window
+                // isMarkerSite applies belongs to generation space).
+                if (x < bandMin || x > bandMax) continue;
+                const span = this.patrolSpan(this.tiles, x, y);
+                if (!span) continue;
+                let left = Math.max(span.left, bandMin);
+                let right = Math.min(span.right, bandMax);
+                if (this.bridgeGap) {
+                    const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
+                    const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+                    if (x < wLo) right = Math.min(right, wLo - 1);
+                    else if (x > wHi) left = Math.max(left, wHi + 1);
+                }
+                if (this.shaftGap) {
+                    const wLo = this.shaftGap.sx - SHAFT_LEDGE_W -
+                        SHAFT_WINDOW_PAD;
+                    const wHi = this.shaftGap.ex + SHAFT_LEDGE_W +
+                        SHAFT_WINDOW_PAD;
+                    if (x < wLo) right = Math.min(right, wLo - 1);
+                    else if (x > wHi) left = Math.max(left, wHi + 1);
+                }
+                if (solidRunWidth(this.tiles, this.width, x, y + 1) <
+                    ENEMY_MIN_RUN) continue;
+                // Final travel mirrors the shipped deploy filter: a fill body
+                // needs a real patrol (>= one tile of movement inside its
+                // FINAL clamped bounds — see PRESENCE_FILL_MIN_SPAN_COLS).
+                // Most route-adjacent fallback seats sit on one-column shelves
+                // and die here — that is the narrow-shelf ruling working as
+                // intended, and it is what makes the shipped-rule capacity
+                // ceiling measured in the header the honest number it is.
+                if (right - left + 1 < PRESENCE_FILL_MIN_SPAN_COLS) continue;
+                const ext = walkRunExtent(this.tiles, this.width,
+                    this.height, x, y, this.pathCells);
+                if (!ext) continue;
+                const key = `${y}:${ext.left}`;
+                const grp = occ.get(key);
+                if (grp && grp.cols.includes(x)) continue; // column taken
+                if (!seatsByRun.has(key)) seatsByRun.set(key, []);
+                seatsByRun.get(key).push({ x, y, left, right });
+            }
+        }
+        if (seatsByRun.size === 0) return;
+
+        // Articulation set for the gauntlet re-check (same computation the
+        // shipped gate consumes; hoisted once, pure).
+        let mustPass = this._routeMustPass || null;
+        if (mustPass === null && this.portalTile) {
+            mustPass = computeMustPassCells(this.tiles, this.width,
+                this.height, this.spawnTile, this.portalTile,
+                this.bridgeGap);
+        }
+        const probeOf = s => ({ col: s.x, row: s.y, left: s.left,
+            right: s.right });
+        const committed = [];
+
+        // Deterministic order: runs row-major (key sorts y then left), seats
+        // within a run by farthest-point insertion (maximise distance to the
+        // nearest body already on the run; ties break to the smaller column).
+        const runKeys = [...seatsByRun.keys()].sort((a, b) => {
+            const [ay, al] = a.split(':').map(Number);
+            const [by, bl] = b.split(':').map(Number);
+            return ay - by || al - bl;
+        });
+        for (const key of runKeys) {
+            const seats = seatsByRun.get(key);
+            const first = seats[0];
+            const ext = walkRunExtent(this.tiles, this.width, this.height,
+                first.x, first.y, this.pathCells);
+            const cap = Math.max(1,
+                Math.floor((ext.right - ext.left + 1) / BODIES_PER_RUN_DIVISOR));
+            const occupied = (occ.get(key)?.cols || []).slice();
+            const used = new Set();
+            while (occupied.length < cap && room > 0) {
+                let best = null;
+                let bestD = -1;
+                for (const seat of seats) {
+                    if (used.has(seat.x)) continue;
+                    if (blockedByObjects(seat.y, seat.left, seat.right)) {
+                        used.add(seat.x);
+                        continue;
+                    }
+                    let d = Infinity;
+                    for (const cx of occupied) {
+                        d = Math.min(d, Math.abs(seat.x - cx));
+                    }
+                    if (d > bestD || (d === bestD && best !== null &&
+                        seat.x < best.x)) {
+                        best = seat;
+                        bestD = d;
+                    }
+                }
+                if (best === null) break;
+                used.add(best.x);
+                // Gauntlet gate re-check (kind-blind, greedy like the shipped
+                // pass): a fill that COMPLETES a zero-pocket stack on a
+                // must-pass neighbourhood goes back; try the next seat.
+                if (mustPass && mustPass.size > 0) {
+                    const probe = [...sites, ...committed].map(probeOf);
+                    probe.push(probeOf(best));
+                    if (gauntletViolations(this.tiles, this.width,
+                        this.height, probe, mustPass,
+                        this.reachableTiles).length > 0) continue;
+                }
+                occupied.push(best.x);
+                committed.push(best);
+                room--;
+            }
+        }
+        if (committed.length === 0) return;
+
+        // Sacred-rule safety net: re-run BOTH shipped filters over the
+        // combined list. They are no-ops by construction (the accounting
+        // above mirrors them); keeping them wired means a future drift in
+        // either filter cannot ship an over-cap or portal-walled composition
+        // through the fill channel.
+        const guarded = protectPortalShelf(this.tiles, this.width,
+            this.height, this.portalTile, this.direction,
+            capBodiesPerPatrolRun(this.tiles, this.width, this.height,
+                [...sites, ...committed], this.pathCells),
+            this.pathCells);
+        const keptKeys = new Set(guarded.map(s => `${s.x},${s.y}`));
+        for (const f of committed) {
+            if (!keptKeys.has(`${f.x},${f.y}`)) continue;
+            this.enemyManager.addEnemy(
+                f.x * T, f.y * T, f.left * T, (f.right + 1) * T,
+                PRESENCE_FILL_KIND,
                 { projectiles: this.projectileManager,
                     terrain: this.projectileManager.terrain }
             );

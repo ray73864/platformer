@@ -67,6 +67,18 @@ const T = 32;
 // L7 too (its vertical marker economy ships <=1 body per run, so neither
 // rule can bite there — verified against HEAD). If this pin fails on an
 // L1..4 or L7 row, that IS drift.
+// RECAPTURED for the W2 presence calibration of 2026-11-10 (owner ruling
+// "do it": applyPresenceFill seats additional WALKER patrollers on runs
+// below the sacred cap after every rng consumer has finished): 3 of 56 rows
+// intentionally changed — L6 seeds 60022, 60033, 60055, each gaining exactly
+// one fill walker (1 -> 2 bodies; zero rng draws, zero grid writes, so the
+// change is enemy-set-only — every row re-verified terrain/spikes/coins/
+// portal/spawn byte-identical against bd8f6f9, and L5/L7 rows unchanged:
+// L5's maps had no travel-legal seat below cap on these seeds, L7 verticals
+// are fill-exempt by the vertical one-patroller-per-shelf economy). The two
+// sacred filters are UNTOUCHED — the e2c6b2a portal-shelf/cap pins in
+// tests/unit/enemy_density_grouping_fairness.test.js still pass verbatim.
+// If this pin fails on an L1..4 or L7 row, that IS drift.
 const GOLDEN_L1_7 = [
     [1, 11, "43dc716b"], [1, 22, "e568e737"], [1, 33, "85137246"], [1, 44, "82be8d9a"],
     [1, 55, "49f57ede"], [1, 66, "af5cd10e"], [1, 77, "20272d24"], [1, 88, "adc51e8a"],
@@ -78,8 +90,8 @@ const GOLDEN_L1_7 = [
     [4, 55, "53bc22c7"], [4, 66, "1d0aad41"], [4, 77, "92557e86"], [4, 88, "c7657f2a"],
     [5, 11, "126423c7"], [5, 22, "81073b13"], [5, 33, "71505252"], [5, 44, "9b83b8a9"],
     [5, 55, "493c36cc"], [5, 66, "df20e330"], [5, 77, "a8cd5a59"], [5, 88, "b47ed851"],
-    [6, 11, "e0bd7866"], [6, 22, "ac39ae9a"], [6, 33, "a9785bb9"], [6, 44, "8351591c"],
-    [6, 55, "53d1889d"], [6, 66, "de1e596c"], [6, 77, "703e5856"], [6, 88, "9ab6b777"],
+    [6, 11, "e0bd7866"], [6, 22, "9dc73732"], [6, 33, "60845650"], [6, 44, "8351591c"],
+    [6, 55, "ce118ab9"], [6, 66, "de1e596c"], [6, 77, "703e5856"], [6, 88, "9ab6b777"],
     [7, 11, "f22b14bd"], [7, 22, "f42ccc32"], [7, 33, "333006fe"], [7, 44, "bc32302d"],
     [7, 55, "f136f4c3"], [7, 66, "ef5e92fe"], [7, 77, "285c6abb"], [7, 88, "8f0b1f69"]
 ];

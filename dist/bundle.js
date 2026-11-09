@@ -1744,6 +1744,7 @@
   var GAUNTLET_MIN_BODIES = 3;
   var BODIES_PER_RUN_DIVISOR = 3;
   var PORTAL_SHELF_CLEAR_COLS = 1;
+  var PRESENCE_FILL_KIND = "walker";
   function computeMustPassCells(tiles, width, height, spawnTile, portalTile, bridgeGap = null) {
     const key = (x, y) => y * width + x;
     const view = { tiles, width, height, spawnTile, bridgeGap };
@@ -2691,6 +2692,7 @@
       this.movingPlatforms = this.deriveMovingPlatforms();
       this.placeCapabilityObjects();
       this.placeAlcove();
+      this.applyPresenceFill();
     }
     getSpawnTile() {
       const y = this.height - 4;
@@ -3494,7 +3496,7 @@
       return false;
     }
     isMarkerSite(tiles, x, y, reachable, opts = {}) {
-      if (!this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
+      if (!opts.skipHazardBand && !this.hazardPlacementAllowed(this.direction === "vertical" ? y : x)) {
         return false;
       }
       if (this.bridgeGap && x >= this.bridgeGap.a - BRIDGE_LIP_BAN_COLS && x <= this.bridgeGap.b + BRIDGE_LIP_BAN_COLS) {
@@ -3748,6 +3750,8 @@
       }
       deploySpawns = capBodiesPerPatrolRun(this.tiles, this.width, this.height, deploySpawns, this.pathCells);
       deploySpawns = protectPortalShelf(this.tiles, this.width, this.height, this.portalTile, this.direction, deploySpawns, this.pathCells);
+      this._deployedSites = deploySpawns;
+      this._routeMustPass = routeMustPass;
       const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
       const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
       const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX);
@@ -3798,6 +3802,181 @@
         if (kind === "bombardier")
           bombardiers++;
         this.enemyManager.addEnemy(s.x * this.tileSize, s.y * this.tileSize, s.left * this.tileSize, (s.right + 1) * this.tileSize, kind, {
+          projectiles: this.projectileManager,
+          terrain: this.projectileManager.terrain
+        });
+      }
+    }
+    applyPresenceFill() {
+      if (this.direction === "vertical")
+        return;
+      if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
+        return;
+      const sites = this._deployedSites || [];
+      const T = this.tileSize;
+      let room = DIFFICULTY.getMaxEnemies(this.levelNumber) - sites.length;
+      if (room <= 0)
+        return;
+      const occ = new Map;
+      for (const s of sites) {
+        const ext = walkRunExtent(this.tiles, this.width, this.height, s.x, s.y, this.pathCells);
+        if (!ext)
+          continue;
+        const key = `${s.y}:${ext.left}`;
+        if (!occ.has(key))
+          occ.set(key, { left: ext.left, right: ext.right, cols: [] });
+        occ.get(key).cols.push(s.x);
+      }
+      const objCells = new Set;
+      for (const p of this.pads)
+        objCells.add(p.row * this.width + p.col);
+      for (const c of this.crates) {
+        for (let x = c.channelLeft;x <= c.channelRight; x++) {
+          objCells.add(c.row * this.width + x);
+        }
+      }
+      const m = ALCOVE_FORBID_MARGIN;
+      const secretCells = [];
+      if (this.alcove) {
+        for (const f of this.alcove.flipped) {
+          objCells.add(f.r * this.width + f.x);
+        }
+        for (const coin of this.coins) {
+          if (!coin.secret)
+            continue;
+          secretCells.push({
+            x: Math.floor((coin.x + coin.width / 2) / T),
+            y: Math.floor((coin.y + coin.height / 2) / T)
+          });
+        }
+      }
+      const blockedByObjects = (y, left, right) => {
+        for (let x = left;x <= right; x++) {
+          if (objCells.has(y * this.width + x))
+            return true;
+        }
+        for (const s of secretCells) {
+          if (Math.abs(y - s.y) <= m && left <= s.x + m && s.x - m <= right)
+            return true;
+        }
+        return false;
+      };
+      const PRESENCE_FILL_MIN_SPAN_COLS = Math.ceil((T + ENEMY_WIDTH) / T);
+      const [bandMin, bandMax] = this.patrolBandBounds();
+      const seatsByRun = new Map;
+      for (let y = 0;y < this.height - 1; y++) {
+        for (let x = 0;x < this.width; x++) {
+          if (!this.isMarkerSite(this.tiles, x, y, this.reachableTiles, {
+            allowRouteAdjacent: true,
+            skipHazardBand: true
+          })) {
+            continue;
+          }
+          if (x < bandMin || x > bandMax)
+            continue;
+          const span = this.patrolSpan(this.tiles, x, y);
+          if (!span)
+            continue;
+          let left = Math.max(span.left, bandMin);
+          let right = Math.min(span.right, bandMax);
+          if (this.bridgeGap) {
+            const wLo = this.bridgeGap.a - BRIDGE_LIP_BAN_COLS;
+            const wHi = this.bridgeGap.b + BRIDGE_LIP_BAN_COLS;
+            if (x < wLo)
+              right = Math.min(right, wLo - 1);
+            else if (x > wHi)
+              left = Math.max(left, wHi + 1);
+          }
+          if (this.shaftGap) {
+            const wLo = this.shaftGap.sx - SHAFT_LEDGE_W - SHAFT_WINDOW_PAD;
+            const wHi = this.shaftGap.ex + SHAFT_LEDGE_W + SHAFT_WINDOW_PAD;
+            if (x < wLo)
+              right = Math.min(right, wLo - 1);
+            else if (x > wHi)
+              left = Math.max(left, wHi + 1);
+          }
+          if (solidRunWidth(this.tiles, this.width, x, y + 1) < ENEMY_MIN_RUN)
+            continue;
+          if (right - left + 1 < PRESENCE_FILL_MIN_SPAN_COLS)
+            continue;
+          const ext = walkRunExtent(this.tiles, this.width, this.height, x, y, this.pathCells);
+          if (!ext)
+            continue;
+          const key = `${y}:${ext.left}`;
+          const grp = occ.get(key);
+          if (grp && grp.cols.includes(x))
+            continue;
+          if (!seatsByRun.has(key))
+            seatsByRun.set(key, []);
+          seatsByRun.get(key).push({ x, y, left, right });
+        }
+      }
+      if (seatsByRun.size === 0)
+        return;
+      let mustPass = this._routeMustPass || null;
+      if (mustPass === null && this.portalTile) {
+        mustPass = computeMustPassCells(this.tiles, this.width, this.height, this.spawnTile, this.portalTile, this.bridgeGap);
+      }
+      const probeOf = (s) => ({
+        col: s.x,
+        row: s.y,
+        left: s.left,
+        right: s.right
+      });
+      const committed = [];
+      const runKeys = [...seatsByRun.keys()].sort((a, b) => {
+        const [ay, al] = a.split(":").map(Number);
+        const [by, bl] = b.split(":").map(Number);
+        return ay - by || al - bl;
+      });
+      for (const key of runKeys) {
+        const seats = seatsByRun.get(key);
+        const first = seats[0];
+        const ext = walkRunExtent(this.tiles, this.width, this.height, first.x, first.y, this.pathCells);
+        const cap = Math.max(1, Math.floor((ext.right - ext.left + 1) / BODIES_PER_RUN_DIVISOR));
+        const occupied = (occ.get(key)?.cols || []).slice();
+        const used = new Set;
+        while (occupied.length < cap && room > 0) {
+          let best = null;
+          let bestD = -1;
+          for (const seat of seats) {
+            if (used.has(seat.x))
+              continue;
+            if (blockedByObjects(seat.y, seat.left, seat.right)) {
+              used.add(seat.x);
+              continue;
+            }
+            let d = Infinity;
+            for (const cx of occupied) {
+              d = Math.min(d, Math.abs(seat.x - cx));
+            }
+            if (d > bestD || d === bestD && best !== null && seat.x < best.x) {
+              best = seat;
+              bestD = d;
+            }
+          }
+          if (best === null)
+            break;
+          used.add(best.x);
+          if (mustPass && mustPass.size > 0) {
+            const probe = [...sites, ...committed].map(probeOf);
+            probe.push(probeOf(best));
+            if (gauntletViolations(this.tiles, this.width, this.height, probe, mustPass, this.reachableTiles).length > 0)
+              continue;
+          }
+          occupied.push(best.x);
+          committed.push(best);
+          room--;
+        }
+      }
+      if (committed.length === 0)
+        return;
+      const guarded = protectPortalShelf(this.tiles, this.width, this.height, this.portalTile, this.direction, capBodiesPerPatrolRun(this.tiles, this.width, this.height, [...sites, ...committed], this.pathCells), this.pathCells);
+      const keptKeys = new Set(guarded.map((s) => `${s.x},${s.y}`));
+      for (const f of committed) {
+        if (!keptKeys.has(`${f.x},${f.y}`))
+          continue;
+        this.enemyManager.addEnemy(f.x * T, f.y * T, f.left * T, (f.right + 1) * T, PRESENCE_FILL_KIND, {
           projectiles: this.projectileManager,
           terrain: this.projectileManager.terrain
         });

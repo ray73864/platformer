@@ -1,6 +1,9 @@
 import { test, expect } from "bun:test";
 import { Level, canReach, computeReachable } from "../../js/level.js";
+import { Difficulty } from "../../js/difficulty.js";
 import { Hazards } from "../../js/hazards.js";
+
+const DIFFICULTY = new Difficulty();
 
 // Deterministic PRNG (mulberry32) so a generation can be replayed exactly.
 function mulberry32(seed) {
@@ -319,7 +322,15 @@ test("enemy markers sit on standable tiles and patrols stay walkable, banded, an
             const spawn = level.getSpawnTile();
             const portalCol = Math.floor(level.portal.x / 32);
             const enemies = level.getEnemyManager().enemies;
-            expect(enemies.length).toBeLessThanOrEqual(markers.length);
+            // W2 presence fill: deployments may now EXCEED the marker count
+            // because applyPresenceFill seats additional walkers directly on
+            // multi-shelf runs below the sacred per-run cap. The real bound
+            // is the tier enemy budget (difficulty.js getMaxEnemies), which
+            // BOTH markers and fills respect — so this assertion is not
+            // weakened, it is re-anchored to the contract that governs the
+            // combined pipeline. Markers alone still obey `target` above.
+            expect(enemies.length).toBeLessThanOrEqual(
+                DIFFICULTY.getMaxEnemies(n));
 
             for (const e of enemies) {
                 const y = e.y / 32;
