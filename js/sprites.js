@@ -7,7 +7,10 @@
 //
 // Sheets (packed variants: no gaps between cells):
 //   tiles.png        20 cols × 9 rows of 18px cells
-//   characters.png    9 cols × 3 rows of 24px cells
+//   (characters.png was retired by the 2026-11-04 hero redesign and the
+//    2026-11-10 enemy art pass — hero AND enemies are baked indexed pixel
+//    art now (see HERO_FRAMES below and js/enemyart.js); the PNG stays in
+//    the CC0 pack folder but is no longer loaded.)
 //   backgrounds.png   three 64×72 theme columns: sky band (y 0-31),
 //                     decoration strip (y 32-47), ground strip (y 48-71)
 //
@@ -25,10 +28,12 @@
 // mirrored constant here would defeat that.
 
 import { FX } from './fx.js';
+// Enemy art is a leaf module (no imports of its own — no cycle, no
+// simulation reach): indexed frames + the deterministic bake.
+import { buildEnemyCanvases, ENEMY_DIMS, ENEMY_BLIT, GUN_DIMS } from './enemyart.js';
 
 export const SHEETS = {
     tiles: { src: './assets/kenney_pixel-platformer/tiles.png', cols: 20, cell: 18 },
-    characters: { src: './assets/kenney_pixel-platformer/characters.png', cols: 9, cell: 24 },
     // Backgrounds are drawn from THEMES column rects, not a uniform grid.
     backgrounds: { src: './assets/kenney_pixel-platformer/backgrounds.png' }
 };
@@ -66,14 +71,9 @@ const CAP_H = CAP_OVER + 9;
 // stays dependency-free). Used to stand the portal flag on the ground line.
 const PORTAL_CELL = 32;
 
-// Frames into characters.png. Enemies: spiked-shelled slime and bat, both
-// 3-frame walk/flap cycles. The player left this sheet in the 2026-11-04
-// hero redesign (baked indexed pixel art below); cells 9-10 of the sheet
-// remain unused rather than renumbering the enemy frames.
-export const CHARS = {
-    SLIME: [15, 16, 17],
-    BAT: [24, 25, 26]
-};
+// Enemy frames retired from characters.png (SLIME/BAT sheet cycles) with the
+// 2026-11-10 enemy art pass: every kind now bakes from js/enemyart.js in the
+// same indexed-pixel-art convention as the hero below.
 
 // Background themes cycled by level number ((level - 1) % THEMES.length).
 // The sheet's three theme columns are NOT equal thirds (measured from the
@@ -1121,7 +1121,7 @@ export function sheetRect(sheetKey, index) {
 
 // Sheet bounds per key, used by tests to assert every referenced index
 // actually exists inside its sheet.
-export const SHEET_TILE_COUNTS = { tiles: 20 * 9, characters: 9 * 3 };
+export const SHEET_TILE_COUNTS = { tiles: 20 * 9 };
 
 // Horizontal wrap for a prerendered parallax layer: negative-modulo so the
 // layer scrolls continuously left as the camera advances right.
@@ -2260,304 +2260,170 @@ export class Sprites {
         ctx.restore();
     }
 
+    // Enemies: baked indexed pixel art (js/enemyart.js), same feet-anchored,
+    // facing-flipped, contact-shadowed convention as the hero. Telegraph
+    // embellishments (Wave B) stay exactly where they were — squash scales,
+    // charger flash, spiny rattle, bombardier recoil/muzzle glow, dash
+    // streaks — all deterministic from enemy.state/stateTime so replays and
+    // the bot see precisely what the player sees. The old vector dome paths
+    // are gone; the flash now tints the EXACT body silhouette via a
+    // pre-baked amber mask instead of approximating it with a bezier fill.
     drawEnemy(ctx, enemy, index, player = null) {
+        // Mirrors of the enemies.js state timings (the sprite layer stays
+        // import-free of simulation modules by convention).
+        const CHARGER_WINDUP_TIME = 0.45;
+        const BOMBARDIER_WINDUP_RANGED_TIME = 0.6;
         if (enemy.dead) return;
         const kind = enemy.kind || 'walker';
-        if (kind === 'spiny') {
-            this._drawSpiny(ctx, enemy, player);
-            return;
-        }
-        if (kind === 'charger') {
-            this._drawCharger(ctx, enemy);
-            return;
-        }
-        if (kind === 'bombardier') {
-            this._drawBombardier(ctx, enemy);
-            return;
-        }
-        const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
-        const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
-        const face = this._faceOf(enemy);
-        const w = 42;
-        const h = 42;
         const cx = enemy.x + enemy.width / 2;
         const feet = enemy.y + enemy.height;
-        this._entityShadow(ctx, cx, feet, 15);
-        ctx.save();
-        ctx.translate(cx, feet);
-        ctx.scale(face, 1);
-        this._drawSheet(ctx, 'characters', frame, -w / 2, -h, w, h);
-        ctx.restore();
-    }
-
-    // Spiny: the slime silhouette wearing a black spike row — recognition
-    // must be instant at game zoom because stomping it is fatal. Vector art
-    // (no sheet cell exists for this kind); motion is the walker's exactly,
-    // so the tint + teeth carry the whole warning. Same feet-anchored,
-    // facing-flipped, contact-shadowed convention as the sheet enemies.
-    // Wave B: when the player closes within ~3 tiles, the dome micro-rattles
-    // (a few px of clock-driven jitter on the BODY only — the contact shadow
-    // stays planted so the deck line never lies). Reads as "do not touch"
-    // without moving the lethal box a pixel; gated by FX.trails and scaled
-    // by intensity, never by anything the simulation reads.
-    _drawSpiny(ctx, enemy, player = null) {
-        const cx = enemy.x + enemy.width / 2;
-        const feet = enemy.y + enemy.height;
-        this._entityShadow(ctx, cx, feet, 15);
+        this._entityShadow(ctx, cx, feet, kind === 'charger' || kind === 'bombardier' ? 17 : 15);
+        const art = this._ensureEnemies();
+        if (!art) return;                    // headless: shadow-only, never throws
         const face = this._faceOf(enemy);
+        const pose = this._enemyPose(enemy, index);
+        const z = ENEMY_BLIT[kind].z;
+        const bw = (ENEMY_DIMS[kind].w + 2) * z;
+        const bh = (ENEMY_DIMS[kind].h + 2) * z;
+        const t = enemy.stateTime || 0;
+        let sx = 1;
+        let sy = 1;
+        let flashA = 0;
         let jx = 0;
         let jy = 0;
-        if (player && FX.trails &&
+        if (kind === 'charger') {
+            if (enemy.state === 'windup') {
+                // Crouch-load toward the dash: sink and widen across the windup.
+                const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+                sx = 1 + 0.18 * k;
+                sy = 1 - 0.25 * k;
+                // Wave B: deep amber pulse (fixed-rate, stateTime-driven like
+                // the original strobe so replays and the bot see exactly what
+                // the player sees) riding a rising mean: the last third of
+                // the windup flashes hottest right before the dash locks.
+                // Intensity-scaled only: NEVER flag-gated, because this flash
+                // is fairness-critical information, not decoration.
+                const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 12);
+                flashA = (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity;
+            } else if (enemy.state === 'dash') {
+                sx = 1.12;
+                sy = 0.9;
+            }
+        } else if (kind === 'bombardier') {
+            if (enemy.state === 'windup_ranged') {
+                // Trunnion recoil-load: sink slightly across the windup while
+                // the muzzle glow grows (the shot clock made visible).
+                const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+                sx = 1 + 0.1 * k;
+                sy = 1 - 0.15 * k;
+            } else if (enemy.state === 'windup') {
+                const k = Math.min(1, t / CHARGER_WINDUP_TIME); // close charge: charger squash
+                sx = 1 + 0.18 * k;
+                sy = 1 - 0.25 * k;
+            } else if (enemy.state === 'dash') {
+                sx = 1.12;
+                sy = 0.9;
+            }
+        } else if (kind === 'spiny' && player && FX.trails &&
             Math.abs((player.x + player.width / 2) - cx) <= 96) {
+            // Proximity rattle on the BODY only (a few px of clock-driven
+            // jitter) — the contact shadow stays planted so the deck line
+            // never lies, and the lethal box never moves a pixel. Reads on
+            // the bristled crown without any extra signal.
             const amp = 1.2 * FX.intensity;
             jx = Math.sin(this.clock * 34 + enemy.x * 0.35) * amp;
             jy = Math.sin(this.clock * 41 + 2.1) * amp * 0.4;
         }
         ctx.save();
         ctx.translate(cx + jx, feet + jy);
-        ctx.scale(face, 1);
-        // Purple-tinted slime dome (same footprint as the sheet slime).
-        ctx.fillStyle = '#7d4fa8';
-        ctx.beginPath();
-        ctx.moveTo(-13, 0);
-        ctx.quadraticCurveTo(-16, -13, -8, -19);
-        ctx.quadraticCurveTo(0, -24, 8, -19);
-        ctx.quadraticCurveTo(16, -13, 13, 0);
-        ctx.closePath();
-        ctx.fill();
-        // Belly shading for volume (inset style from the visual pass).
-        ctx.fillStyle = 'rgba(18,8,38,0.28)';
-        ctx.fillRect(-13, -4, 26, 4);
-        // THE signal: dark triangular spike row along the back. Four teeth
-        // riding the dome arc, unmistakable even mid-jump above it.
-        ctx.fillStyle = '#16161d';
-        const tooth = (bx, by, w, h) => {
-            ctx.beginPath();
-            ctx.moveTo(bx, by);
-            ctx.lineTo(bx + w / 2, by - h);
-            ctx.lineTo(bx + w, by);
-            ctx.closePath();
-            ctx.fill();
-        };
-        tooth(-11, -13, 6, 7);
-        tooth(-4.5, -18, 6, 9);
-        tooth(2, -18, 6, 9);
-        tooth(8, -12, 6, 7);
-        // Eye toward the facing direction (shared read with the walker).
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(5, -14, 4, 4);
-        ctx.fillStyle = '#16161d';
-        ctx.fillRect(7, -13, 2, 2);
-        ctx.restore();
-    }
-
-    // Charger: heavier rust-red body with a forward horn; its WINDUP tele-
-    // graph (squash + flash) and dash stretch render deterministically from
-    // enemy.state/stateTime — no per-frame randomness, so replays and the
-    // bot see exactly what the player sees. CHARGER_WINDUP_TIME mirrors the
-    // constant in enemies.js (sprite layer stays import-free by convention).
-    _drawCharger(ctx, enemy) {
-        const CHARGER_WINDUP_TIME = 0.45; // mirror of enemies.js
-        const cx = enemy.x + enemy.width / 2;
-        const feet = enemy.y + enemy.height;
-        this._entityShadow(ctx, cx, feet, 17);
-        const face = this._faceOf(enemy);
-        let sx = 1;
-        let sy = 1;
-        let flashA = 0;
-        const t = enemy.stateTime || 0;
-        if (enemy.state === 'windup') {
-            // Crouch-load toward the dash: sink and widen across the windup.
-            const k = Math.min(1, t / CHARGER_WINDUP_TIME);
-            sx = 1 + 0.18 * k;
-            sy = 1 - 0.25 * k;
-            // Wave B: the tell got LOUDER — a deep amber pulse (fixed-rate,
-            // stateTime-driven like the old strobe so replays and the bot see
-            // exactly what the player sees) riding a rising mean: the last
-            // third of the windup flashes hottest right before the dash
-            // locks. Intensity-scaled only: NEVER flag-gated, because this
-            // flash is fairness-critical information, not decoration.
-            const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 12);
-            flashA = (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity;
-        } else if (enemy.state === 'dash') {
-            sx = 1.12;
-            sy = 0.9;
-        }
-        ctx.save();
-        ctx.translate(cx, feet);
         ctx.scale(face * sx, sy);
-        // Body: slightly larger than the slime, squared shoulders.
-        ctx.fillStyle = '#b5493a';
-        ctx.beginPath();
-        ctx.moveTo(-15, 0);
-        ctx.quadraticCurveTo(-17, -14, -9, -21);
-        ctx.quadraticCurveTo(0, -26, 9, -21);
-        ctx.quadraticCurveTo(17, -14, 15, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = 'rgba(20,8,4,0.28)';
-        ctx.fillRect(-15, -4, 30, 4);
-        // Forward horn/beak: the charge read lives here.
-        ctx.fillStyle = '#e8d8b0';
-        ctx.beginPath();
-        ctx.moveTo(9, -20);
-        ctx.lineTo(21, -15);
-        ctx.lineTo(9, -13);
-        ctx.closePath();
-        ctx.fill();
-        // Eye.
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(5, -15, 4, 4);
-        ctx.fillStyle = '#16161d';
-        ctx.fillRect(7, -14, 2, 2);
-        if (flashA > 0.01) {
-            // Windup flash tint over the visible flesh only.
-            ctx.fillStyle = `rgba(255,232,170,${Math.min(0.85, flashA).toFixed(3)})`;
+        ctx.drawImage(art[kind][pose], -bw / 2, -bh, bw, bh);
+        if (kind === 'bombardier') {
+            // THE signal: bronze cannon mounted forward at muzzle height.
+            // Wave B muzzle recoil kick: right after FIRE the GUN GROUP (and
+            // only the gun group — the creature stays planted) snaps back off
+            // its trunnions and springs back over 0.12 s; stateTime-driven,
+            // deterministic; FX.trails family — cosmetic, the shot itself was
+            // already resolved by the simulation.
+            const g = ENEMY_BLIT.bombardier.gun;
+            const recoil = (FX.trails && enemy.state === 'cooldown_ranged' &&
+                t < 0.12) ? 5 * (1 - t / 0.12) : 0;
+            ctx.save();
+            ctx.translate(g.dx - recoil, g.dy);
+            ctx.drawImage(art.bombardier.gun, 0, 0, (GUN_DIMS.w + 2) * z, (GUN_DIMS.h + 2) * z);
+            // Fuse micro-spark on the breech (clock-driven flicker only —
+            // deterministic like every other render pass here), recoiling
+            // WITH the gun.
+            const spark = 1.5 + ((Math.floor(this.clock * 14) % 2) ? 0.6 : 0);
+            ctx.fillStyle = '#ffd23f';
             ctx.beginPath();
-            ctx.moveTo(-15, 0);
-            ctx.quadraticCurveTo(-17, -14, -9, -21);
-            ctx.quadraticCurveTo(0, -26, 9, -21);
-            ctx.quadraticCurveTo(17, -14, 15, 0);
-            ctx.closePath();
+            ctx.arc(g.fx - g.dx + recoil, g.fy - g.dy, spark, 0, Math.PI * 2);
             ctx.fill();
-            // Sunward warning rim (Wave A litRight convention: the rim rides
-            // the lit side of the dome): a bright cap stroke that grows with
-            // the windup so the last frames read as "about to GO".
-            const k = Math.min(1, t / CHARGER_WINDUP_TIME);
-            ctx.strokeStyle = `rgba(255,196,92,${(0.35 + 0.45 * k) * FX.intensity})`;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(-9, -21);
-            ctx.quadraticCurveTo(0, -26, 9, -21);
-            ctx.stroke();
+            ctx.restore();
+            if (enemy.state === 'windup_ranged') {
+                // Growing muzzle glow: radius + alpha ride stateTime, so the
+                // 0.6 s telegraph reads as a charging shot, not decoration.
+                const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+                ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
+                ctx.beginPath();
+                ctx.arc(g.mx, g.my, 2 + 6 * k, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            if (enemy.state === 'cooldown_ranged' && t < 0.08) {
+                // Brief FIRE flash frame at the muzzle.
+                ctx.fillStyle = 'rgba(255,232,170,0.9)';
+                ctx.beginPath();
+                ctx.arc(g.mx + 1, g.my, 7, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        if (flashA > 0.01) {
+            // Windup flash tint over the exact visible flesh: pre-baked amber
+            // silhouette blitted at the pulse alpha (no rectangle ever leaks
+            // past the body edge).
+            ctx.globalAlpha = Math.min(0.85, flashA);
+            ctx.drawImage(art.charger[`${pose}_flash`], -bw / 2, -bh, bw, bh);
+            ctx.globalAlpha = 1;
         }
         if (enemy.state === 'dash') {
-            // Speed streaks trailing behind the body — Wave B lengthens them
+            // Speed streaks trailing behind the body — Wave B lengthened them
             // (the dash's tell stays distinct from the windup's flash).
             ctx.strokeStyle = 'rgba(255,214,170,0.5)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(-18, -18);
-            ctx.lineTo(-30, -18);
-            ctx.moveTo(-18, -12);
-            ctx.lineTo(-27, -12);
-            ctx.moveTo(-18, -6);
-            ctx.lineTo(-24, -6);
+            if (kind === 'bombardier') {
+                ctx.moveTo(-22, -20);
+                ctx.lineTo(-34, -20);
+                ctx.moveTo(-22, -12);
+                ctx.lineTo(-31, -12);
+                ctx.moveTo(-22, -4);
+                ctx.lineTo(-28, -4);
+            } else {
+                ctx.moveTo(-24, -22);
+                ctx.lineTo(-36, -22);
+                ctx.moveTo(-24, -14);
+                ctx.lineTo(-33, -14);
+                ctx.moveTo(-24, -6);
+                ctx.lineTo(-30, -6);
+            }
             ctx.stroke();
         }
         ctx.restore();
     }
 
-    // Bombardier: stocky dark-plum body with a BRONZE CANNON BARREL mounted
-    // forward — the silhouette signal for "this one shoots". Dark plum sits
-    // clear of the spiny's mid-purple and the charger's rust-red, and the
-    // bronze barrel + fuse spark stay readable against all three band
-    // palettes (day/dusk/night contrast spot-checked via screenshot pixel
-    // sampling, wave 2026-11-04). All telegraph frames derive from
-    // enemy.state/stateTime — deterministic, replay- and bot-accurate.
-    // BOMBARDIER_WINDUP_RANGED_TIME mirrors the constant in enemies.js
-    // (sprite layer stays import-free by convention, same as _drawCharger).
-    _drawBombardier(ctx, enemy) {
-        const BOMBARDIER_WINDUP_RANGED_TIME = 0.6; // mirror of enemies.js
-        const cx = enemy.x + enemy.width / 2;
-        const feet = enemy.y + enemy.height;
-        this._entityShadow(ctx, cx, feet, 17);
-        const face = this._faceOf(enemy);
-        let sx = 1;
-        let sy = 1;
-        const t = enemy.stateTime || 0;
-        if (enemy.state === 'windup_ranged') {
-            // Trunnion recoil-load: sink slightly and lean back across the
-            // windup while the muzzle glow grows (the shot clock made
-            // visible).
-            const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
-            sx = 1 + 0.1 * k;
-            sy = 1 - 0.15 * k;
-        } else if (enemy.state === 'windup') {
-            const k = Math.min(1, t / 0.45); // close charge: charger squash
-            sx = 1 + 0.18 * k;
-            sy = 1 - 0.25 * k;
-        } else if (enemy.state === 'dash') {
-            sx = 1.12;
-            sy = 0.9;
-        }
-        ctx.save();
-        ctx.translate(cx, feet);
-        ctx.scale(face * sx, sy);
-        // Body: squat wide dome, wider and lower than the charger's.
-        ctx.fillStyle = '#4a1f52';
-        ctx.beginPath();
-        ctx.moveTo(-16, 0);
-        ctx.quadraticCurveTo(-18, -11, -10, -17);
-        ctx.quadraticCurveTo(0, -21, 10, -17);
-        ctx.quadraticCurveTo(18, -11, 16, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = 'rgba(14,4,20,0.3)';
-        ctx.fillRect(-16, -4, 32, 4);
-        // THE signal: bronze cannon barrel mounted forward at muzzle height.
-        // Wave B muzzle recoil kick: right after FIRE the whole gun group
-        // snaps backward off its trunnions and springs back over 0.12 s
-        // (stateTime-driven, deterministic; FX.trails family — cosmetic, the
-        // shot itself was already resolved by the simulation).
-        const recoil = (FX.trails && enemy.state === 'cooldown_ranged' &&
-            t < 0.12) ? 5 * (1 - t / 0.12) : 0;
-        ctx.save();
-        ctx.translate(-recoil, 0);
-        ctx.fillStyle = '#b0803a';
-        ctx.fillRect(6, -15, 18, 6);
-        ctx.fillStyle = '#7d5a26';           // breech shading
-        ctx.fillRect(6, -15, 4, 6);
-        ctx.fillStyle = '#d8a94e';           // muzzle ring highlight
-        ctx.fillRect(21, -16, 3, 8);
-        // Fuse on top of the breech with a steady micro-spark (clock-driven
-        // flicker only — deterministic like every other render pass here).
-        ctx.strokeStyle = '#c9c2b2';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(7, -15);
-        ctx.quadraticCurveTo(4, -21, 8, -22);
-        ctx.stroke();
-        const spark = 1.5 + ((Math.floor(this.clock * 14) % 2) ? 0.6 : 0);
-        ctx.fillStyle = '#ffd23f';
-        ctx.beginPath();
-        ctx.arc(8, -22, spark, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-        // Eye toward facing.
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(2, -12, 4, 4);
-        ctx.fillStyle = '#16161d';
-        ctx.fillRect(4, -11, 2, 2);
-        if (enemy.state === 'windup_ranged') {
-            // Growing muzzle glow: radius + alpha ride stateTime, so the
-            // 0.6 s telegraph reads as a charging shot, not decoration.
-            const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
-            ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
-            ctx.beginPath();
-            ctx.arc(25, -12, 2 + 6 * k, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        if (enemy.state === 'cooldown_ranged' && t < 0.08) {
-            // Brief FIRE flash frame at the muzzle.
-            ctx.fillStyle = 'rgba(255,232,170,0.9)';
-            ctx.beginPath();
-            ctx.arc(26, -12, 7, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        if (enemy.state === 'dash') {
-            // Speed streaks trailing behind (shared read with the charger).
-            ctx.strokeStyle = 'rgba(255,214,170,0.5)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(-19, -15);
-            ctx.lineTo(-31, -15);
-            ctx.moveTo(-19, -9);
-            ctx.lineTo(-28, -9);
-            ctx.moveTo(-19, -3);
-            ctx.lineTo(-25, -3);
-            ctx.stroke();
-        }
-        ctx.restore();
+    _ensureEnemies() {
+        if (this._enemies === undefined) this._enemies = buildEnemyCanvases();
+        return this._enemies;
+    }
+
+    // Frame pick from motion state + clock only (pause-safe, no RNG): moving
+    // -> the 3-frame walk cycle on the legacy walker cadence (clock*6 per
+    // frame plus the per-entity index stagger), still -> idle pair breathing
+    // every 0.5 s (+0.7 s per-index offset so packs never sync up). Windup
+    // states hold vx at zero, so loaded creatures breathe while the squash +
+    // flash carry the tell; dashes stride.
+    _enemyPose(enemy, index) {
+        if (Math.abs(enemy.vx) > 5) return 'walk' + (Math.floor(this.clock * 6 + index * 1.7) % 3);
+        return 'idle' + (Math.floor(this.clock * 2 + index * 0.7) % 2);
     }
 }

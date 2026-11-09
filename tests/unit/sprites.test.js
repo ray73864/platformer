@@ -1,6 +1,8 @@
 import { test, expect } from "bun:test";
-import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, CHARS, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE, coinGlintAt, COIN_GLINT_PERIOD, COIN_GLINT_WINDOW, COIN_SPIN_PERIOD, secretSparkleAt, SECRET_COIN_GLOW, SECRET_STAR_COLOR, SECRET_SPARKLE_PERIOD, SECRET_SPARKLE_WINDOW } from "../../js/sprites.js";
+import { Sprites, SHEETS, SHEET_TILE_COUNTS, TILES, THEMES, sheetRect, HERO_FRAMES, HERO_PALETTE, coinGlintAt, COIN_GLINT_PERIOD, COIN_GLINT_WINDOW, COIN_SPIN_PERIOD, secretSparkleAt, SECRET_COIN_GLOW, SECRET_STAR_COLOR, SECRET_SPARKLE_PERIOD, SECRET_SPARKLE_WINDOW } from "../../js/sprites.js";
+import * as SpritesNS from "../../js/sprites.js";
 import { FX } from "../../js/fx.js";
+import { ENEMY_FRAMES } from "../../js/enemyart.js";
 import { Level, motifForLevel } from "../../js/level.js";
 
 // Frame-map integrity: every index referenced by the renderer must exist
@@ -16,16 +18,13 @@ test("every referenced tile index lives inside tiles.png", () => {
     }
 });
 
-test("every referenced character frame lives inside characters.png", () => {
-    const frames = [];
-    for (const [name, value] of Object.entries(CHARS)) {
-        const list = Array.isArray(value) ? value : [value];
-        for (const f of list) frames.push([name, f]);
-    }
-    for (const [name, index] of frames) {
-        expect(index, `${name} in range`).toBeGreaterThanOrEqual(0);
-        expect(index, `${name} in range`).toBeLessThan(SHEET_TILE_COUNTS.characters);
-    }
+// (2026-11-10 enemy art pass) characters.png is fully retired: hero AND
+// enemies bake from indexed row strings now. The old "every referenced
+// character frame lives inside characters.png" pin retires with the sheet;
+// the new contract is pinned in tests/unit/enemy_art.test.js.
+test("the Kenney characters sheet is no longer loaded or referenced", () => {
+    expect(SHEETS.characters).toBeUndefined();
+    expect(Object.keys(SHEETS).sort()).toEqual(['backgrounds', 'tiles']);
 });
 
 test("sheetRect rejects nonsense indices", () => {
@@ -78,24 +77,81 @@ function kindFixture(kind, extra = {}) {
     };
 }
 
-test("spiny renders the purple body plus a dark triangular spike row", () => {
-    const sprites = new Sprites(); // never ready here; kind art is vector
-    const ctx = recordingCtx();
-    sprites.drawEnemy(ctx, kindFixture('spiny'), 0);
+// Enemy draw recorder: captures blit identity (fake canvases carry their
+// bake tag), geometry AND globalAlpha at call time — the baked-art contract
+// (2026-11-10) moved body shapes from vector fills to pre-baked canvas blits,
+// so telegraph evidence is now "which frame got blitted at which alpha".
+function enemyCtx() {
+    const ops = [];
+    const ctx = {
+        ops,
+        fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1,
+        save: () => ops.push('save'),
+        restore: () => ops.push('restore'),
+        translate: (x, y) => ops.push(`translate ${x} ${y}`),
+        scale: (x, y) => ops.push(`scale ${x} ${y}`),
+        beginPath: () => ops.push('beginPath'),
+        moveTo: (x, y) => ops.push(`moveTo ${x} ${y}`),
+        lineTo: (x, y) => ops.push(`lineTo ${x} ${y}`),
+        arc: (x, y, r) => ops.push(`arc ${x} ${y} ${r}`),
+        closePath: () => ops.push('closePath'),
+        fill: () => ops.push(`fill ${ctx.fillStyle}`),
+        fillRect: (x, y, w, h) => ops.push(`fillRect ${ctx.fillStyle} ${x} ${y} ${w} ${h}`),
+        stroke: () => ops.push(`stroke ${ctx.strokeStyle}`),
+        ellipse: () => ops.push('ellipse'),
+        drawImage: (img, dx, dy, dw, dh) =>
+            ops.push(`drawImage ${img && img.tag} ${dx} ${dy} ${dw} ${dh} a=${ctx.globalAlpha}`)
+    };
+    return ctx;
+}
 
-    const fills = ctx.ops.filter(o => o.startsWith('fill '));
-    // Distinct body tint...
-    expect(fills.some(o => o.includes('#7d4fa8'))).toBe(true);
-    // ...and unmistakable teeth: four dark triangles along the back.
-    expect(fills.filter(o => o.includes('#16161d')).length).toBeGreaterThanOrEqual(4);
+// Headless environments never rasterise (buildEnemyCanvases -> null), so
+// blit/geometry tests inject tagged stand-ins past the bake guard — same
+// convention as withFakeHero below for the hero.
+const ENEMY_FRAME_NAMES = ['idle0', 'idle1', 'walk0', 'walk1', 'walk2'];
+function withFakeEnemies(sprites) {
+    const kindArt = (kind, extra = []) => Object.fromEntries(
+        [...ENEMY_FRAME_NAMES, ...extra].map(n => [n, { tag: `${kind}.${n}` }]));
+    sprites._enemies = {
+        walker: kindArt('walker'),
+        spiny: kindArt('spiny'),
+        charger: kindArt('charger', ENEMY_FRAME_NAMES.map(n => `${n}_flash`)),
+        bombardier: kindArt('bombardier', ['gun'])
+    };
+    return sprites;
+}
+
+test("spiny bakes a purple pot under a bone spike crown", () => {
+    // Data-level lethal signal (the old pin checked four dark triangles in
+    // the vector op log; the baked equivalent is the bone crown itself):
+    // enough bone pixels to read bristled, over a solid purple body.
+    const { idle0 } = ENEMY_FRAMES.spiny;
+    const bone = idle0.join('').split('b').length - 1;
+    const purple = idle0.join('').split('p').length - 1;
+    expect(bone).toBeGreaterThanOrEqual(30);
+    expect(purple).toBeGreaterThan(bone * 2);
+    // The crown occupies the grid's top rows: pure black at shipped size, the
+    // bristled silhouette is what makes this kind lethal-readable. Pin the
+    // TALLEST spike-tips row specifically (mutation-checked: shaving the
+    // spikes fails here even while the base band survives).
+    expect(idle0[0].split('b').length - 1).toBeGreaterThanOrEqual(2);
+    expect(idle0.slice(0, 4).join('').replace(/[^b]/g, '').length)
+        .toBeGreaterThanOrEqual(20);
+    // And the renderer blits the spiny frame family (feet-anchored, flipped).
+    const sprites = withFakeEnemies(new Sprites());
+    sprites.clock = 0.1;
+    const ctx = enemyCtx();
+    sprites.drawEnemy(ctx, kindFixture('spiny', { vx: 0 }), 0);
+    expect(ctx.ops.some(o => o.startsWith('drawImage spiny.idle'))).toBe(true);
 });
 
 test("charger windup telegraph (squash + flash) is deterministic from state", () => {
-    const sprites = new Sprites();
+    const sprites = withFakeEnemies(new Sprites());
+    sprites.clock = 0.1;
     const early = kindFixture('charger', { vx: 0, state: 'windup', stateTime: 0.1 });
-    const a = recordingCtx();
+    const a = enemyCtx();
     sprites.drawEnemy(a, early, 0);
-    const b = recordingCtx();
+    const b = enemyCtx();
     sprites.drawEnemy(b, { ...early }, 0);
     expect(a.ops).toEqual(b.ops); // identical inputs -> identical draws
 
@@ -104,22 +160,33 @@ test("charger windup telegraph (squash + flash) is deterministic from state", ()
     expect(scales.length).toBeGreaterThan(0);
     expect(Number.parseFloat(scales[0].split(' ')[2])).toBeLessThan(1);
 
-    // Wave B adaptation (NOT a weakening): the fixed-rate strobe became a
-    // rising pulse — flash alpha rides stateTime (never Math.random), so
-    // identical inputs still draw identically (op-log equality above) while
+    // Wave B adaptation (NOT a weakening): the rising-mean amber pulse now
+    // tints the EXACT baked silhouette (alpha-blended mask blit instead of a
+    // bezier approximation of the body). Alpha still rides stateTime only —
+    // identical inputs draw identically (op-log equality above) while
     // consecutive windup frames differ in intensity. The tint must exist
     // through the whole windup AND stay absent from every other state (the
     // dash tells with speed streaks instead — distinct reads by design).
-    const earlyFlash = a.ops.filter(o => o.includes('rgba(255,232,170'));
-    expect(earlyFlash.length).toBeGreaterThan(0);
-    const late = recordingCtx();
+    const flashOps = (ops) => ops.filter(o => o.includes('_flash') && !/\sa=0$/.test(o));
+    const earlyFlash = flashOps(a.ops);
+    expect(earlyFlash.length).toBe(1);
+    const late = enemyCtx();
     sprites.drawEnemy(late, { ...early, stateTime: 0.2 }, 0);
-    const lateFlash = late.ops.filter(o => o.includes('rgba(255,232,170'));
-    expect(lateFlash.length).toBeGreaterThan(0);
+    const lateFlash = flashOps(late.ops);
+    expect(lateFlash.length).toBe(1);
     expect(lateFlash[0]).not.toBe(earlyFlash[0]); // pulse moved frame to frame
-    const dash = recordingCtx();
+    // Pixel-diff guarantee: the flash blits the same footprint as the body
+    // at alpha > 0, so at least every body pixel changes colour vs patrol.
+    const patrol = enemyCtx();
+    sprites.drawEnemy(patrol, { ...early, state: 'patrol' }, 0);
+    expect(flashOps(patrol.ops)).toHaveLength(0);
+    expect(patrol.ops).not.toEqual(a.ops);
+    const dash = enemyCtx();
     sprites.drawEnemy(dash, { ...early, state: 'dash', stateTime: 0.2 }, 0);
-    expect(dash.ops.filter(o => o.includes('rgba(255,232,170'))).toHaveLength(0);
+    expect(flashOps(dash.ops)).toHaveLength(0);
+    // Dash keeps its streak tell (distinct from the windup's flash).
+    expect(dash.ops.filter(o => o.startsWith('stroke rgba(255,214,170,0.5)')).length)
+        .toBe(1);
 });
 
 test("Sprites never becomes ready without an image loader and tolerates advance", () => {
@@ -461,10 +528,10 @@ test("bake runs exactly one canvas per frame even with raster available", () => 
     }
 });
 
-test("the hero no longer references the Kenney characters sheet", () => {
-    for (const key of Object.keys(CHARS)) {
-        expect(key.startsWith('PLAYER_'), `${key} retired`).toBe(false);
-    }
+test("no exported art references the retired Kenney characters sheet", () => {
+    // Hero left the sheet in the 2026-11-04 redesign; enemies followed with
+    // the 2026-11-10 baked-art pass (see enemy_art.test.js for the new pins).
+    expect(SpritesNS.CHARS).toBeUndefined();
 });
 
 // Canyon tune wave (2026-11-04 review): surface growth on an overhead slab

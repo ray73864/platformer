@@ -4751,10 +4751,479 @@
     }
   }
 
+  // js/enemyart.js
+  var FLASH_INK = "#ffe8aa";
+  var ENEMY_PALETTES = {
+    walker: {
+      ".": null,
+      o: "#2a2118",
+      g: "#5cb84a",
+      s: "#3c7f33",
+      h: "#93dd78",
+      w: "#ffffff"
+    },
+    spiny: {
+      ".": null,
+      o: "#2a2118",
+      p: "#8a55c0",
+      d: "#5e3489",
+      l: "#b98ce4",
+      b: "#e6d7ac",
+      w: "#ffffff"
+    },
+    charger: {
+      ".": null,
+      o: "#2a2118",
+      r: "#c1553b",
+      d: "#8c3524",
+      h: "#e5885c",
+      n: "#efe0bb",
+      w: "#ffffff"
+    },
+    bombardier: {
+      ".": null,
+      o: "#2a2118",
+      t: "#6e4b2c",
+      d: "#472f1b",
+      z: "#b0803a",
+      k: "#7d5a26",
+      g: "#ffd23f",
+      w: "#ffffff"
+    }
+  };
+  var ENEMY_DIMS = {
+    walker: { w: 18, h: 15 },
+    spiny: { w: 20, h: 17 },
+    charger: { w: 22, h: 14 },
+    bombardier: { w: 20, h: 13 }
+  };
+  var ENEMY_FRAMES = {
+    walker: {
+      idle0: [
+        "..................",
+        ".......hhgg.......",
+        ".....hhgggggg.....",
+        "....hhgggggggg....",
+        "...hggggggggggg...",
+        "..hggggggwwwwwwg..",
+        "..hggggggwwwwoos..",
+        "..hggggggwwwwoos..",
+        "..gggggggwwwwwws..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "...gggggggggggs...",
+        "...gssssssssssg...",
+        "....ggg....ggg...."
+      ],
+      idle1: [
+        "..................",
+        "..................",
+        ".....gggggggg.....",
+        "....gghhgggggg....",
+        "...hghhgggggggg...",
+        "..hghhgggggggggg..",
+        "..hggggggwwwwwwg..",
+        "..hggggggwwwwoos..",
+        "..hggggggwwwwoos..",
+        "..gggggggwwwwwws..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "...gggggggggggs...",
+        "...gsssssssssss...",
+        "....ggg....ggg...."
+      ],
+      walk0: [
+        "..................",
+        ".......hhgg.......",
+        ".....hhgggggg.....",
+        "....hhgggggggg....",
+        "...hggggggggggg...",
+        "..hggggggwwwwwwg..",
+        "..hggggggwwwwoos..",
+        "..hggggggwwwwoos..",
+        "..gggggggwwwwwws..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "...gggggggggggs...",
+        "...gssssssssssg...",
+        "...ggg......ggg..."
+      ],
+      walk1: [
+        "..................",
+        "..................",
+        ".....gggggggg.....",
+        "....gghhgggggg....",
+        "...hghhgggggggg...",
+        "..hghhgggggggggg..",
+        "..hggggggwwwwwwg..",
+        "..hggggggwwwwoos..",
+        "..hggggggwwwwoos..",
+        "..gggggggwwwwwws..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "...gggggggggggs...",
+        "...gsssssssssss...",
+        "......gggggg......"
+      ],
+      walk2: [
+        "..................",
+        ".......hhgg.......",
+        ".....hhgggggg.....",
+        "....hhgggggggg....",
+        "...hggggggggggg...",
+        "..hggggggwwwwwwg..",
+        "..hggggggwwwwoos..",
+        "..hggggggwwwwoos..",
+        "..gggggggwwwwwws..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "..gggggggggggggs..",
+        "...gggggggggggs...",
+        "...gssssssssssg...",
+        ".....ggg.gggg....."
+      ]
+    },
+    spiny: {
+      idle0: [
+        "...bbb..bbb..bbb....",
+        "...bbb..bbb..bbb.b..",
+        "..bbbbbbbbbbbbbbbbb.",
+        "..bbbbbbbbbbbbbbbb..",
+        "......pppppppp......",
+        "....lppppppppppp....",
+        "...lpppppppdddddd...",
+        "..lppppppppppddddp..",
+        ".lpppppppppwwwwwwpd.",
+        ".lpppppppppwwwwoopd.",
+        ".ppppppppppwwwwoopd.",
+        ".ppppppppppwwwwwwpd.",
+        ".pppppppppppppppppd.",
+        ".pppppppppppppppppd.",
+        "..pppppppppppppppd..",
+        "..pddddddddddddddd..",
+        "....ppp......ppp...."
+      ],
+      idle1: [
+        ".........b....b.....",
+        "...bbb..bbb..bbb....",
+        "...bbb..bbb..bbb.b..",
+        "..bbbbbbbbbbbbbbbbb.",
+        "..bbbbbbbbbbbbbbbb..",
+        "....pppppppppppp....",
+        "...lppppppppppppp...",
+        "..lppppppppddddddp..",
+        ".lpppppppppppddddpp.",
+        ".lpppppppppwwwwwwpd.",
+        ".lpppppppppwwwwoopd.",
+        ".ppppppppppwwwwoopd.",
+        ".ppppppppppwwwwwwpd.",
+        ".pppppppppppppppppd.",
+        "..pppppppppppppppd..",
+        "..pddddddddddddddd..",
+        "....ppp......ppp...."
+      ],
+      walk0: [
+        "...bbb..bbb..bbb....",
+        "...bbb..bbb..bbb.b..",
+        "..bbbbbbbbbbbbbbbbb.",
+        "..bbbbbbbbbbbbbbbb..",
+        "......pppppppp......",
+        "....lppppppppppp....",
+        "...lpppppppdddddd...",
+        "..lppppppppppddddp..",
+        ".lpppppppppwwwwwwpd.",
+        ".lpppppppppwwwwoopd.",
+        ".ppppppppppwwwwoopd.",
+        ".ppppppppppwwwwwwpd.",
+        ".pppppppppppppppppd.",
+        ".pppppppppppppppppd.",
+        "..pppppppppppppppd..",
+        "..pddddddddddddddd..",
+        "...ppp........ppp..."
+      ],
+      walk1: [
+        ".........b....b.....",
+        "...bbb..bbb..bbb....",
+        "...bbb..bbb..bbb.b..",
+        "..bbbbbbbbbbbbbbbbb.",
+        "..bbbbbbbbbbbbbbbb..",
+        "....pppppppppppp....",
+        "...lppppppppppppp...",
+        "..lppppppppddddddp..",
+        ".lpppppppppppddddpp.",
+        ".lpppppppppwwwwwwpd.",
+        ".lpppppppppwwwwoopd.",
+        ".ppppppppppwwwwoopd.",
+        ".ppppppppppwwwwwwpd.",
+        ".pppppppppppppppppd.",
+        "..pppppppppppppppd..",
+        "..pddddddddddddddd..",
+        "......pppppppp......"
+      ],
+      walk2: [
+        "...bbb..bbb..bbb....",
+        "...bbb..bbb..bbb.b..",
+        "..bbbbbbbbbbbbbbbbb.",
+        "..bbbbbbbbbbbbbbbb..",
+        "......pppppppp......",
+        "....lppppppppppp....",
+        "...lpppppppdddddd...",
+        "..lppppppppppddddp..",
+        ".lpppppppppwwwwwwpd.",
+        ".lpppppppppwwwwoopd.",
+        ".ppppppppppwwwwoopd.",
+        ".ppppppppppwwwwwwpd.",
+        ".pppppppppppppppppd.",
+        ".pppppppppppppppppd.",
+        "..pppppppppppppppd..",
+        "..pddddddddddddddd..",
+        ".....pppp..pppp....."
+      ]
+    },
+    charger: {
+      idle0: [
+        "......................",
+        "....hhhhrr............",
+        "..hrrrrrrrrr..........",
+        ".hrrrrrrrrrrrr.rrrrr..",
+        ".hrrrrrrrrrrrrrddddrr.",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrrrrrrnn",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        "..rddddddddddddr......",
+        "......................",
+        "..rr..rr.....rr..rr...",
+        "..rr..rr.....rr..rr..."
+      ],
+      idle1: [
+        "......................",
+        "......................",
+        ".....hhhhr............",
+        "..hrrrrrrrrr..........",
+        ".hrrrrrrrrrrrr.rrrrr..",
+        ".hrrrrrrrrrrrrrddddrr.",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrrrrrrnn",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        "..rddddddddddddr......",
+        "..rr..rr.....rr..rr...",
+        "..rr..rr.....rr..rr..."
+      ],
+      walk0: [
+        "......................",
+        "....hhhhrr............",
+        "..hrrrrrrrrr..........",
+        ".hrrrrrrrrrrrr.rrrrr..",
+        ".hrrrrrrrrrrrrrddddrr.",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrrrrrrnn",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        "..rddddddddddddr......",
+        "......................",
+        ".rr...rr.......rr.rr..",
+        ".rr...rr.......rr.rr.."
+      ],
+      walk1: [
+        "......................",
+        "......................",
+        ".....hhhhr............",
+        "..hrrrrrrrrr..........",
+        ".hrrrrrrrrrrrr.rrrrr..",
+        ".hrrrrrrrrrrrrrddddrr.",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrrrrrrnn",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        "..rddddddddddddr......",
+        "....rr..rr..rr..rr....",
+        "....rr..rr..rr..rr...."
+      ],
+      walk2: [
+        "......................",
+        "....hhhhrr............",
+        "..hrrrrrrrrr..........",
+        ".hrrrrrrrrrrrr.rrrrr..",
+        ".hrrrrrrrrrrrrrddddrr.",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrwwoonnn",
+        ".rrrrrrrrrrrrrrrrrrrnn",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        ".rrrrrrrrrrrrrrrrrrdd.",
+        "..rddddddddddddr......",
+        "......................",
+        "...rr..rr....rr..rr...",
+        "...rr..rr....rr..rr..."
+      ]
+    },
+    bombardier: {
+      idle0: [
+        "....................",
+        ".....tttttttttt.....",
+        "...zztttttttttttt...",
+        "..zzttttwwwwwwtttt..",
+        ".tttttttwwoowwttttt.",
+        "ttttttttwwoowwtttttd",
+        "ttttttttwwwwwwtttttd",
+        "tttttttttttttttttttd",
+        "tttttttttttttttttttd",
+        ".tzzzzzzzzzzzzzzzzd.",
+        ".tttttttttttttttttd.",
+        "..tddddddddddddddd..",
+        "....ttt......ttt...."
+      ],
+      idle1: [
+        "....................",
+        "....................",
+        "...tttttttttttttt...",
+        "..tzzttttttttttttt..",
+        ".tzzttttwwwwwwttttt.",
+        "ttttttttwwoowwtttttt",
+        "ttttttttwwoowwtttttd",
+        "ttttttttwwwwwwtttttd",
+        "tttttttttttttttttttd",
+        ".tttttttttttttttttd.",
+        ".tzzzzzzzzzzzzzzzzd.",
+        "..tddddddddddddddd..",
+        "....ttt......ttt...."
+      ],
+      walk0: [
+        "....................",
+        ".....tttttttttt.....",
+        "...zztttttttttttt...",
+        "..zzttttwwwwwwtttt..",
+        ".tttttttwwoowwttttt.",
+        "ttttttttwwoowwtttttd",
+        "ttttttttwwwwwwtttttd",
+        "tttttttttttttttttttd",
+        "tttttttttttttttttttd",
+        ".tzzzzzzzzzzzzzzzzd.",
+        ".tttttttttttttttttd.",
+        "..tddddddddddddddd..",
+        "...ttt........ttt..."
+      ],
+      walk1: [
+        "....................",
+        "....................",
+        "...tttttttttttttt...",
+        "..tzzttttttttttttt..",
+        ".tzzttttwwwwwwttttt.",
+        "ttttttttwwoowwtttttt",
+        "ttttttttwwoowwtttttd",
+        "ttttttttwwwwwwtttttd",
+        "tttttttttttttttttttd",
+        ".tttttttttttttttttd.",
+        ".tzzzzzzzzzzzzzzzzd.",
+        "..tddddddddddddddd..",
+        "......tttttttt......"
+      ],
+      walk2: [
+        "....................",
+        ".....tttttttttt.....",
+        "...zztttttttttttt...",
+        "..zzttttwwwwwwtttt..",
+        ".tttttttwwoowwttttt.",
+        "ttttttttwwoowwtttttd",
+        "ttttttttwwwwwwtttttd",
+        "tttttttttttttttttttd",
+        "tttttttttttttttttttd",
+        ".tzzzzzzzzzzzzzzzzd.",
+        ".tttttttttttttttttd.",
+        "..tddddddddddddddd..",
+        ".....tttt..tttt....."
+      ]
+    }
+  };
+  var GUN_DIMS = { w: 18, h: 10 };
+  var GUN_FRAME = [
+    "..................",
+    "..................",
+    "..................",
+    "..kkk.........zgg.",
+    "..kkkzzzzzzzzzzgg.",
+    "..kkkzzzzzzzzzzgg.",
+    "..kkkzzzzzzzzzzgg.",
+    "..kkk.........zgg.",
+    "..kkkk............",
+    ".................."
+  ];
+  var ENEMY_BLIT = {
+    walker: { z: 2 },
+    spiny: { z: 2 },
+    charger: { z: 2 },
+    bombardier: {
+      z: 2,
+      gun: { dx: -10, dy: -23, mx: 26, my: -11, fx: -3, fy: -21 }
+    }
+  };
+  function bakeFrame(rows, palette, w, h, flat = null) {
+    const c = document.createElement("canvas");
+    c.width = w + 2;
+    c.height = h + 2;
+    const g = c.getContext("2d");
+    if (!g || typeof g.fillRect !== "function")
+      return null;
+    const opaque = rows.map((r) => [...r].map((ch) => ch !== "."));
+    rows.forEach((row, y) => {
+      [...row].forEach((ch, x) => {
+        if (ch === ".")
+          return;
+        const hex = palette[ch];
+        if (!hex)
+          throw new Error(`enemy frame: unknown palette char "${ch}"`);
+        g.fillStyle = flat ?? hex;
+        g.fillRect(x + 1, y + 1, 1, 1);
+      });
+    });
+    const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && opaque[y][x];
+    g.fillStyle = palette.o;
+    for (let y = -1;y <= h; y++) {
+      for (let x = -1;x <= w; x++) {
+        if (at(x, y))
+          continue;
+        if (at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1)) {
+          g.fillRect(x + 1, y + 1, 1, 1);
+        }
+      }
+    }
+    return c;
+  }
+  function buildEnemyCanvases() {
+    if (typeof document === "undefined")
+      return null;
+    const probe = document.createElement("canvas").getContext("2d");
+    if (!probe || typeof probe.fillRect !== "function")
+      return null;
+    const out = {};
+    for (const [kind, frames] of Object.entries(ENEMY_FRAMES)) {
+      const pal = ENEMY_PALETTES[kind];
+      const { w, h } = ENEMY_DIMS[kind];
+      const baked = {};
+      for (const [name, rows] of Object.entries(frames)) {
+        baked[name] = bakeFrame(rows, pal, w, h);
+        if (kind === "charger") {
+          baked[`${name}_flash`] = bakeFrame(rows, pal, w, h, FLASH_INK);
+        }
+      }
+      if (kind === "bombardier") {
+        baked.gun = bakeFrame(GUN_FRAME, pal, GUN_DIMS.w, GUN_DIMS.h);
+      }
+      out[kind] = baked;
+    }
+    return out;
+  }
+
   // js/sprites.js
   var SHEETS = {
     tiles: { src: "./assets/kenney_pixel-platformer/tiles.png", cols: 20, cell: 18 },
-    characters: { src: "./assets/kenney_pixel-platformer/characters.png", cols: 9, cell: 24 },
     backgrounds: { src: "./assets/kenney_pixel-platformer/backgrounds.png" }
   };
   var TILES = {
@@ -4772,10 +5241,6 @@
   var CAP_OVER = 4;
   var CAP_H = CAP_OVER + 9;
   var PORTAL_CELL = 32;
-  var CHARS = {
-    SLIME: [15, 16, 17],
-    BAT: [24, 25, 26]
-  };
   var THEMES = [
     {
       name: "DAY",
@@ -5673,7 +6138,7 @@
       sh: cell
     };
   }
-  var SHEET_TILE_COUNTS = { tiles: 20 * 9, characters: 9 * 3 };
+  var SHEET_TILE_COUNTS = { tiles: 20 * 9 };
   function wrapOffset(scrollPx, w) {
     return -((scrollPx % w + w) % w);
   }
@@ -6503,239 +6968,124 @@
       ctx.restore();
     }
     drawEnemy(ctx, enemy, index, player = null) {
+      const CHARGER_WINDUP_TIME = 0.45;
+      const BOMBARDIER_WINDUP_RANGED_TIME = 0.6;
       if (enemy.dead)
         return;
       const kind = enemy.kind || "walker";
-      if (kind === "spiny") {
-        this._drawSpiny(ctx, enemy, player);
-        return;
-      }
-      if (kind === "charger") {
-        this._drawCharger(ctx, enemy);
-        return;
-      }
-      if (kind === "bombardier") {
-        this._drawBombardier(ctx, enemy);
-        return;
-      }
-      const frames = index % 2 === 0 ? CHARS.SLIME : CHARS.BAT;
-      const frame = frames[Math.floor(this.clock * 6 + index * 1.7) % frames.length];
-      const face = this._faceOf(enemy);
-      const w = 42;
-      const h = 42;
       const cx = enemy.x + enemy.width / 2;
       const feet = enemy.y + enemy.height;
-      this._entityShadow(ctx, cx, feet, 15);
-      ctx.save();
-      ctx.translate(cx, feet);
-      ctx.scale(face, 1);
-      this._drawSheet(ctx, "characters", frame, -w / 2, -h, w, h);
-      ctx.restore();
-    }
-    _drawSpiny(ctx, enemy, player = null) {
-      const cx = enemy.x + enemy.width / 2;
-      const feet = enemy.y + enemy.height;
-      this._entityShadow(ctx, cx, feet, 15);
+      this._entityShadow(ctx, cx, feet, kind === "charger" || kind === "bombardier" ? 17 : 15);
+      const art = this._ensureEnemies();
+      if (!art)
+        return;
       const face = this._faceOf(enemy);
+      const pose = this._enemyPose(enemy, index);
+      const z = ENEMY_BLIT[kind].z;
+      const bw = (ENEMY_DIMS[kind].w + 2) * z;
+      const bh = (ENEMY_DIMS[kind].h + 2) * z;
+      const t = enemy.stateTime || 0;
+      let sx = 1;
+      let sy = 1;
+      let flashA = 0;
       let jx = 0;
       let jy = 0;
-      if (player && FX.trails && Math.abs(player.x + player.width / 2 - cx) <= 96) {
+      if (kind === "charger") {
+        if (enemy.state === "windup") {
+          const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+          sx = 1 + 0.18 * k;
+          sy = 1 - 0.25 * k;
+          const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 12);
+          flashA = (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity;
+        } else if (enemy.state === "dash") {
+          sx = 1.12;
+          sy = 0.9;
+        }
+      } else if (kind === "bombardier") {
+        if (enemy.state === "windup_ranged") {
+          const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+          sx = 1 + 0.1 * k;
+          sy = 1 - 0.15 * k;
+        } else if (enemy.state === "windup") {
+          const k = Math.min(1, t / CHARGER_WINDUP_TIME);
+          sx = 1 + 0.18 * k;
+          sy = 1 - 0.25 * k;
+        } else if (enemy.state === "dash") {
+          sx = 1.12;
+          sy = 0.9;
+        }
+      } else if (kind === "spiny" && player && FX.trails && Math.abs(player.x + player.width / 2 - cx) <= 96) {
         const amp = 1.2 * FX.intensity;
         jx = Math.sin(this.clock * 34 + enemy.x * 0.35) * amp;
         jy = Math.sin(this.clock * 41 + 2.1) * amp * 0.4;
       }
       ctx.save();
       ctx.translate(cx + jx, feet + jy);
-      ctx.scale(face, 1);
-      ctx.fillStyle = "#7d4fa8";
-      ctx.beginPath();
-      ctx.moveTo(-13, 0);
-      ctx.quadraticCurveTo(-16, -13, -8, -19);
-      ctx.quadraticCurveTo(0, -24, 8, -19);
-      ctx.quadraticCurveTo(16, -13, 13, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "rgba(18,8,38,0.28)";
-      ctx.fillRect(-13, -4, 26, 4);
-      ctx.fillStyle = "#16161d";
-      const tooth = (bx, by, w, h) => {
-        ctx.beginPath();
-        ctx.moveTo(bx, by);
-        ctx.lineTo(bx + w / 2, by - h);
-        ctx.lineTo(bx + w, by);
-        ctx.closePath();
-        ctx.fill();
-      };
-      tooth(-11, -13, 6, 7);
-      tooth(-4.5, -18, 6, 9);
-      tooth(2, -18, 6, 9);
-      tooth(8, -12, 6, 7);
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(5, -14, 4, 4);
-      ctx.fillStyle = "#16161d";
-      ctx.fillRect(7, -13, 2, 2);
-      ctx.restore();
-    }
-    _drawCharger(ctx, enemy) {
-      const CHARGER_WINDUP_TIME = 0.45;
-      const cx = enemy.x + enemy.width / 2;
-      const feet = enemy.y + enemy.height;
-      this._entityShadow(ctx, cx, feet, 17);
-      const face = this._faceOf(enemy);
-      let sx = 1;
-      let sy = 1;
-      let flashA = 0;
-      const t = enemy.stateTime || 0;
-      if (enemy.state === "windup") {
-        const k = Math.min(1, t / CHARGER_WINDUP_TIME);
-        sx = 1 + 0.18 * k;
-        sy = 1 - 0.25 * k;
-        const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 12);
-        flashA = (0.22 + 0.2 * k + 0.22 * pulse) * FX.intensity;
-      } else if (enemy.state === "dash") {
-        sx = 1.12;
-        sy = 0.9;
-      }
-      ctx.save();
-      ctx.translate(cx, feet);
       ctx.scale(face * sx, sy);
-      ctx.fillStyle = "#b5493a";
-      ctx.beginPath();
-      ctx.moveTo(-15, 0);
-      ctx.quadraticCurveTo(-17, -14, -9, -21);
-      ctx.quadraticCurveTo(0, -26, 9, -21);
-      ctx.quadraticCurveTo(17, -14, 15, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "rgba(20,8,4,0.28)";
-      ctx.fillRect(-15, -4, 30, 4);
-      ctx.fillStyle = "#e8d8b0";
-      ctx.beginPath();
-      ctx.moveTo(9, -20);
-      ctx.lineTo(21, -15);
-      ctx.lineTo(9, -13);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(5, -15, 4, 4);
-      ctx.fillStyle = "#16161d";
-      ctx.fillRect(7, -14, 2, 2);
+      ctx.drawImage(art[kind][pose], -bw / 2, -bh, bw, bh);
+      if (kind === "bombardier") {
+        const g = ENEMY_BLIT.bombardier.gun;
+        const recoil = FX.trails && enemy.state === "cooldown_ranged" && t < 0.12 ? 5 * (1 - t / 0.12) : 0;
+        ctx.save();
+        ctx.translate(g.dx - recoil, g.dy);
+        ctx.drawImage(art.bombardier.gun, 0, 0, (GUN_DIMS.w + 2) * z, (GUN_DIMS.h + 2) * z);
+        const spark = 1.5 + (Math.floor(this.clock * 14) % 2 ? 0.6 : 0);
+        ctx.fillStyle = "#ffd23f";
+        ctx.beginPath();
+        ctx.arc(g.fx - g.dx + recoil, g.fy - g.dy, spark, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        if (enemy.state === "windup_ranged") {
+          const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
+          ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
+          ctx.beginPath();
+          ctx.arc(g.mx, g.my, 2 + 6 * k, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (enemy.state === "cooldown_ranged" && t < 0.08) {
+          ctx.fillStyle = "rgba(255,232,170,0.9)";
+          ctx.beginPath();
+          ctx.arc(g.mx + 1, g.my, 7, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       if (flashA > 0.01) {
-        ctx.fillStyle = `rgba(255,232,170,${Math.min(0.85, flashA).toFixed(3)})`;
-        ctx.beginPath();
-        ctx.moveTo(-15, 0);
-        ctx.quadraticCurveTo(-17, -14, -9, -21);
-        ctx.quadraticCurveTo(0, -26, 9, -21);
-        ctx.quadraticCurveTo(17, -14, 15, 0);
-        ctx.closePath();
-        ctx.fill();
-        const k = Math.min(1, t / CHARGER_WINDUP_TIME);
-        ctx.strokeStyle = `rgba(255,196,92,${(0.35 + 0.45 * k) * FX.intensity})`;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-9, -21);
-        ctx.quadraticCurveTo(0, -26, 9, -21);
-        ctx.stroke();
+        ctx.globalAlpha = Math.min(0.85, flashA);
+        ctx.drawImage(art.charger[`${pose}_flash`], -bw / 2, -bh, bw, bh);
+        ctx.globalAlpha = 1;
       }
       if (enemy.state === "dash") {
         ctx.strokeStyle = "rgba(255,214,170,0.5)";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(-18, -18);
-        ctx.lineTo(-30, -18);
-        ctx.moveTo(-18, -12);
-        ctx.lineTo(-27, -12);
-        ctx.moveTo(-18, -6);
-        ctx.lineTo(-24, -6);
+        if (kind === "bombardier") {
+          ctx.moveTo(-22, -20);
+          ctx.lineTo(-34, -20);
+          ctx.moveTo(-22, -12);
+          ctx.lineTo(-31, -12);
+          ctx.moveTo(-22, -4);
+          ctx.lineTo(-28, -4);
+        } else {
+          ctx.moveTo(-24, -22);
+          ctx.lineTo(-36, -22);
+          ctx.moveTo(-24, -14);
+          ctx.lineTo(-33, -14);
+          ctx.moveTo(-24, -6);
+          ctx.lineTo(-30, -6);
+        }
         ctx.stroke();
       }
       ctx.restore();
     }
-    _drawBombardier(ctx, enemy) {
-      const BOMBARDIER_WINDUP_RANGED_TIME = 0.6;
-      const cx = enemy.x + enemy.width / 2;
-      const feet = enemy.y + enemy.height;
-      this._entityShadow(ctx, cx, feet, 17);
-      const face = this._faceOf(enemy);
-      let sx = 1;
-      let sy = 1;
-      const t = enemy.stateTime || 0;
-      if (enemy.state === "windup_ranged") {
-        const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
-        sx = 1 + 0.1 * k;
-        sy = 1 - 0.15 * k;
-      } else if (enemy.state === "windup") {
-        const k = Math.min(1, t / 0.45);
-        sx = 1 + 0.18 * k;
-        sy = 1 - 0.25 * k;
-      } else if (enemy.state === "dash") {
-        sx = 1.12;
-        sy = 0.9;
-      }
-      ctx.save();
-      ctx.translate(cx, feet);
-      ctx.scale(face * sx, sy);
-      ctx.fillStyle = "#4a1f52";
-      ctx.beginPath();
-      ctx.moveTo(-16, 0);
-      ctx.quadraticCurveTo(-18, -11, -10, -17);
-      ctx.quadraticCurveTo(0, -21, 10, -17);
-      ctx.quadraticCurveTo(18, -11, 16, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "rgba(14,4,20,0.3)";
-      ctx.fillRect(-16, -4, 32, 4);
-      const recoil = FX.trails && enemy.state === "cooldown_ranged" && t < 0.12 ? 5 * (1 - t / 0.12) : 0;
-      ctx.save();
-      ctx.translate(-recoil, 0);
-      ctx.fillStyle = "#b0803a";
-      ctx.fillRect(6, -15, 18, 6);
-      ctx.fillStyle = "#7d5a26";
-      ctx.fillRect(6, -15, 4, 6);
-      ctx.fillStyle = "#d8a94e";
-      ctx.fillRect(21, -16, 3, 8);
-      ctx.strokeStyle = "#c9c2b2";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(7, -15);
-      ctx.quadraticCurveTo(4, -21, 8, -22);
-      ctx.stroke();
-      const spark = 1.5 + (Math.floor(this.clock * 14) % 2 ? 0.6 : 0);
-      ctx.fillStyle = "#ffd23f";
-      ctx.beginPath();
-      ctx.arc(8, -22, spark, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(2, -12, 4, 4);
-      ctx.fillStyle = "#16161d";
-      ctx.fillRect(4, -11, 2, 2);
-      if (enemy.state === "windup_ranged") {
-        const k = Math.min(1, t / BOMBARDIER_WINDUP_RANGED_TIME);
-        ctx.fillStyle = `rgba(255,180,80,${0.25 + 0.5 * k})`;
-        ctx.beginPath();
-        ctx.arc(25, -12, 2 + 6 * k, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      if (enemy.state === "cooldown_ranged" && t < 0.08) {
-        ctx.fillStyle = "rgba(255,232,170,0.9)";
-        ctx.beginPath();
-        ctx.arc(26, -12, 7, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      if (enemy.state === "dash") {
-        ctx.strokeStyle = "rgba(255,214,170,0.5)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-19, -15);
-        ctx.lineTo(-31, -15);
-        ctx.moveTo(-19, -9);
-        ctx.lineTo(-28, -9);
-        ctx.moveTo(-19, -3);
-        ctx.lineTo(-25, -3);
-        ctx.stroke();
-      }
-      ctx.restore();
+    _ensureEnemies() {
+      if (this._enemies === undefined)
+        this._enemies = buildEnemyCanvases();
+      return this._enemies;
+    }
+    _enemyPose(enemy, index) {
+      if (Math.abs(enemy.vx) > 5)
+        return "walk" + Math.floor(this.clock * 6 + index * 1.7) % 3;
+      return "idle" + Math.floor(this.clock * 2 + index * 0.7) % 2;
     }
   }
 
