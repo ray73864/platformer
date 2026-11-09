@@ -186,6 +186,10 @@ describe("touch controls — input contract", () => {
         // pressDash must reject — dashTimer unchanged (no recharge, no
         // second burst).
         lift("tc-dash-btn");
+        // The release must clear the held dash key too: touchRelease routes
+        // through the same keys.delete as keyup, so no latched dash state can
+        // survive a lifted finger.
+        expect(game.input.isDash()).toBe(false);
         press("tc-dash-btn");
         expect(game.player.dashTimer).toBe(burstAfterFirst);
         game.destroy();

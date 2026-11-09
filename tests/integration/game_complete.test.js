@@ -1,6 +1,7 @@
 import { test, expect, afterEach } from "bun:test";
 import { installGameTestScaffolding, mountFixture } from "./setup.js";
 import { Collectibles } from "../../js/collectibles.js";
+import { FX, initFX, applyReducedMotion, _resetFXInitForTests, CONFETTI_STATIC_LIFE } from "../../js/fx.js";
 
 installGameTestScaffolding();
 
@@ -259,4 +260,38 @@ test("escape from GAME_COMPLETE returns to MENU", () => {
     expect(game.state).toBe(STATE.MENU);
     expect(document.getElementById('game-complete-screen').classList.contains('hidden')).toBe(true);
     expect(document.getElementById('menu-screen').classList.contains('hidden')).toBe(false);
+});
+
+// Final-fix-wave pin (whole-branch review): the victory confetti variant must
+// follow FX.pulse AT THE GAME_COMPLETE SEAM. Under reduced motion every piece
+// carries the static signature (fx.js: vy 0, life CONFETTI_STATIC_LIFE — the
+// hold-and-fade composition). Without this pin, hardcoding the animated
+// variant at the spawnConfetti call site (main.js) survives the whole suite.
+test("reduced motion: GAME_COMPLETE confetti is the static hold-and-fade composition", () => {
+    // Prime initFX through a fake window reporting prefers-reduced-motion so
+    // the once-guard sees FX as already initialised (same recipe as
+    // fx_state.test.js): a bare applyReducedMotion(true) would be overwritten
+    // by the next Game constructor's initFX() reading happy-dom's matchMedia.
+    _resetFXInitForTests();
+    initFX({ matchMedia: () => ({ matches: true }) });
+    expect(FX.pulse).toBe(false);
+    try {
+        const game = reachGameComplete();
+        expect(game.confetti.length).toBeGreaterThan(0);
+        for (const p of game.confetti) {
+            expect(p.vy).toBe(0);
+            expect(p.life).toBe(CONFETTI_STATIC_LIFE);
+        }
+    } finally {
+        applyReducedMotion(false);
+        _resetFXInitForTests();
+    }
+});
+
+// Control leg: the rig really produces the RAINING variant when juice is on,
+// so the reduced-motion leg above cannot pass vacuously.
+test("full-FX profile rains animated confetti at the same seam", () => {
+    const game = reachGameComplete();
+    expect(game.confetti.length).toBeGreaterThan(0);
+    expect(game.confetti.some((p) => p.vy > 0)).toBe(true);
 });

@@ -12,7 +12,7 @@
 //   * meetsPortalRequirement stays required-only (secrets never gate);
 //   * determinism incl. stamps: same seed twice => identical world.
 import { test, expect } from "bun:test";
-import { Level, computeReachable } from "../../js/level.js";
+import { Level, computeReachable, alcoveGeometryValid } from "../../js/level.js";
 import { Collectibles } from "../../js/collectibles.js";
 
 // Deterministic numeric-seed band (>>>0 coerced — string seeds would all
@@ -162,3 +162,39 @@ test("determinism including stamps: same seed twice => identical world",
         };
         expect(fp()).toBe(fp());
     });
+
+// Final-fix-wave property pin (whole-branch review): the M-1 exemption binds
+// the EXACT stamped geometry (col, entryRow, h, side) in
+// _findAlcoveCandidates — NOT the stamp footprint. A looser co-located
+// candidate whose forbidden overlap lands OUTSIDE the exact site keeps full
+// protection. Loosening the binding to footprint-wide (e.g. dropping the h
+// term so any shaft on the same columns inherits the exemption) makes the
+// taller sibling below skip its forbidden cell and fail this pin.
+test("alcove exemption binds exact host geometry: a taller co-located shaft keeps its forbidden overlap", () => {
+    // Synthetic massif: shaft cols 4..5 solid rows 4..11 with flank col 3 and
+    // far wall col 6; terrace col 2 free at row 8 standing on ground row 9.
+    // Both the stamp site (h=3) and a taller co-located shaft (h=4) satisfy
+    // alcoveGeometryValid on this grid — the finder must still tell them apart.
+    const w = 9, hgt = 12;
+    const tiles = Array.from({ length: hgt }, () => new Array(w).fill(0));
+    for (let r = 9; r < hgt; r++) for (let c = 0; c <= 2; c++) tiles[r][c] = 1;
+    for (let r = 4; r < hgt; r++) for (let c = 3; c <= 6; c++) tiles[r][c] = 1;
+    const fake = {
+        width: w,
+        height: hgt,
+        tiles,
+        reachableTiles: new Set([8 * w + 2]) // terrace cell (2, 8)
+    };
+    const stamp = { col: 4, entryRow: 8, h: 3, side: -1 };
+    const taller = { col: 4, entryRow: 8, h: 4, side: -1 };
+    expect(alcoveGeometryValid(tiles, w, hgt, stamp)).toBe(true);
+    expect(alcoveGeometryValid(tiles, w, hgt, taller)).toBe(true);
+    // One forbidden cell INSIDE the taller footprint (rows 4..8 x cols 2..6)
+    // but OUTSIDE the stamp's own footprint (rows 5..8): the cap-row rock.
+    const forbidden = new Set([4 * w + 4]);
+    const out = Level.prototype._findAlcoveCandidates.call(fake, forbidden, stamp);
+    const has = (s) => out.some((o) => o.col === s.col && o.entryRow === s.entryRow &&
+        o.h === s.h && o.side === s.side);
+    expect(has(stamp)).toBe(true);   // exact host skips the rects (the exemption)
+    expect(has(taller)).toBe(false); // looser geometry does NOT inherit it
+});

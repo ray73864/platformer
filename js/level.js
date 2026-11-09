@@ -4578,8 +4578,11 @@ export class Level {
         // a stamped host's new shelf ATTRACTS coin placement onto the cap —
         // those coins' +/- margin proximity rects then veto the very site
         // the stamp manufactured (measured: 45/45 validator survivors died
-        // here). We exempt EXACTLY the stamp-written cells (this.cragFilled)
-        // from the proximity test, and nothing else. Why that is safe:
+        // here). The exemption binds the EXACT host-candidate geometry
+        // (col, entryRow, h, side — matched in _findAlcoveCandidates): only
+        // the candidate identical to the stamped site skips the footprint
+        // forbidden test; the forbidden set itself is never loosened. Why
+        // that is safe:
         //  1. _carveAlcove flips ONLY solid rock to air (tunnel cell + shaft
         //     columns rows entry-h+1..entry); every hazard body (enemy/pad/
         //     crate/deck band/spike/portal/spawn/coin) occupies a FREE cell
@@ -4589,8 +4592,10 @@ export class Level {
         //     the shaft floor row — carve never touches the cap row, and
         //     nothing ever stood ON the shaft-floor pair pre-carve because
         //     those cells were solid rock until the flip.
-        //  3. Non-exempt footprint cells (terrace column etc.) keep full
-        //     protection: a body sitting at the mouth APPROACH still vetoes.
+        //  3. Every OTHER candidate keeps full protection: a looser co-
+        //     located geometry (e.g. a taller shaft whose carve would flip
+        //     the cap under a shelf coin) still has its WHOLE footprint
+        //     tested, and a body sitting at the mouth APPROACH still vetoes.
         // Property-pinned per shipped alcove (tests/unit/alcove_predicate
         // .test.js sweep): no hazard body center lands in a carved cell;
         // standable delta is pure addition (+2/-0 on verticals — headroom-
