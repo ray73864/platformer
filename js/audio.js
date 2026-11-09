@@ -21,6 +21,8 @@
 const MUSIC_LEVEL = 0.35;
 const SFX_LEVEL = 0.6;
 const MUTE_STORAGE_KEY = 'platformerMuted';
+// Pinned by the settings namespace test (literal, not just internal use).
+export { MUTE_STORAGE_KEY };
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SEC = 0.1;
 const CROSSFADE_SEC = 0.8;

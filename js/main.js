@@ -15,8 +15,13 @@ import { interestingnessScore } from './metrics.js';
 import { spawnBurst, spawnDust, stepParticles, drawParticles, createMotes, stepMotes, drawMotes } from './particles.js';
 import {
     FX, initFX, shakeOffset, punchScale, PUNCH_TIME,
-    spawnPopup, stepPopups, drawPopups, spawnRing, stepRings, drawRings
+    spawnPopup, stepPopups, drawPopups, spawnRing, stepRings, drawRings,
+    spawnConfetti, stepConfetti, drawConfetti
 } from './fx.js';
+import {
+    loadSettings, saveShake, saveReducedMotion, applySettings,
+    resolveReducedMotion, osReducedMotion
+} from './settings.js';
 import * as audio from './audio.js';
 
 // Game constants
@@ -183,6 +188,18 @@ const LOOKAHEAD_DEADZONE_VX = 30;   // below this |vx| the target is exactly zer
 // Exported so tests pin their final-level fixtures to the same number.
 export const FINAL_LEVEL = 100;
 const HIGH_SCORE_KEY = 'platformerHighScore';
+// --- Wave C title-screen demo loop -------------------------------------------
+// The MENU renders the real sky/hills/cloud parallax behind the title panel:
+// a synthetic camera drifting at a gentle crawl with no Level constructed —
+// the backdrop bakes once per theme and every later frame is pure blits.
+// Themes cross-fade by cycling the band index every TITLE_THEME_SPAN px of
+// scroll (~25 s each); repaints are throttled to ~30 fps because the canvas
+// holds its last composition between frames anyway, which keeps the idle tab
+// far under budget. Seeds are fixed constants: the same demo on every boot.
+const TITLE_SCROLL_SPEED = 26;        // px/s of synthetic camera travel
+const TITLE_THEME_SPAN = 650;         // px per theme band (~25 s)
+const TITLE_FRAME_INTERVAL = 1 / 30;  // s between backdrop repaints
+const TITLE_SEEDS = [0x5EED0001, 0x5EED0002, 0x5EED0003];
 // Pause-menu arrow routing (R29): value is the cycle direction.
 const PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
 // Consecutive failing frames before the loop tries to recover by rebuilding
@@ -374,6 +391,14 @@ export class Game {
         }
         this.ctx = this.canvas.getContext('2d');
 
+        // Wave C celebration layer: a transparent full-viewport canvas ABOVE
+        // the DOM overlays (confetti has to read over the GAME_COMPLETE
+        // scrim). Optional node — test fixtures without it stay inert.
+        this.fxCanvas = document.getElementById('celebration-canvas');
+        this.fxCtx = this.fxCanvas ? this.fxCanvas.getContext('2d') : null;
+        this.confetti = [];           // pooled victory burst (fx.js cap)
+        this._fxCanvasDirty = false;  // needs one clear after the last frame
+
         // Single abort controller for every window listener this Game adds;
         // destroy() detaches them all at once.
         this._abort = new AbortController();
@@ -404,6 +429,10 @@ export class Game {
         // Debug seam for E2E audio assertions (getState() is read-only;
         // same spirit as window.game in init()).
         this.audio = audio;
+        // Wave C companion seam: the LIVE FX singleton as the bundle sees it
+        // (a raw `import('/js/fx.js')` from the page would load a second
+        // module instance next to the IIFE bundle and read the wrong copy).
+        this.fx = FX;
         // One run clock for the whole game: time carries over between levels
         // because nothing resets it mid-run (startGame() and retryLevel()
         // deliberately re-arm it; level transitions never do). Whether it
@@ -440,6 +469,22 @@ export class Game {
         // --- Wave B juice state (visual-only; js/fx.js gates every effect) --
         // One-shot reduced-motion boot BEFORE anything can read FX.
         initFX();
+        // Wave C: persisted user settings layer OVER the OS default that
+        // initFX just applied (precedence: explicit setting > media query —
+        // see js/settings.js header). Re-applying per construction is safe:
+        // loadSettings is pure storage and applySettings restores exact FX
+        // defaults before narrowing them.
+        this.settings = loadSettings();
+        applySettings(this.settings);
+        this.syncSettingsUI();
+        // Title-demo parallax state (MENU only; see TITLE_* constants).
+        this._titleScroll = 0;
+        this._titleFrameAcc = TITLE_FRAME_INTERVAL;  // paint frame one
+        this._titleDirty = true;
+        // Settings overlay bookkeeping (an overlay, not a game STATE — the
+        // six-state machine contract is pinned by tests).
+        this.settingsOpen = false;
+        this.settingsReturn = 'menu';
         this.dust = [];          // gameplay-dust pool (own cap, never shares
                                  // the burst list or the ambient mote field)
         this.popups = [];        // floating score popups (screen space)
@@ -557,6 +602,9 @@ export class Game {
         this._destroyed = true;
         this._abort.abort();
         this.input.destroy();
+        // A pending coalesced announcement must not outlive the game whose
+        // HUD it writes into (review nit).
+        this.ui.destroyAnnouncements();
         // The audio singleton is shared across Games (test harnesses build
         // many): tear it down fully so a later Game's init() rebuilds clean.
         audio.shutdown();
@@ -587,6 +635,21 @@ export class Game {
             this.camera.width = window.innerWidth / this.zoom;
             this.camera.height = window.innerHeight / this.zoom;
         }
+
+        // Celebration canvas: same CSS box and DPR scale as the main canvas
+        // (confetti coordinates are screen-space CSS pixels). Re-assigning
+        // width/height resets its transform too — see the note above.
+        if (this.fxCanvas && this.fxCtx) {
+            this.fxCanvas.width = window.innerWidth * dpr;
+            this.fxCanvas.height = window.innerHeight * dpr;
+            this.fxCanvas.style.width = window.innerWidth + 'px';
+            this.fxCanvas.style.height = window.innerHeight + 'px';
+            this.fxCtx.scale(dpr, dpr);
+        }
+        // Resizing blanks every canvas backing store; the MENU demo must
+        // repaint its still composition even under reduced motion (update()
+        // turns this into exactly one dirty frame).
+        if (this.state === STATE.MENU) this._titlePainted = false;
     }
 
     bindEvents() {
@@ -650,6 +713,46 @@ export class Game {
         onClick(quitMenuBtn, () => {
             this.quitToMenu();
             quitMenuBtn.blur();
+        });
+
+        // Wave C settings entries. Every node here is OPTIONAL by contract:
+        // integration fixtures mount only the core buttons (bindEvents above
+        // throws on those), while index.html ships the full screen. A missing
+        // node simply means no entry point in that harness.
+        const optionalClick = (id, fn) => {
+            const el = document.getElementById(id);
+            if (el) onClick(el, fn);
+        };
+        optionalClick('menu-settings-btn', () => this.openSettings('menu'));
+        optionalClick('pause-settings-btn', () => {
+            // Leave the pause menu's focus contract clean before layering
+            // settings over it (a focused pause button would eat Space).
+            this.ui.blurPauseControls();
+            this.openSettings('pause');
+        });
+        optionalClick('settings-back-btn', () => this.closeSettings());
+        optionalClick('sound-toggle-btn', () => {
+            // Same path as M / the HUD chip: audio.setMuted persists under
+            // its established 'platformerMuted' key (single writer).
+            this.toggleSound();
+        });
+        optionalClick('shake-toggle-btn', () => {
+            this.settings.shake = !this.settings.shake;
+            saveShake(this.settings.shake);
+            applySettings(this.settings);
+            this.syncSettingsUI();
+        });
+        optionalClick('motion-toggle-btn', () => {
+            // Two-state control over a tri-state store: the switch mirrors
+            // the EFFECTIVE state, and any press pins an explicit override
+            // opposite to it ('on' forces reduced, 'off' forces full even
+            // against an OS reduce preference — the documented precedence).
+            const reducedNow = resolveReducedMotion(
+                this.settings.reducedMotion, osReducedMotion());
+            this.settings.reducedMotion = reducedNow ? 'off' : 'on';
+            saveReducedMotion(this.settings.reducedMotion);
+            applySettings(this.settings);
+            this.syncSettingsUI();
         });
 
         // Input listener. Every jump press routes through Player.pressJump():
@@ -748,8 +851,22 @@ export class Game {
         // held, which menus expect; preventDefault stops page scroll.
         window.addEventListener('keydown', (e) => {
             const code = e.code || e.key;
-            if (code === 'Escape' && !e.repeat) {
-                if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
+            if (this.settingsOpen && code === 'Tab') {
+                // WCAG 2.4.3 focus containment (review fix): while the dialog
+                // is open, Tab cycles ONLY its controls. inert on the
+                // backdrops covers real browsers; this explicit trap makes
+                // containment harness-independent (happy-dom ships no inert)
+                // and gives Shift+Tab a defined wrap either way.
+                e.preventDefault();
+                this.ui.cycleSettingsFocus(!e.shiftKey);
+            } else if (code === 'Escape' && !e.repeat) {
+                // Settings is a layer, not a state: Escape unwinds it first
+                // (back to pause/menu), never pausing the run behind it or
+                // navigating away from an end screen while it's open.
+                if (this.settingsOpen) {
+                    this.closeSettings();
+                } else if (this.state === STATE.GAME_OVER ||
+                    this.state === STATE.GAME_COMPLETE) {
                     this.returnToMenu();
                 } else {
                     this.togglePause();
@@ -761,7 +878,8 @@ export class Game {
                 // Escape+arrows). Bare m/M accepted for harnesses that
                 // deliver key-only events (see resolveCode in input.js).
                 this.toggleSound();
-            } else if (this.state === STATE.PAUSED && code in PAUSE_MENU_ARROWS) {
+            } else if (this.state === STATE.PAUSED &&
+                !this.settingsOpen && code in PAUSE_MENU_ARROWS) {
                 e.preventDefault();
                 this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
             }
@@ -821,11 +939,90 @@ export class Game {
     toggleSound() {
         audio.toggleMute();
         this.ui.setMuteLabel(audio.isMuted());
+        this.syncSettingsUI();
+    }
+
+    // --- Wave C settings overlay --------------------------------------------
+    // Mirrors live state into the three switches. `reducedMotion` is passed
+    // as the EFFECTIVE resolution ('on'/'off'), so an OS-driven reduce shows
+    // checked even before the user has an explicit stored choice.
+    syncSettingsUI() {
+        if (!this.ui || !this.settings) return;
+        this.ui.renderSettings({
+            soundOn: !audio.isMuted(),
+            shakeOn: !!this.settings.shake,
+            reducedMotion: resolveReducedMotion(
+                this.settings.reducedMotion, osReducedMotion()) ? 'on' : 'off'
+        });
+    }
+
+    // Everything behind the settings dialog must stop being focusable and
+    // perceivable while it is open (WCAG 2.4.3, review fix): without this,
+    // Tab from the dialog walks into the still-visible menu/pause buttons and
+    // Enter there starts or resumes a run underneath the open dialog. inert
+    // removes the subtree from tab order AND the a11y tree in supporting
+    // browsers; aria-hidden is the belt for older AT. The keydown Tab trap in
+    // bindEvents keeps containment enforced even where inert is unimplemented.
+    _setSettingsBackdrop(inertOn) {
+        for (const id of ['menu-screen', 'pause-screen', 'hud']) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            if (inertOn) {
+                el.setAttribute('inert', '');
+                el.setAttribute('aria-hidden', 'true');
+            } else {
+                el.removeAttribute('inert');
+                el.removeAttribute('aria-hidden');
+            }
+        }
+    }
+
+    openSettings(from) {
+        this.settingsOpen = true;
+        this.settingsReturn = from;
+        this.syncSettingsUI();
+        this._setSettingsBackdrop(true);
+        this.ui.showOverlay('settings-screen');
+        this.ui.focusSettingsMenu();
+    }
+
+    closeSettings() {
+        this.settingsOpen = false;
+        this.ui.hideOverlay('settings-screen');
+        // Backdrop first: an inert container would silently swallow the
+        // restore-focus below (a focused control cannot live inside inert).
+        this._setSettingsBackdrop(false);
+        const active = document.activeElement;
+        if (active && typeof active.closest === 'function' &&
+            active.closest('#settings-screen')) {
+            active.blur();
+        }
+        // Return focus to the invoking control (review fix): keyboard users
+        // land back exactly where they opened the dialog from. A resumed run
+        // must never leave focus on a hidden control (Space-eating rule), so
+        // the restore only fires when the opener's overlay is actually shown.
+        const openerId = this.settingsReturn === 'pause'
+            ? 'pause-settings-btn' : 'menu-settings-btn';
+        const opener = document.getElementById(openerId);
+        const host = opener && typeof opener.closest === 'function'
+            ? opener.closest('.overlay') : null;
+        if (opener && host && !host.classList.contains('hidden')) {
+            opener.focus();
+        }
     }
 
     // Spec: Escape on an end screen returns to MENU, never pauses.
     returnToMenu() {
         this.setState(STATE.MENU);
+        // The settings overlay is a layer over menu/pause — drop it with the
+        // same blanket-overlay teardown here (no focus dance: this path also
+        // runs from error recovery where nothing should hold focus).
+        this.settingsOpen = false;
+        this.ui.hideOverlay('settings-screen');
+        this._setSettingsBackdrop(false);
+        // The canvas still shows the abandoned run's last frame — force the
+        // MENU demo composition to repaint (once, if motion is reduced).
+        this._titlePainted = false;
         // The menu is a silent space by design (music starts only with a
         // run), so leaving a run always stops the loop.
         audio.stopMusic();
@@ -867,6 +1064,9 @@ export class Game {
         this.dust.length = 0;
         this.popups.length = 0;
         this.rings.length = 0;
+        // Wave C: a new attempt (or Play Again) never inherits the last
+        // run's confetti; the celebration canvas gets one clean clear.
+        if (this.confetti) this.confetti.length = 0;
         this.shakeTime = 0;
         this.shakeMag = 0;
         this.shakeDur = 0;
@@ -1330,7 +1530,15 @@ export class Game {
         } catch (error) {
             console.warn('High score unavailable (localStorage failed):', error);
         }
-        this.ui.showGameComplete(this.score, highScore);
+        // Wave C victory celebration: one pooled confetti burst across the
+        // screen, rendered on the dedicated above-overlay canvas. FX.pulse
+        // selects the variant — animated rain when juice is on, a single
+        // STATIC hold-and-fade composition under reduced motion (fx.js).
+        spawnConfetti(this.confetti, window.innerWidth, window.innerHeight,
+            FX.pulse);
+        this._fxCanvasDirty = true;
+        this.ui.showGameComplete(this.score, highScore,
+            { secrets: this.runSecretsFound });
     }
 
     update(dt) {
@@ -1339,6 +1547,29 @@ export class Game {
         // out on the GAME_OVER screen.
         this.sprites.advance(dt);
         stepParticles(this.particles, dt);
+        // Victory confetti runs on the same all-states visual clock: the
+        // burst must finish its fall while the GAME_COMPLETE overlay is up.
+        if (this.confetti.length) stepConfetti(this.confetti, dt);
+        // Title-demo parallax clock (MENU): synthetic camera travel plus the
+        // ~30 fps repaint tick consumed by draw()'s MENU branch. Under the
+        // reduced profile (FX.pulse off — boot media query or the settings
+        // override) the demo holds a still composition: an ambient scroll
+        // behind a screen the user is reading is exactly the motion that
+        // preference asks us not to make.
+        if (this.state === STATE.MENU) {
+            if (FX.pulse) {
+                this._titleScroll += dt * TITLE_SCROLL_SPEED;
+                this._titleFrameAcc += dt;
+                if (this._titleFrameAcc >= TITLE_FRAME_INTERVAL) {
+                    this._titleFrameAcc = 0;
+                    this._titleDirty = true;
+                }
+            } else if (!this._titlePainted) {
+                // Still composition: paint exactly once (and again after any
+                // resize, which flags dirty from resize()).
+                this._titleDirty = true;
+            }
+        }
         // Ambient life pauses with the game pause (look-A): a frozen world
         // behind the overlay reads as held time, not a rendering stall.
         if (this.motes.length && this.state !== STATE.PAUSED) {
@@ -1998,6 +2229,10 @@ export class Game {
                         this.resetLevelEconomyTrackers();
                         this.publishLevel(level);
                         this.ui.hideOverlay('level-complete-screen');
+                        // Wave C between-levels card: rides the first ~1.6 s
+                        // of live play on the new map (presentation-only —
+                        // the transition budget itself is untouched).
+                        this.ui.showLevelIntro(next);
                     } catch (error) {
                         // Spec §Error Handling (transition timeout): never
                         // stick in LEVEL_COMPLETE. Keep forcing the transition
@@ -2030,6 +2265,35 @@ export class Game {
 
     draw() {
         const sprites = this.sprites.ready() ? this.sprites : null;
+
+        // MENU live demo backdrop (Wave C): the real sky/hills/cloud system
+        // scrolling behind the title panel with NO Level constructed — the
+        // backdrop bakes once per theme band and later frames are pure
+        // cached blits, repaint-throttled to ~30 fps. On skipped ticks the
+        // canvas must NOT be cleared either (a clear without a repaint would
+        // flicker flat sky between blits), so the MENU branch owns its full
+        // clear-and-paint cycle and returns. Guarded by sprites readiness
+        // like every other sheet pass; degrade path stays the flat sky.
+        if (this.state === STATE.MENU && sprites) {
+            if (this._titleDirty) {
+                this._titleDirty = false;
+                this._titlePainted = true;
+                this.ctx.fillStyle = '#87CEEB';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                const viewW = window.innerWidth;
+                const viewH = window.innerHeight;
+                const cycle = Math.floor(this._titleScroll / TITLE_THEME_SPAN);
+                const themeIdx = ((cycle % THEMES.length) + THEMES.length) %
+                    THEMES.length;
+                sprites.drawBackground(this.ctx, themeIdx + 1,
+                    this._titleScroll, viewW, viewH, Infinity,
+                    TITLE_SEEDS[themeIdx]);
+                sprites.drawForeground(this.ctx, themeIdx + 1,
+                    this._titleScroll, viewW, viewH, TITLE_SEEDS[themeIdx]);
+                sprites.drawVignette(this.ctx, themeIdx + 1, viewW, viewH);
+            }
+            return;
+        }
 
         // Clear canvas (legacy sky colour; themed parallax paints over it
         // when sheets are loaded).
@@ -2269,6 +2533,7 @@ export class Game {
         try {
             this.update(cappedDt);
             this.draw();
+            this.drawCelebration();
             // Clean frame: the error episode is over.
             this._loopErrorStreak = 0;
             this._recoveryAttempted = false;
@@ -2276,6 +2541,25 @@ export class Game {
             console.error('Game loop error:', error);
             this._handleLoopError();
         }
+    }
+
+    // Wave C victory layer pass: blit the pooled confetti onto the dedicated
+    // above-overlay canvas; when the pool empties, one final clear wipes the
+    // celebration canvas transparent again (pointer-events:none keeps it
+    // click-through the whole time).
+    drawCelebration() {
+        const ctx = this.fxCtx;
+        if (!ctx || typeof ctx.clearRect !== 'function') return;
+        if (!this.confetti.length) {
+            if (this._fxCanvasDirty) {
+                ctx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
+                this._fxCanvasDirty = false;
+            }
+            return;
+        }
+        ctx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
+        drawConfetti(ctx, this.confetti);
+        this._fxCanvasDirty = true;
     }
 
     // Spec §General Error Handling: "On error, attempt to return to PLAYING

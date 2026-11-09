@@ -101,6 +101,9 @@ export const CHARS = {
 // walking-puff colour. Terrain baking parameters live in TERRAIN_MATS below.
 export const THEMES = [
     {
+        // `name` labels the band for presentation surfaces (level-intro card,
+        // Wave C); generation never reads it.
+        name: 'DAY',
         x: 0, w: 96, sky: '#dff6f5', ground: '#c2e3e8',
         skyTop: '#7cc0da', skyBottom: '#e8faf7', zenith: '#3d7ba3',
         // disc.kind drives the bake (cratered moon vs plain sun); x/y are
@@ -122,6 +125,7 @@ export const THEMES = [
         vignette: 0.10
     },
     {
+        name: 'DUSK',
         x: 96, w: 48, sky: '#fbc97b', ground: '#cb815e',
         skyTop: '#c76e79', skyBottom: '#fdd79b', zenith: '#6d2f4c',
         // Dusk is the night band: pale harvest moon + stars replace the old
@@ -140,6 +144,7 @@ export const THEMES = [
         vignette: 0.12
     },
     {
+        name: 'JUNGLE',
         x: 144, w: 48, sky: '#7ff0a5', ground: '#2eb082',
         skyTop: '#1f9d79', skyBottom: '#9ff3c3', zenith: '#0b574a',
         disc: { x: 0.78, y: 0.16, r: 22, core: '#f2fff5', halo: '#c9f7dd', kind: 'sun' },

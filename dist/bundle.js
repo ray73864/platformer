@@ -918,6 +918,62 @@
     }
     ctx.globalAlpha = 1;
   }
+  var MAX_CONFETTI = 60;
+  var CONFETTI_LIFE = 2.4;
+  var CONFETTI_STATIC_LIFE = 1.4;
+  var CONFETTI_COLORS = ["#ffd23f", "#3ecf6a", "#fdf6e8", "#f4a460", "#b06cf0"];
+  function confettiRng(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = s + 1831565813 >>> 0;
+      let t = s;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function spawnConfetti(list, viewW, viewH, animated = true, seed = 12648430) {
+    list.length = 0;
+    const rng = confettiRng(seed);
+    for (let i = 0;i < MAX_CONFETTI; i++) {
+      const x = rng() * viewW;
+      list.push({
+        x,
+        y: animated ? -(rng() * viewH * 0.6) : viewH * (0.12 + rng() * 0.62),
+        vx: animated ? (rng() - 0.5) * 30 : 0,
+        vy: animated ? 90 + rng() * 140 : 0,
+        size: 3 + Math.round(rng() * 3),
+        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+        phase: rng() * Math.PI * 2,
+        sway: animated ? 18 + rng() * 26 : 0,
+        age: 0,
+        life: animated ? CONFETTI_LIFE : CONFETTI_STATIC_LIFE
+      });
+    }
+    return list;
+  }
+  function stepConfetti(list, dt) {
+    for (let i = list.length - 1;i >= 0; i--) {
+      const p = list[i];
+      p.age += dt;
+      if (p.age >= p.life) {
+        list.splice(i, 1);
+        continue;
+      }
+      p.x += (p.vx + Math.sin(p.phase + p.age * 3) * p.sway) * dt;
+      p.y += p.vy * dt;
+    }
+    return list;
+  }
+  function drawConfetti(ctx, list) {
+    for (const p of list) {
+      const k = p.age / p.life;
+      ctx.globalAlpha = k < 0.65 ? 1 : 1 - (k - 0.65) / 0.35;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size + 1);
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // js/enemies.js
   var ENEMY_WIDTH = 32;
@@ -4188,265 +4244,6 @@
     }
   }
 
-  // js/ui.js
-  class UI {
-    constructor() {
-      this.scoreElement = this.ensureElement("score-display");
-      this.levelElement = this.ensureElement("level-display");
-      this.coinsElement = this.ensureElement("coins-display");
-      this.finalScoreElement = this.ensureElement("final-score");
-      this.gameCompleteScoreElement = this.ensureElement("game-complete-score");
-      this.highScoreElement = this.ensureElement("high-score");
-      this.timerElement = this.ensureElement("timer-display");
-      this.hudElement = this.ensureElement("hud");
-      for (const id of ["menu-screen", "game-over-screen", "level-complete-screen", "pause-screen", "game-complete-screen"]) {
-        this.ensureElement(id, "overlay");
-      }
-      this._scoreHudFailed = false;
-      this._levelHudFailed = false;
-      this._timerHudFailed = false;
-    }
-    ensureElement(id, className) {
-      let element = document.getElementById(id);
-      if (!element) {
-        element = document.createElement("div");
-        element.id = id;
-        if (className) {
-          element.className = className;
-        }
-        document.body.appendChild(element);
-      }
-      return element;
-    }
-    showHUD() {
-      const hud = document.getElementById("hud");
-      if (hud)
-        hud.style.display = "flex";
-    }
-    hideHUD() {
-      const hud = document.getElementById("hud");
-      if (hud)
-        hud.style.display = "none";
-    }
-    setPauseLabel(paused) {
-      const button = document.getElementById("pause-btn");
-      if (!button)
-        return;
-      button.setAttribute("aria-label", paused ? "Resume Game" : "Pause Game");
-      button.textContent = paused ? "Resume" : "Pause";
-    }
-    setMuteLabel(muted) {
-      const button = document.getElementById("mute-btn");
-      if (!button)
-        return;
-      button.textContent = muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
-      button.setAttribute("aria-pressed", muted ? "true" : "false");
-    }
-    setPauseEnabled(enabled) {
-      const button = document.getElementById("pause-btn");
-      if (!button)
-        return;
-      button.disabled = !enabled;
-    }
-    focusPauseMenu() {
-      const first = document.querySelector("#pause-screen button");
-      if (first)
-        first.focus();
-    }
-    cyclePauseFocus(forward) {
-      const buttons = [...document.querySelectorAll("#pause-screen button")];
-      if (buttons.length === 0)
-        return;
-      const current = buttons.indexOf(document.activeElement);
-      const next = current === -1 ? 0 : (current + (forward ? 1 : -1) + buttons.length) % buttons.length;
-      buttons[next].focus();
-    }
-    blurPauseControls() {
-      const active = document.activeElement;
-      if (!active || typeof active.closest !== "function")
-        return;
-      if (active.closest("#pause-screen") || active.id === "pause-btn") {
-        active.blur();
-      }
-    }
-    showErrorMessage(text, durationMs = 3000) {
-      const element = this.ensureElement("error-message", "hidden");
-      if (!element.getAttribute("role"))
-        element.setAttribute("role", "alert");
-      element.textContent = text;
-      element.classList.remove("hidden");
-      clearTimeout(this._errorToastTimer);
-      this._errorToastTimer = setTimeout(() => this.hideErrorMessage(), durationMs);
-    }
-    hideErrorMessage() {
-      clearTimeout(this._errorToastTimer);
-      const element = document.getElementById("error-message");
-      if (element)
-        element.classList.add("hidden");
-    }
-    updateCoins(collected, total) {
-      if (this.coinsElement && this.coinsElement.isConnected) {
-        const text = `Coins: ${collected}/${total}`;
-        if (this.coinsElement.textContent !== text) {
-          this.coinsElement.textContent = text;
-        }
-        this.coinsElement.classList.toggle("coins-done", collected >= total);
-      }
-    }
-    updateScore(score) {
-      if (this.scoreElement && this.scoreElement.isConnected) {
-        this.scoreElement.textContent = `Score: ${score}`;
-        this._scoreHudFailed = false;
-      } else if (!this._scoreHudFailed) {
-        this._scoreHudFailed = true;
-        console.error("HUD score display unavailable; score:", score);
-      }
-    }
-    updateLevel(level) {
-      if (this.levelElement && this.levelElement.isConnected) {
-        this.levelElement.textContent = `Level: ${level}`;
-        this._levelHudFailed = false;
-      } else if (!this._levelHudFailed) {
-        this._levelHudFailed = true;
-        console.error("HUD level display unavailable; level:", level);
-      }
-    }
-    setTimerVisible(visible) {
-      if (this.timerElement) {
-        this.timerElement.classList.toggle("hidden", !visible);
-      }
-    }
-    updateTimer(timeRemaining) {
-      if (this.timerElement && this.timerElement.isConnected) {
-        const minutes = Math.floor(timeRemaining / 60);
-        const seconds = Math.floor(timeRemaining % 60);
-        this.timerElement.textContent = `Time: ${minutes}:${seconds.toString().padStart(2, "0")}`;
-        this._timerHudFailed = false;
-      } else if (!this._timerHudFailed) {
-        this._timerHudFailed = true;
-        console.error("HUD timer display unavailable; time remaining:", timeRemaining);
-      }
-    }
-    showOverlay(id) {
-      const overlay = document.getElementById(id);
-      if (overlay) {
-        overlay.classList.remove("hidden");
-      }
-    }
-    hideOverlay(id) {
-      const overlay = document.getElementById(id);
-      if (overlay) {
-        overlay.classList.add("hidden");
-      }
-    }
-    static DEATH_CAUSE_TEXT = {
-      time: "Time ran out",
-      enemy: "Touched a patrol",
-      spiny: "A spiny’s back is spiked — no stomping",
-      spike: "Landed on spikes",
-      pit: "Fell into the void",
-      projectile: "Took a bombardier shot"
-    };
-    showGameOver(score, cause, penalty = 0) {
-      if (this.finalScoreElement) {
-        this.finalScoreElement.textContent = `Score: ${score}`;
-      }
-      const causeEl = document.getElementById("death-cause");
-      if (causeEl) {
-        const text = UI.DEATH_CAUSE_TEXT[cause] || "";
-        causeEl.textContent = text;
-        causeEl.hidden = !text;
-      }
-      const penaltyEl = document.getElementById("score-penalty");
-      if (penaltyEl) {
-        penaltyEl.textContent = penalty > 0 ? `-${penalty} points` : "";
-        penaltyEl.hidden = !(penalty > 0);
-      }
-      this.showOverlay("game-over-screen");
-    }
-    showGameComplete(score, highScore) {
-      if (this.gameCompleteScoreElement) {
-        this.gameCompleteScoreElement.textContent = `Score: ${score}`;
-      }
-      if (this.highScoreElement) {
-        this.highScoreElement.textContent = `High Score: ${highScore}`;
-      }
-      this.showOverlay("game-complete-screen");
-    }
-    showLevelComplete() {
-      this.showOverlay("level-complete-screen");
-    }
-    setLevelCompleteBreakdown(breakdown) {
-      const {
-        clearBonus = 0,
-        enemiesBested = 0,
-        deaths = 0,
-        flawless = false,
-        noDamageBonus = 0,
-        secretsFound = 0,
-        secretsTotal = 0
-      } = breakdown || {};
-      const bonusEl = document.getElementById("clear-bonus");
-      if (bonusEl) {
-        const text = clearBonus > 0 ? flawless ? `Flawless clear +${clearBonus}` : `Cleared after ${deaths} death${deaths === 1 ? "" : "s"} +${clearBonus}` : "";
-        bonusEl.textContent = text;
-        bonusEl.hidden = !text;
-      }
-      const bestedEl = document.getElementById("enemies-bested");
-      if (bestedEl) {
-        bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : "";
-        bestedEl.hidden = !(enemiesBested > 0);
-      }
-      const noDamageEl = document.getElementById("no-damage-bonus");
-      if (noDamageEl) {
-        noDamageEl.textContent = noDamageBonus > 0 ? `No-damage bonus +${noDamageBonus}` : "";
-        noDamageEl.hidden = !(noDamageBonus > 0);
-      }
-      const secretsEl = document.getElementById("secrets-found");
-      if (secretsEl) {
-        secretsEl.textContent = secretsTotal > 0 ? `Secrets: ${secretsFound}/${secretsTotal}` : "";
-        secretsEl.hidden = !(secretsTotal > 0);
-      }
-    }
-    getScore() {
-      if (this.scoreElement) {
-        return parseInt(this.scoreElement.textContent.replace("Score: ", "")) || 0;
-      }
-      return 0;
-    }
-    getLevel() {
-      if (this.levelElement) {
-        return parseInt(this.levelElement.textContent.replace("Level: ", "")) || 1;
-      }
-      return 1;
-    }
-  }
-
-  // js/timer.js
-  var DEFAULT_BASE_TIME = 60;
-
-  class Timer {
-    constructor(baseTime = DEFAULT_BASE_TIME) {
-      this.baseTime = baseTime;
-      this.timeRemaining = baseTime;
-    }
-    update(dt) {
-      if (!Number.isFinite(this.timeRemaining)) {
-        this.timeRemaining = Number.isFinite(this.baseTime) ? this.baseTime : DEFAULT_BASE_TIME;
-      }
-      this.timeRemaining = Math.min(9999, Math.max(0, this.timeRemaining - dt));
-    }
-    getTimeRemaining() {
-      return this.timeRemaining;
-    }
-    isTimeUp() {
-      return this.timeRemaining <= 0;
-    }
-    addCoinBonus() {
-      this.timeRemaining = Math.min(9999, this.timeRemaining + 2);
-    }
-  }
-
   // js/sprites.js
   var SHEETS = {
     tiles: { src: "./assets/kenney_pixel-platformer/tiles.png", cols: 20, cell: 18 },
@@ -4474,6 +4271,7 @@
   };
   var THEMES = [
     {
+      name: "DAY",
       x: 0,
       w: 96,
       sky: "#dff6f5",
@@ -4501,6 +4299,7 @@
       vignette: 0.1
     },
     {
+      name: "DUSK",
       x: 96,
       w: 48,
       sky: "#fbc97b",
@@ -4528,6 +4327,7 @@
       vignette: 0.12
     },
     {
+      name: "JUNGLE",
       x: 144,
       w: 48,
       sky: "#7ff0a5",
@@ -6413,6 +6213,370 @@
     }
   }
 
+  // js/ui.js
+  var TIME_URGENT_THRESHOLD = 10;
+  function isTimeUrgent(timeRemaining) {
+    return Number.isFinite(timeRemaining) && timeRemaining > 0 && timeRemaining < TIME_URGENT_THRESHOLD;
+  }
+
+  class UI {
+    constructor() {
+      this.scoreElement = this.ensureElement("score-display");
+      this.levelElement = this.ensureElement("level-display");
+      this.coinsElement = this.ensureElement("coins-display");
+      this.finalScoreElement = this.ensureElement("final-score");
+      this.gameCompleteScoreElement = this.ensureElement("game-complete-score");
+      this.highScoreElement = this.ensureElement("high-score");
+      this.timerElement = this.ensureElement("timer-display");
+      this.hudElement = this.ensureElement("hud");
+      for (const id of ["menu-screen", "game-over-screen", "level-complete-screen", "pause-screen", "game-complete-screen"]) {
+        this.ensureElement(id, "overlay");
+      }
+      this._scoreHudFailed = false;
+      this._levelHudFailed = false;
+      this._timerHudFailed = false;
+    }
+    ensureElement(id, className) {
+      let element = document.getElementById(id);
+      if (!element) {
+        element = document.createElement("div");
+        element.id = id;
+        if (className) {
+          element.className = className;
+        }
+        document.body.appendChild(element);
+      }
+      return element;
+    }
+    showHUD() {
+      const hud = document.getElementById("hud");
+      if (hud)
+        hud.style.display = "flex";
+    }
+    hideHUD() {
+      const hud = document.getElementById("hud");
+      if (hud)
+        hud.style.display = "none";
+    }
+    setPauseLabel(paused) {
+      const button = document.getElementById("pause-btn");
+      if (!button)
+        return;
+      button.setAttribute("aria-label", paused ? "Resume Game" : "Pause Game");
+      button.textContent = paused ? "Resume" : "Pause";
+    }
+    setMuteLabel(muted) {
+      const button = document.getElementById("mute-btn");
+      if (!button)
+        return;
+      button.textContent = muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+      button.setAttribute("aria-pressed", muted ? "true" : "false");
+    }
+    setPauseEnabled(enabled) {
+      const button = document.getElementById("pause-btn");
+      if (!button)
+        return;
+      button.disabled = !enabled;
+    }
+    focusPauseMenu() {
+      const first = document.querySelector("#pause-screen button");
+      if (first)
+        first.focus();
+    }
+    cyclePauseFocus(forward) {
+      const buttons = [...document.querySelectorAll("#pause-screen button")];
+      if (buttons.length === 0)
+        return;
+      const current = buttons.indexOf(document.activeElement);
+      const next = current === -1 ? 0 : (current + (forward ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next].focus();
+    }
+    blurPauseControls() {
+      const active = document.activeElement;
+      if (!active || typeof active.closest !== "function")
+        return;
+      if (active.closest("#pause-screen") || active.id === "pause-btn") {
+        active.blur();
+      }
+    }
+    showErrorMessage(text, durationMs = 3000) {
+      const element = this.ensureElement("error-message", "hidden");
+      if (!element.getAttribute("role"))
+        element.setAttribute("role", "alert");
+      element.textContent = text;
+      element.classList.remove("hidden");
+      clearTimeout(this._errorToastTimer);
+      this._errorToastTimer = setTimeout(() => this.hideErrorMessage(), durationMs);
+    }
+    hideErrorMessage() {
+      clearTimeout(this._errorToastTimer);
+      const element = document.getElementById("error-message");
+      if (element)
+        element.classList.add("hidden");
+    }
+    updateCoins(collected, total) {
+      if (this.coinsElement && this.coinsElement.isConnected) {
+        const text = `Coins: ${collected}/${total}`;
+        if (this.coinsElement.textContent !== text) {
+          this.coinsElement.textContent = text;
+          this._queueAnnouncement("coins", `coins ${collected} of ${total}`);
+        }
+        this.coinsElement.classList.toggle("coins-done", collected >= total);
+      }
+    }
+    updateScore(score) {
+      if (this.scoreElement && this.scoreElement.isConnected) {
+        const text = `Score: ${score}`;
+        if (this.scoreElement.textContent !== text) {
+          this.scoreElement.textContent = text;
+          this._queueAnnouncement("score", `score ${score}`);
+        }
+        this._scoreHudFailed = false;
+      } else if (!this._scoreHudFailed) {
+        this._scoreHudFailed = true;
+        console.error("HUD score display unavailable; score:", score);
+      }
+    }
+    updateLevel(level) {
+      if (this.levelElement && this.levelElement.isConnected) {
+        const text = `Level: ${level}`;
+        if (this.levelElement.textContent !== text) {
+          this.levelElement.textContent = text;
+          this._queueAnnouncement("level", `level ${level}`);
+        }
+        this._levelHudFailed = false;
+      } else if (!this._levelHudFailed) {
+        this._levelHudFailed = true;
+        console.error("HUD level display unavailable; level:", level);
+      }
+    }
+    _queueAnnouncement(kind, text) {
+      const element = this.ensureElement("hud-announce", "sr-only");
+      if (!element.getAttribute("aria-live")) {
+        element.setAttribute("aria-live", "polite");
+      }
+      (this._announceParts ??= {})[kind] = text;
+      if (this._announceTimer)
+        return;
+      this._announceTimer = setTimeout(() => {
+        this._announceTimer = null;
+        const parts = this._announceParts;
+        this._announceParts = {};
+        const line = Object.keys(parts).sort().map((k) => parts[k]).join(", ");
+        if (line)
+          element.textContent = line;
+      }, 1000);
+    }
+    setTimerVisible(visible) {
+      if (this.timerElement) {
+        this.timerElement.classList.toggle("hidden", !visible);
+        const chip = typeof this.timerElement.closest === "function" && this.timerElement.closest(".hud-chip");
+        if (chip)
+          chip.classList.toggle("hidden", !visible);
+      }
+    }
+    updateTimer(timeRemaining) {
+      if (this.timerElement && this.timerElement.isConnected) {
+        const minutes = Math.floor(timeRemaining / 60);
+        const seconds = Math.floor(timeRemaining % 60);
+        const text = `Time: ${minutes}:${seconds.toString().padStart(2, "0")}`;
+        if (this.timerElement.textContent !== text) {
+          this.timerElement.textContent = text;
+        }
+        const urgent = isTimeUrgent(timeRemaining);
+        const target = typeof this.timerElement.closest === "function" && this.timerElement.closest(".hud-chip") || this.timerElement;
+        target.classList.toggle("time-urgent", urgent);
+        target.classList.toggle("time-pulse", urgent && FX.pulse);
+        this._timerHudFailed = false;
+      } else if (!this._timerHudFailed) {
+        this._timerHudFailed = true;
+        console.error("HUD timer display unavailable; time remaining:", timeRemaining);
+      }
+    }
+    showOverlay(id) {
+      const overlay = document.getElementById(id);
+      if (overlay) {
+        overlay.classList.remove("hidden");
+      }
+    }
+    hideOverlay(id) {
+      const overlay = document.getElementById(id);
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
+    static DEATH_CAUSE_TEXT = {
+      time: "Time ran out",
+      enemy: "Touched a patrol",
+      spiny: "A spiny’s back is spiked — no stomping",
+      spike: "Landed on spikes",
+      pit: "Fell into the void",
+      projectile: "Took a bombardier shot"
+    };
+    static DEATH_TIP = {
+      time: "The clock rewards momentum — take the direct line and bank coins early.",
+      enemy: "Patrols keep steady lines — read the rhythm, then cross behind them.",
+      spiny: "Spiky backs can’t be stomped — go around, not over.",
+      spike: "Spikes mark the flat routes — jump early and land on clean ground.",
+      pit: "Landings commit you — tap jump early when brushing ledges.",
+      projectile: "Shells arc — wait for the muzzle flash, then slip past on the far side."
+    };
+    static themeNameFor(levelNumber) {
+      const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      return theme && typeof theme.name === "string" ? theme.name : "";
+    }
+    showLevelIntro(levelNumber) {
+      const element = this.ensureElement("level-intro-card");
+      const name = UI.themeNameFor(levelNumber);
+      element.textContent = name ? `LEVEL ${levelNumber} · ${name}` : `LEVEL ${levelNumber}`;
+      element.classList.remove("show");
+      element.offsetWidth;
+      element.classList.add("show");
+    }
+    renderSettings({ soundOn, shakeOn, reducedMotion }) {
+      const setSwitch = (id, on, onText = "On", offText = "Off") => {
+        const button = document.getElementById(id);
+        if (!button)
+          return;
+        button.setAttribute("aria-checked", on ? "true" : "false");
+        button.textContent = on ? onText : offText;
+      };
+      setSwitch("sound-toggle-btn", soundOn);
+      setSwitch("shake-toggle-btn", shakeOn);
+      setSwitch("motion-toggle-btn", reducedMotion === "on");
+    }
+    focusSettingsMenu() {
+      const first = document.querySelector("#settings-screen button");
+      if (first)
+        first.focus();
+    }
+    cycleSettingsFocus(forward = true) {
+      const nodes = [...document.querySelectorAll("#settings-screen button")];
+      if (!nodes.length)
+        return;
+      const i = nodes.indexOf(document.activeElement);
+      const next = i < 0 ? forward ? nodes[0] : nodes[nodes.length - 1] : nodes[(i + (forward ? 1 : -1) + nodes.length) % nodes.length];
+      if (next && typeof next.focus === "function")
+        next.focus();
+    }
+    destroyAnnouncements() {
+      if (this._announceTimer) {
+        clearTimeout(this._announceTimer);
+        this._announceTimer = null;
+      }
+    }
+    showGameOver(score, cause, penalty = 0) {
+      if (this.finalScoreElement) {
+        this.finalScoreElement.textContent = `Score: ${score}`;
+      }
+      const causeEl = document.getElementById("death-cause");
+      if (causeEl) {
+        const text = UI.DEATH_CAUSE_TEXT[cause] || "";
+        causeEl.textContent = text;
+        causeEl.hidden = !text;
+      }
+      const tipEl = document.getElementById("death-tip");
+      if (tipEl) {
+        const tip = UI.DEATH_TIP[cause] || "";
+        tipEl.textContent = tip;
+        tipEl.hidden = !tip;
+      }
+      const penaltyEl = document.getElementById("score-penalty");
+      if (penaltyEl) {
+        penaltyEl.textContent = penalty > 0 ? `-${penalty} points` : "";
+        penaltyEl.hidden = !(penalty > 0);
+      }
+      this.showOverlay("game-over-screen");
+    }
+    showGameComplete(score, highScore, runStats = {}) {
+      if (this.gameCompleteScoreElement) {
+        this.gameCompleteScoreElement.textContent = `Score: ${score}`;
+      }
+      if (this.highScoreElement) {
+        this.highScoreElement.textContent = `High Score: ${highScore}`;
+      }
+      const secretsEl = document.getElementById("run-secrets");
+      if (secretsEl) {
+        const n = Number.isFinite(runStats.secrets) && runStats.secrets > 0 ? runStats.secrets : 0;
+        secretsEl.textContent = n > 0 ? `Secrets found: ${n}` : "";
+        secretsEl.hidden = !(n > 0);
+      }
+      this.showOverlay("game-complete-screen");
+    }
+    showLevelComplete() {
+      this.showOverlay("level-complete-screen");
+    }
+    setLevelCompleteBreakdown(breakdown) {
+      const {
+        clearBonus = 0,
+        enemiesBested = 0,
+        deaths = 0,
+        flawless = false,
+        noDamageBonus = 0,
+        secretsFound = 0,
+        secretsTotal = 0
+      } = breakdown || {};
+      const bonusEl = document.getElementById("clear-bonus");
+      if (bonusEl) {
+        const text = clearBonus > 0 ? flawless ? `Flawless clear +${clearBonus}` : `Cleared after ${deaths} death${deaths === 1 ? "" : "s"} +${clearBonus}` : "";
+        bonusEl.textContent = text;
+        bonusEl.hidden = !text;
+      }
+      const bestedEl = document.getElementById("enemies-bested");
+      if (bestedEl) {
+        bestedEl.textContent = enemiesBested > 0 ? `Enemies bested +${enemiesBested}` : "";
+        bestedEl.hidden = !(enemiesBested > 0);
+      }
+      const noDamageEl = document.getElementById("no-damage-bonus");
+      if (noDamageEl) {
+        noDamageEl.textContent = noDamageBonus > 0 ? `No-damage bonus +${noDamageBonus}` : "";
+        noDamageEl.hidden = !(noDamageBonus > 0);
+      }
+      const secretsEl = document.getElementById("secrets-found");
+      if (secretsEl) {
+        secretsEl.textContent = secretsTotal > 0 ? `Secrets: ${secretsFound}/${secretsTotal}` : "";
+        secretsEl.hidden = !(secretsTotal > 0);
+      }
+    }
+    getScore() {
+      if (this.scoreElement) {
+        return parseInt(this.scoreElement.textContent.replace("Score: ", "")) || 0;
+      }
+      return 0;
+    }
+    getLevel() {
+      if (this.levelElement) {
+        return parseInt(this.levelElement.textContent.replace("Level: ", "")) || 1;
+      }
+      return 1;
+    }
+  }
+
+  // js/timer.js
+  var DEFAULT_BASE_TIME = 60;
+
+  class Timer {
+    constructor(baseTime = DEFAULT_BASE_TIME) {
+      this.baseTime = baseTime;
+      this.timeRemaining = baseTime;
+    }
+    update(dt) {
+      if (!Number.isFinite(this.timeRemaining)) {
+        this.timeRemaining = Number.isFinite(this.baseTime) ? this.baseTime : DEFAULT_BASE_TIME;
+      }
+      this.timeRemaining = Math.min(9999, Math.max(0, this.timeRemaining - dt));
+    }
+    getTimeRemaining() {
+      return this.timeRemaining;
+    }
+    isTimeUp() {
+      return this.timeRemaining <= 0;
+    }
+    addCoinBonus() {
+      this.timeRemaining = Math.min(9999, this.timeRemaining + 2);
+    }
+  }
+
   // js/movingplatforms.js
   var LAND_TOLERANCE = 0.5;
   var VY_EPSILON = 0.000001;
@@ -6982,10 +7146,71 @@
     ctx.globalAlpha = 1;
   }
 
+  // js/settings.js
+  var SETTINGS_KEYS = {
+    shake: "platformer.screen-shake",
+    reducedMotion: "platformer.reduced-motion"
+  };
+  function storageGet(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  function storageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {}
+  }
+  function loadSettings() {
+    return {
+      shake: storageGet(SETTINGS_KEYS.shake) !== "false",
+      reducedMotion: storageGet(SETTINGS_KEYS.reducedMotion) === "on" || storageGet(SETTINGS_KEYS.reducedMotion) === "off" ? storageGet(SETTINGS_KEYS.reducedMotion) : null
+    };
+  }
+  function saveShake(on) {
+    storageSet(SETTINGS_KEYS.shake, on ? "true" : "false");
+  }
+  function saveReducedMotion(mode) {
+    if (mode === null) {
+      try {
+        localStorage.removeItem(SETTINGS_KEYS.reducedMotion);
+      } catch {}
+    } else {
+      storageSet(SETTINGS_KEYS.reducedMotion, mode);
+    }
+  }
+  function osReducedMotion(win = typeof window !== "undefined" ? window : null) {
+    try {
+      return !!(win && win.matchMedia && win.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch {
+      return false;
+    }
+  }
+  function resolveReducedMotion(userMode, osPref) {
+    if (userMode === "on")
+      return true;
+    if (userMode === "off")
+      return false;
+    return !!osPref;
+  }
+  function applySettings(settings, win = undefined) {
+    const hasUserVoice = settings.reducedMotion !== null || storageGet(SETTINGS_KEYS.shake) !== null;
+    if (!hasUserVoice) {
+      return resolveReducedMotion(null, osReducedMotion(win));
+    }
+    const reduced = resolveReducedMotion(settings.reducedMotion, osReducedMotion(win));
+    applyReducedMotion(reduced);
+    FX.shake = !!settings.shake && !reduced;
+    return reduced;
+  }
+
   // js/audio.js
   var exports_audio = {};
   __export(exports_audio, {
     MUSIC_PRESETS: () => MUSIC_PRESETS,
+    MUTE_STORAGE_KEY: () => MUTE_STORAGE_KEY,
     advanceScheduler: () => advanceScheduler,
     buildMelodyLoop: () => buildMelodyLoop,
     duckMusic: () => duckMusic,
@@ -7135,20 +7360,20 @@
   var muted = false;
   var muteLoaded = false;
   var ducked = false;
-  function storageGet(key) {
+  function storageGet2(key) {
     try {
       return localStorage.getItem(key);
     } catch {
       return null;
     }
   }
-  function storageSet(key, value) {
+  function storageSet2(key, value) {
     try {
       localStorage.setItem(key, value);
     } catch {}
   }
   function loadMutedPreference() {
-    muted = storageGet(MUTE_STORAGE_KEY) === "true";
+    muted = storageGet2(MUTE_STORAGE_KEY) === "true";
     muteLoaded = true;
     return muted;
   }
@@ -7466,7 +7691,7 @@
   function setMuted(value) {
     muted = !!value;
     muteLoaded = true;
-    storageSet(MUTE_STORAGE_KEY, muted ? "true" : "false");
+    storageSet2(MUTE_STORAGE_KEY, muted ? "true" : "false");
     if (ctx) {
       const t = ctx.currentTime;
       master.gain.cancelScheduledValues(t);
@@ -7653,6 +7878,10 @@
   var LOOKAHEAD_DEADZONE_VX = 30;
   var FINAL_LEVEL = 100;
   var HIGH_SCORE_KEY = "platformerHighScore";
+  var TITLE_SCROLL_SPEED = 26;
+  var TITLE_THEME_SPAN = 650;
+  var TITLE_FRAME_INTERVAL = 1 / 30;
+  var TITLE_SEEDS = [1592590337, 1592590338, 1592590339];
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
   var LOOP_ERROR_RECOVERY_FRAMES = 30;
   var LEVEL_TRANSITION_MAX_STALL_FRAMES = 120;
@@ -7710,6 +7939,10 @@
         throw new Error("Game requires a #game-canvas element in the page");
       }
       this.ctx = this.canvas.getContext("2d");
+      this.fxCanvas = document.getElementById("celebration-canvas");
+      this.fxCtx = this.fxCanvas ? this.fxCanvas.getContext("2d") : null;
+      this.confetti = [];
+      this._fxCanvasDirty = false;
       this._abort = new AbortController;
       this.resize();
       window.addEventListener("resize", () => this.resize(), { signal: this._abort.signal });
@@ -7723,6 +7956,7 @@
       loadMutedPreference();
       this.ui.setMuteLabel(isMuted());
       this.audio = exports_audio;
+      this.fx = FX;
       this.difficulty = new Difficulty;
       this.timer = new Timer(60);
       this.timerActive = false;
@@ -7737,6 +7971,14 @@
       this._slideDustT = 0;
       this._portalUnlocked = false;
       initFX();
+      this.settings = loadSettings();
+      applySettings(this.settings);
+      this.syncSettingsUI();
+      this._titleScroll = 0;
+      this._titleFrameAcc = TITLE_FRAME_INTERVAL;
+      this._titleDirty = true;
+      this.settingsOpen = false;
+      this.settingsReturn = "menu";
       this.dust = [];
       this.popups = [];
       this.rings = [];
@@ -7790,6 +8032,7 @@
       this._destroyed = true;
       this._abort.abort();
       this.input.destroy();
+      this.ui.destroyAnnouncements();
       shutdown();
     }
     resize() {
@@ -7805,6 +8048,15 @@
         this.camera.width = window.innerWidth / this.zoom;
         this.camera.height = window.innerHeight / this.zoom;
       }
+      if (this.fxCanvas && this.fxCtx) {
+        this.fxCanvas.width = window.innerWidth * dpr;
+        this.fxCanvas.height = window.innerHeight * dpr;
+        this.fxCanvas.style.width = window.innerWidth + "px";
+        this.fxCanvas.style.height = window.innerHeight + "px";
+        this.fxCtx.scale(dpr, dpr);
+      }
+      if (this.state === STATE.MENU)
+        this._titlePainted = false;
     }
     bindEvents() {
       const startBtn = document.getElementById("start-btn");
@@ -7844,6 +8096,33 @@
       onClick(quitMenuBtn, () => {
         this.quitToMenu();
         quitMenuBtn.blur();
+      });
+      const optionalClick = (id, fn) => {
+        const el = document.getElementById(id);
+        if (el)
+          onClick(el, fn);
+      };
+      optionalClick("menu-settings-btn", () => this.openSettings("menu"));
+      optionalClick("pause-settings-btn", () => {
+        this.ui.blurPauseControls();
+        this.openSettings("pause");
+      });
+      optionalClick("settings-back-btn", () => this.closeSettings());
+      optionalClick("sound-toggle-btn", () => {
+        this.toggleSound();
+      });
+      optionalClick("shake-toggle-btn", () => {
+        this.settings.shake = !this.settings.shake;
+        saveShake(this.settings.shake);
+        applySettings(this.settings);
+        this.syncSettingsUI();
+      });
+      optionalClick("motion-toggle-btn", () => {
+        const reducedNow = resolveReducedMotion(this.settings.reducedMotion, osReducedMotion());
+        this.settings.reducedMotion = reducedNow ? "off" : "on";
+        saveReducedMotion(this.settings.reducedMotion);
+        applySettings(this.settings);
+        this.syncSettingsUI();
       });
       this.input.onJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
@@ -7900,15 +8179,20 @@
       this.input.onReleaseRight(() => this.player?.stopRight());
       window.addEventListener("keydown", (e) => {
         const code = e.code || e.key;
-        if (code === "Escape" && !e.repeat) {
-          if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
+        if (this.settingsOpen && code === "Tab") {
+          e.preventDefault();
+          this.ui.cycleSettingsFocus(!e.shiftKey);
+        } else if (code === "Escape" && !e.repeat) {
+          if (this.settingsOpen) {
+            this.closeSettings();
+          } else if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
             this.returnToMenu();
           } else {
             this.togglePause();
           }
         } else if (!e.repeat && (code === "KeyM" || code === "m" || code === "M")) {
           this.toggleSound();
-        } else if (this.state === STATE.PAUSED && code in PAUSE_MENU_ARROWS) {
+        } else if (this.state === STATE.PAUSED && !this.settingsOpen && code in PAUSE_MENU_ARROWS) {
           e.preventDefault();
           this.ui.cyclePauseFocus(PAUSE_MENU_ARROWS[code]);
         }
@@ -7942,9 +8226,60 @@
     toggleSound() {
       toggleMute();
       this.ui.setMuteLabel(isMuted());
+      this.syncSettingsUI();
+    }
+    syncSettingsUI() {
+      if (!this.ui || !this.settings)
+        return;
+      this.ui.renderSettings({
+        soundOn: !isMuted(),
+        shakeOn: !!this.settings.shake,
+        reducedMotion: resolveReducedMotion(this.settings.reducedMotion, osReducedMotion()) ? "on" : "off"
+      });
+    }
+    _setSettingsBackdrop(inertOn) {
+      for (const id of ["menu-screen", "pause-screen", "hud"]) {
+        const el = document.getElementById(id);
+        if (!el)
+          continue;
+        if (inertOn) {
+          el.setAttribute("inert", "");
+          el.setAttribute("aria-hidden", "true");
+        } else {
+          el.removeAttribute("inert");
+          el.removeAttribute("aria-hidden");
+        }
+      }
+    }
+    openSettings(from) {
+      this.settingsOpen = true;
+      this.settingsReturn = from;
+      this.syncSettingsUI();
+      this._setSettingsBackdrop(true);
+      this.ui.showOverlay("settings-screen");
+      this.ui.focusSettingsMenu();
+    }
+    closeSettings() {
+      this.settingsOpen = false;
+      this.ui.hideOverlay("settings-screen");
+      this._setSettingsBackdrop(false);
+      const active = document.activeElement;
+      if (active && typeof active.closest === "function" && active.closest("#settings-screen")) {
+        active.blur();
+      }
+      const openerId = this.settingsReturn === "pause" ? "pause-settings-btn" : "menu-settings-btn";
+      const opener = document.getElementById(openerId);
+      const host = opener && typeof opener.closest === "function" ? opener.closest(".overlay") : null;
+      if (opener && host && !host.classList.contains("hidden")) {
+        opener.focus();
+      }
     }
     returnToMenu() {
       this.setState(STATE.MENU);
+      this.settingsOpen = false;
+      this.ui.hideOverlay("settings-screen");
+      this._setSettingsBackdrop(false);
+      this._titlePainted = false;
       stopMusic();
       this.ui.hideOverlay("game-over-screen");
       this.ui.hideOverlay("game-complete-screen");
@@ -7968,6 +8303,8 @@
       this.dust.length = 0;
       this.popups.length = 0;
       this.rings.length = 0;
+      if (this.confetti)
+        this.confetti.length = 0;
       this.shakeTime = 0;
       this.shakeMag = 0;
       this.shakeDur = 0;
@@ -8216,11 +8553,27 @@
       } catch (error) {
         console.warn("High score unavailable (localStorage failed):", error);
       }
-      this.ui.showGameComplete(this.score, highScore);
+      spawnConfetti(this.confetti, window.innerWidth, window.innerHeight, FX.pulse);
+      this._fxCanvasDirty = true;
+      this.ui.showGameComplete(this.score, highScore, { secrets: this.runSecretsFound });
     }
     update(dt) {
       this.sprites.advance(dt);
       stepParticles(this.particles, dt);
+      if (this.confetti.length)
+        stepConfetti(this.confetti, dt);
+      if (this.state === STATE.MENU) {
+        if (FX.pulse) {
+          this._titleScroll += dt * TITLE_SCROLL_SPEED;
+          this._titleFrameAcc += dt;
+          if (this._titleFrameAcc >= TITLE_FRAME_INTERVAL) {
+            this._titleFrameAcc = 0;
+            this._titleDirty = true;
+          }
+        } else if (!this._titlePainted) {
+          this._titleDirty = true;
+        }
+      }
       if (this.motes.length && this.state !== STATE.PAUSED) {
         stepMotes(this.motes, dt, window.innerWidth, window.innerHeight);
       }
@@ -8563,6 +8916,7 @@
               this.resetLevelEconomyTrackers();
               this.publishLevel(level);
               this.ui.hideOverlay("level-complete-screen");
+              this.ui.showLevelIntro(next);
             } catch (error) {
               this.levelTransitionStallFrames++;
               if (this.levelTransitionStallFrames > LEVEL_TRANSITION_MAX_STALL_FRAMES) {
@@ -8581,6 +8935,22 @@
     }
     draw() {
       const sprites = this.sprites.ready() ? this.sprites : null;
+      if (this.state === STATE.MENU && sprites) {
+        if (this._titleDirty) {
+          this._titleDirty = false;
+          this._titlePainted = true;
+          this.ctx.fillStyle = "#87CEEB";
+          this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+          const viewW = window.innerWidth;
+          const viewH = window.innerHeight;
+          const cycle = Math.floor(this._titleScroll / TITLE_THEME_SPAN);
+          const themeIdx = (cycle % THEMES.length + THEMES.length) % THEMES.length;
+          sprites.drawBackground(this.ctx, themeIdx + 1, this._titleScroll, viewW, viewH, Infinity, TITLE_SEEDS[themeIdx]);
+          sprites.drawForeground(this.ctx, themeIdx + 1, this._titleScroll, viewW, viewH, TITLE_SEEDS[themeIdx]);
+          sprites.drawVignette(this.ctx, themeIdx + 1, viewW, viewH);
+        }
+        return;
+      }
       this.ctx.fillStyle = "#87CEEB";
       this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       if (this.state === STATE.PLAYING || this.state === STATE.LEVEL_COMPLETE || this.state === STATE.PAUSED) {
@@ -8704,12 +9074,28 @@
       try {
         this.update(cappedDt);
         this.draw();
+        this.drawCelebration();
         this._loopErrorStreak = 0;
         this._recoveryAttempted = false;
       } catch (error) {
         console.error("Game loop error:", error);
         this._handleLoopError();
       }
+    }
+    drawCelebration() {
+      const ctx = this.fxCtx;
+      if (!ctx || typeof ctx.clearRect !== "function")
+        return;
+      if (!this.confetti.length) {
+        if (this._fxCanvasDirty) {
+          ctx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
+          this._fxCanvasDirty = false;
+        }
+        return;
+      }
+      ctx.clearRect(0, 0, this.fxCanvas.width, this.fxCanvas.height);
+      drawConfetti(ctx, this.confetti);
+      this._fxCanvasDirty = true;
     }
     _handleLoopError() {
       this._loopErrorStreak++;

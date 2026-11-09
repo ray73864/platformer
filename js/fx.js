@@ -200,3 +200,82 @@ export function drawRings(ctx, list) {
     }
     ctx.globalAlpha = 1;
 }
+
+// --- Victory confetti (Wave C) ----------------------------------------------
+// FINAL_LEVEL celebration layer: one pooled burst, hard-capped at
+// MAX_CONFETTI, drawn in screen space on its own canvas above the DOM
+// overlays. Placement uses a seeded mulberry32 (the render-no-Math.random
+// rule particles.js established), so the burst is identical every time and
+// no UI code introduces fresh RNG. `animated` is the caller's FX.pulse read:
+// reduced motion gets the SAME composition as a single static burst that
+// fades in place (no travel), per the Wave C brief.
+export const MAX_CONFETTI = 60;
+export const CONFETTI_LIFE = 2.4;      // animated fall
+export const CONFETTI_STATIC_LIFE = 1.4; // reduced-motion hold-and-fade
+
+// Kenney-palette confetti hues (gold, grass, cream, amber, portal violet).
+export const CONFETTI_COLORS = ['#ffd23f', '#3ecf6a', '#fdf6e8', '#f4a460', '#b06cf0'];
+
+function confettiRng(seed) {
+    let s = seed >>> 0;
+    return function () {
+        s = (s + 0x6D2B79F5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/**
+ * Replace the pool with one celebration burst across a viewW×viewH screen.
+ * animated=true: pieces rain from above the top edge with a lazy sway.
+ * animated=false (reduced motion): pieces hang mid-screen, motionless, and
+ * simply fade — a single static burst, never a moving one.
+ */
+export function spawnConfetti(list, viewW, viewH, animated = true, seed = 0xC0FFEE) {
+    list.length = 0;
+    const rng = confettiRng(seed);
+    for (let i = 0; i < MAX_CONFETTI; i++) {
+        const x = rng() * viewW;
+        list.push({
+            x,
+            y: animated ? -(rng() * viewH * 0.6) : viewH * (0.12 + rng() * 0.62),
+            vx: animated ? (rng() - 0.5) * 30 : 0,
+            vy: animated ? 90 + rng() * 140 : 0,
+            size: 3 + Math.round(rng() * 3),
+            color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+            phase: rng() * Math.PI * 2,
+            sway: animated ? 18 + rng() * 26 : 0,
+            age: 0,
+            life: animated ? CONFETTI_LIFE : CONFETTI_STATIC_LIFE
+        });
+    }
+    return list;
+}
+
+export function stepConfetti(list, dt) {
+    for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        p.age += dt;
+        if (p.age >= p.life) {
+            list.splice(i, 1);
+            continue;
+        }
+        p.x += (p.vx + Math.sin(p.phase + p.age * 3) * p.sway) * dt;
+        p.y += p.vy * dt;
+    }
+    return list;
+}
+
+// Pixel-cut rects (no rotation transforms): alpha holds, then fades out over
+// the last third of life so both variants read as a punctuation beat.
+export function drawConfetti(ctx, list) {
+    for (const p of list) {
+        const k = p.age / p.life;
+        ctx.globalAlpha = k < 0.65 ? 1 : 1 - (k - 0.65) / 0.35;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size + 1);
+    }
+    ctx.globalAlpha = 1;
+}
