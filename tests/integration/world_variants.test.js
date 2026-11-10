@@ -86,23 +86,29 @@ const WORLD_PINS = [
         crates: "4f53cda18c2baa0c", spikes: "75f020e3b6a73384",
         enemies: "591fd96b9ad3c05a", attempts: 2, dir: "left"
     }],
+    // W6 RE-PINNED (RUINS retune, see worlds.js note + w6-report.md): the
+    // variant roles rotated (courts/stairwells/rubble), so L26/L29 re-rolled
+    // through the shared rng stream (L26 gains its signature deck crossing —
+    // garrisoned-court bridgeChance .95; L27 keeps terrain and only swaps
+    // its roster to the DNA mix). Captured from the W6 tree 2026-11-10;
+    // delta attribution vs a3c6811 lives in the W6 report.
     ["RUINS", 26, 20261126, {
-        terrain: "355ec8673c22a770", coins: "393f2474832bee37",
-        decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
-        crates: "4f53cda18c2baa0c", spikes: "cb59acd275d6c123",
-        enemies: "95176cae8849a5f1", attempts: 13, dir: "right"
+        terrain: "e9d5155d6994bb11", coins: "92a6c2ceab56091d",
+        decks: "e1eaf7eb9bfec8e2", pads: "4f53cda18c2baa0c",
+        crates: "4f53cda18c2baa0c", spikes: "751a20dbe4973f8c",
+        enemies: "4f53cda18c2baa0c", attempts: 16, dir: "right"
     }],
     ["RUINS", 27, 20261127, {
         terrain: "57f5d526a004a241", coins: "3b2c7a1de6b6bc36",
         decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
         crates: "4f53cda18c2baa0c", spikes: "8ae08decf1d6eb43",
-        enemies: "0f45a3531eb7057f", attempts: 1, dir: "left"
+        enemies: "a7748f0d3e816ff4", attempts: 1, dir: "left"
     }],
     ["RUINS", 29, 20261129, {
-        terrain: "3f566d51a4a1c7d4", coins: "1127eb892b72fcb4",
-        decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
-        crates: "4f53cda18c2baa0c", spikes: "f905927e752568ac",
-        enemies: "3a2ae6276238e0d0", attempts: 1, dir: "right"
+        terrain: "8b70d8f7e6c7f880", coins: "a12bc58ef272e24e",
+        decks: "0ec2e7b23c67d6ce", pads: "4f53cda18c2baa0c",
+        crates: "4f53cda18c2baa0c", spikes: "0f7fe009db5df517",
+        enemies: "912f446d9e4b9b35", attempts: 8, dir: "right"
     }]
 ];
 

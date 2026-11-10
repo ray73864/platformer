@@ -173,6 +173,19 @@ export class UI {
         const text = n > 0 ? `+${n}\u2605` : '';
         if (el.textContent !== text) {
             el.textContent = text;
+            // W6 WCAG: "+N\u2605" alone explores as "plus N black star"; a
+            // generic span cannot carry aria-label (AT ignore it), so the
+            // badge takes role="img" plus a spoken equivalent for direct
+            // exploration. Dynamic change still rides the polite region
+            // below exactly once per increment (W1 doctrine unchanged).
+            if (n > 0) {
+                el.setAttribute('role', 'img');
+                el.setAttribute('aria-label',
+                    `${n} bonus coin${n === 1 ? '' : 's'}`);
+            } else {
+                el.removeAttribute('role');
+                el.removeAttribute('aria-label');
+            }
             if (n > 0) this._queueAnnouncement('secret', `bonus coins ${n}`);
         }
         el.hidden = !(n > 0);
@@ -334,6 +347,13 @@ export class UI {
         if (isWorldEntry(levelNumber)) {
             const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
             text = `WORLD ${worldOrdinalForLevel(levelNumber)} \u00b7 ${world.name}\n${text}`;
+            // W6 WCAG: the card is aria-hidden by design (the HUD already
+            // announces the level, and a second live node would double-read
+            // every transition) — without this line the WORLD identity, the
+            // headline feature of the program, would be vision-only. One
+            // polite announcement per entry, coalesced with the level chip.
+            this._queueAnnouncement('world',
+                `entering world ${worldOrdinalForLevel(levelNumber)}, ${world.name}`);
         }
         element.textContent = text;
         // Restart the CSS animation even on back-to-back shows: removing the

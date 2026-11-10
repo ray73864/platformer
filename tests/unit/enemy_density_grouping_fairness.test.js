@@ -254,14 +254,18 @@ test("portal shelf: two otherwise-legal patrollers reduce to one", () => {
 // every non-meadow level; these pins guard FUTURE drift (enemy-rule work must
 // not move tiles/spikes/coins), so the hashes were re-recorded from the new
 // deterministic bytes — L12 CANYONS, L20 CAVERNS, L23 SKYWARD, L30 RUINS,
-// L45 CAVERNS, L77 MEADOWS-rotation (motif-chain coupling).
+// L45 CAVERNS, L77 RUINS-rotation (motif-chain coupling).
+// W6 RE-RECORDED 2026-11-10: the RUINS retune moves exactly its two
+// RUIN-window pins (L30, L77); the four non-RUIN hashes are byte-equal to
+// their W3a capture (re-verified), so this still guards FUTURE enemy-rule
+// drift on stable terrain.
 const TERRAIN_PINS = [
     [20, 3906687302, "7771cdb0"],
     [23, 95830402, "41c765de"],
-    [30, 4104669369, "0e78f169"],
+    [30, 4104669369, "1a09ba88"],
     [12, 20308622, "7e867c24"],
     [45, 20545163, "72605ec1"],
-    [77, 20797493, "48b5f22f"]
+    [77, 20797493, "4a535429"]
 ];
 function fnv1a(str) {
     let h = 0x811c9dc5;

@@ -470,8 +470,13 @@ export class Enemy {
 
         // Fallback placeholder rectangles stay inside the 32x32 cell (the
         // lethal box lives within it — protruding placeholder art would
-        // misrepresent reach). Kind tints mirror the sprites.js palette so
-        // recognition survives even without the sheets loaded.
+        // misrepresent reach). W6 comment fix (W4 review minor): these kind
+        // hues are LEGACY placeholder tints predating the W4 baked art —
+        // they do not mirror js/enemyart.js ENEMY_PALETTES (the bombardier
+        // here is dark plum where the baked sprite is bark-brown). Kept
+        // deliberately: the degraded path only needs cross-kind
+        // distinguishability, and pinning new hexes there would churn a
+        // test surface no player with assets ever sees.
         // Wave B: the degradation path gets the same telegraph family as the
         // sheet art. Spiny micro-rattle derives its phase from patrol x (no
         // new timing source; spinies are always moving while alive), the

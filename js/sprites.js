@@ -2361,8 +2361,13 @@ export class Sprites {
             ctx.translate(g.dx - recoil, g.dy);
             ctx.drawImage(art.bombardier.gun, 0, 0, (GUN_DIMS.w + 2) * z, (GUN_DIMS.h + 2) * z);
             // Fuse micro-spark on the breech (clock-driven flicker only —
-            // deterministic like every other render pass here), recoiling
-            // WITH the gun.
+            // deterministic like every other render pass here). W6 comment
+            // fix (W4 review minor): the coordinates cancel the gun group's
+            // translate, so the spark holds its body-anchored net position
+            // at the fuse tip THROUGH the recoil kick — unlike the barrel,
+            // it does NOT travel with the recoiling gun (that was always
+            // the correct net position; the old "recoils WITH the gun" note
+            // contradicted the math).
             const spark = 1.5 + ((Math.floor(this.clock * 14) % 2) ? 0.6 : 0);
             ctx.fillStyle = '#ffd23f';
             ctx.beginPath();

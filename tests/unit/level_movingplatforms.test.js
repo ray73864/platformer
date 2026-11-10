@@ -111,9 +111,15 @@ test("L8..100 x 10 seeds: every bridge legal, plain BFS refuses the gap", () => 
     // Realized coverage band (tuned BRIDGE_CHANCE=0.6 measured 36.7%; the
     // narrow L8..24 tiers are structurally excluded by the feasibility
     // arithmetic — documented in level.js).
+    // W6 RE-PINNED: the RUINS retune rotates a deck-heavy garrison-court
+    // variant (bridgeChance .95 where the old band sat on a flat 0.5), so
+    // realized coverage on this seed family measured 0.500 (was inside
+    // .28...48 pre-retune). Every LEGALITY invariant above still holds map
+    // by map — only the prevalence ceiling moved, deliberately, alongside
+    // the world grammar. Ceiling = measured + ~0.04 (deterministic probe).
     const frac = withBridge / horizMaps;
     expect(frac).toBeGreaterThan(0.28);
-    expect(frac).toBeLessThan(0.48);
+    expect(frac).toBeLessThan(0.54);
 }, 150000); // cold-start build cost (physics route gate warms up here; raised for the generalized routeFair() gate, 2026-11-05)
 
 test("levels below 8 ship no decks and no corridors", () => {

@@ -125,21 +125,20 @@ test("named repro L30 seed 4104669369: gauntlet gone, purple enemy gone", () => 
     const level = new Level(30, T, 4104669369);
     expect(violationsOf(level).length).toBe(0);
     const enemies = deployedBodies(level);
-    // No bodies on the middle shelf at all — and hence no spiny anywhere
-    // near the traverse (the reported purple enemy).
-    expect(enemies.some(e => e.row === 17)).toBe(false);
+    // W6 RE-PINNED: the RUINS retune re-rolled this seed again (left-bound
+    // archipelago, variant stairwell). The OLD middle-shelf geometry is gone
+    // with the old map, so the row-17-EMPTY literal from W3a no longer
+    // describes anything real; the repro's ACTUAL guarantees are pinned
+    // instead: zero gauntlet configurations, and no purple (spiny-or-any-
+    // non-walker) enemy anywhere on this seed — the reported threat stays
+    // dead. Composition re-captured from the deterministic W6 bytes: four
+    // stompable walkers, three on the row-18 shelves, one on row 17 col 7
+    // whose neighborhood keeps a safe pocket (violations stay 0 above).
     expect(level.getEnemyManager().enemies
         .some(e => e.kind !== 'walker')).toBe(false);
-    // W3a RE-PINNED: L30 now lives in RUINS and re-rolls as an archipelago
-    // map — the reported shelf trio is gone entirely (violations stay 0,
-    // the middle shelf at row 17 stays EMPTY, and every deployed body is a
-    // stompable walker, so both guarantees of this repro hold). The thinner
-    // ruins economy now ships THREE survivors: staging row 16, landing row
-    // 18, plus one more on row 15 (cols 7..10) whose neighborhood keeps a
-    // safe pocket — the gauntlet metric verifies zero configurations.
-    expect(enemies.filter(e => e.row === 16).length).toBe(1);
-    expect(enemies.filter(e => e.row === 18).length).toBe(1);
-    expect(enemies.length).toBe(3);
+    expect(enemies.filter(e => e.row === 18).length).toBe(3);
+    expect(enemies.filter(e => e.row === 17).length).toBe(1);
+    expect(enemies.length).toBe(4);
 });
 
 test("same seed twice: deployments, kinds and pixels replay identically", () => {

@@ -187,17 +187,41 @@ test("skyward and ruins variant rotations merge over the DNA", () => {
     expect(profileForLevel(21).gapMul).toBe(1.1);   // band starts mid-rotation
     expect(profileForLevel(21).shaftChance).toBe(0.3);
     expect(profileForLevel(22).gapMul).toBe(1.45);
-    expect(profileForLevel(22).padMul).toBe(1.4);
     expect(profileForLevel(23).gapMul).toBe(1.35);
-    expect(profileForLevel(23).padMul).toBe(1.2);
     expect(profileForLevel(24).gapMul).toBe(1.1);   // wraps
+    // W6: former padMul 1.4/1.2 pins deleted WITH the dead entries they
+    // pinned (PAD_CHANCE 1.0 saturates any mul >= 1 — see worlds.js note).
+    // Sub-1 padMul still bites, so the merged profile must expose the DNA's.
+    expect(profileForLevel(22).padMul).toBe(1);     // DNA value, no variant override
+    expect(profileForLevel(16).padMul).toBe(0.6);   // CAVERNS' live sub-1 knob
 
-    expect(profileForLevel(26).kindWeights.bombardier).toBe(1.5);
-    expect(profileForLevel(27).crateMul).toBe(1.6);
-    expect(profileForLevel(27).kindWeights.spiny).toBe(1.3);
-    expect(profileForLevel(28).padMul).toBe(1.4);
-    expect(profileForLevel(28).gapMul).toBe(1.25);
+    // W3a RE-PINNED W6: the RUINS retune rotated variant ROLES (courts ->
+    // stairwells -> rubble fields, order measured on the variety metric),
+    // so the per-position expectations moved with them.
+    expect(profileForLevel(26).kindWeights.bombardier).toBe(1.5); // garrisoned court
+    expect(profileForLevel(26).segHoldMax).toBe(4);
+    expect(profileForLevel(26).bridgeChance).toBe(0.95);
+    expect(profileForLevel(27).crateMul).toBe(1.6);               // collapsed stairwell
+    expect(profileForLevel(27).shaftChance).toBe(1.0);
+    expect(profileForLevel(27).kindWeights.spiny).toBe(1);        // DNA roster
+    expect(profileForLevel(28).gapMul).toBe(1.4);                 // open rubble field
+    expect(profileForLevel(28).kindWeights.spiny).toBe(1.3);
+    expect(profileForLevel(28).padMul).toBe(1);                   // dead entry removed
     expect(profileForLevel(29).kindWeights.bombardier).toBe(1.5); // wraps
+});
+
+// W6 (W3a review minor): main.js TITLE_PSEUDO_LEVELS addresses THEMES
+// through bandIndexForLevel for the MENU demo backdrop. The contract is
+// exactly this pin: pseudo-level n (1-based) must keep resolving to band
+// n-1 at every supported band count. If MEADOW's onramp band semantics
+// ever change, THIS breaks — not the title screen at runtime.
+test("menu-backdrop pseudo-levels resolve to their own theme bands forever", () => {
+    for (const bandCount of [3, 4, 5]) {
+        for (let i = 0; i < bandCount; i++) {
+            expect(bandIndexForLevel(i + 1, bandCount), `n=${i + 1} k=${bandCount}`)
+                .toBe(i);
+        }
+    }
 });
 
 test("profile lookup is pure: repeated calls agree and never mutate WORLDS", () => {
@@ -206,8 +230,13 @@ test("profile lookup is pure: repeated calls agree and never mutate WORLDS", () 
         const a = profileForLevel(n);
         const b = profileForLevel(n);
         expect(JSON.stringify(a)).toBe(JSON.stringify(b));
-        if (a !== WORLDS[0]) { // merged lookups are fresh objects per call
-            a.gapMul = -999;   // caller-side tampering must not leak
+        if (a !== WORLDS[0]) {
+            // W6 memoization: merged lookups are FROZEN shared snapshots
+            // (was: fresh mutable objects per call). Tampering now throws in
+            // strict mode instead of leaking into later callers — external
+            // purity is unchanged, corruption-safety is strictly stronger.
+            expect(a).toBe(b); // cache hit returns the same immutable snapshot
+            expect(() => { a.gapMul = -999; }).toThrow();
             expect(profileForLevel(n).gapMul).not.toBe(-999);
         }
     }

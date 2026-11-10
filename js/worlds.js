@@ -65,7 +65,8 @@ export const WORLDS = [
         shaftChance: 0.82,  // ELEVATOR shaft slot roll per vertical attempt
         vFlipMul: 1,        // vertical chain flipChance multiplier (clamp .6)
         vExtShift: 0,       // vertical ledge decorative-run shift (clamp >=1)
-        padMul: 1,          // PAD_CHANCE multiplier (clamp <=1)
+        padMul: 1,          // PAD_CHANCE multiplier (clamp <=1; PAD_CHANCE is
+                            // 1.0 so mul > 1 can never fire — keep values <= 1)
         crateMul: 1,        // CRATE_CHANCE multiplier (clamp <=1)
         kindWeights: { spiny: 1, charger: 1, bombardier: 1 },
         spikeMul: 1,        // placeSpikes target scalar
@@ -157,10 +158,14 @@ export const WORLDS = [
         decorScale: 0.85,
         // Sub-flavours: long-haul island chains alternate with tighter
         // stepping-stone fields and lift-rich ascents.
+        // W6: former padMul 1.2/1.4 entries DELETED — PAD_CHANCE is 1.0, so
+        // min(1, PAD_CHANCE * mul) saturates at any mul >= 1: those entries
+        // could never fire (dead config, reviewer-confirmed). Honest values
+        // only: CAVERNS' padMul 0.6 stays because sub-1 multipliers DO bite.
         variants: [
-            { gapMul: 1.35, shaftChance: 0.9, padMul: 1.2 },
-            { gapMul: 1.1, shaftChance: 0.3, padMul: 1 },
-            { gapMul: 1.45, shaftChance: 0.6, padMul: 1.4 }
+            { gapMul: 1.35, shaftChance: 0.9 },
+            { gapMul: 1.1, shaftChance: 0.3 },
+            { gapMul: 1.45, shaftChance: 0.6 }
         ]
     },
     {
@@ -186,12 +191,30 @@ export const WORLDS = [
         markerSpikeBan: 2,
         themeBand: 1,       // DUSK again: ruined light
         decorScale: 1.1,
-        // Sub-flavours: garrisoned rubble (gunners), supply caches (crates)
-        // and launch-pad courtyards rotate through the band.
+        // W6 retune (W3a review minor): RUINS was the one world whose mean
+        // consecutive-map distance sat BELOW pre-worlds baseline (.1559 vs
+        // .1572 at L11..40 x 30 seeds, scripts/world-variety.js feature set)
+        // — its variants only rotated enemy-kind/crate/pad knobs, so the five
+        // levels read as one grammar with different rosters. The variants now
+        // also swing TERRAIN knobs (deck/shaft budgets, verticality bias,
+        // decorative-run length, gap width), giving each band position a
+        // distinct sub-flavour while the DNA stays spike-garnished rubble.
+        // Measured after: RUIN band .1772 (+12.7% over baseline); every other
+        // band byte-identical; throw sweep L1..100x10 zero (see w6-report.md).
+        // Sub-flavours: garrisoned courts (long holds, deck crossings,
+        // gunners), collapsed stairwells (chimney climbs, crate stacks) and
+        // open rubble fields (wide gaps, spiny patrols) rotate through the
+        // band. ORDER IS MEASURED, not cosmetic: this rotation puts a
+        // deck-heavy court against SKYWARD's island chain at the band entry
+        // and alternates floor-hugger vs climber neighbours inside it.
         variants: [
-            { kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.5 }, crateMul: 1 },
-            { kindWeights: { spiny: 1.3, charger: 1.1, bombardier: 0.8 }, crateMul: 1.6 },
-            { kindWeights: { spiny: 0.9, charger: 0.9, bombardier: 1.2 }, padMul: 1.4, gapMul: 1.25 }
+            { segHoldMax: 4, downBias: 0.72, gapMul: 1.0, bridgeChance: 0.95,
+                shaftChance: 0.5,
+                kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.5 } },
+            { downBias: 0.38, vFlipMul: 1.5, vExtShift: -2, gapMul: 1.3,
+                bridgeChance: 0.25, shaftChance: 1.0, crateMul: 1.6 },
+            { gapMul: 1.4, downBias: 0.55, vExtShift: 0,
+                kindWeights: { spiny: 1.3, charger: 1.1, bombardier: 0.8 } }
         ]
     }
 ];
@@ -209,11 +232,36 @@ export function worldOf(levelNumber) {
 // world's sub-variant for this position in the band merged over the DNA).
 // Pure function of the level number; MEADOW levels get the frozen object
 // itself, so identity checks on the onramp profile keep working.
+//
+// W6 memoization: per-frame callers (theme/dust/music lookups) hammered this
+// once or more per rendered frame, re-spreading ~20-field merges every time.
+// Results are now cached per levelNumber behind an immutable snapshot: merged
+// profiles are Object.freeze'd (kindWeights copied-and-frozen too, closing a
+// shared-reference hole), so a caller CANNOT corrupt the cache or WORLDS —
+// external purity is strictly stronger than the old fresh-object-per-call
+// contract (tests/unit/worlds.test.js updated accordingly). Generation
+// fingerprints are byte-identical across >=400 seeds (W6 report): the merge
+// values themselves never changed, only how often they are recomputed.
+// The cache is a last-value pair, not a Map: consecutive calls share one
+// level (the per-frame trio), and alternating-key patterns at worst fall back
+// to today's recompute cost — no eviction policy needed.
+let _profKey = -1;
+let _profVal = null;
 export function profileForLevel(levelNumber) {
+    if (levelNumber === _profKey) return _profVal;
     const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
-    if (!world.variants || levelNumber <= MEADOW_LAST_LEVEL) return world;
-    const variant = world.variants[(levelNumber - (MEADOW_LAST_LEVEL + 1)) % world.variants.length];
-    return { ...world, ...variant };
+    let result = world;
+    if (world.variants && levelNumber > MEADOW_LAST_LEVEL) {
+        const variant = world.variants[(levelNumber - (MEADOW_LAST_LEVEL + 1)) % world.variants.length];
+        result = Object.freeze({
+            ...world,
+            ...variant,
+            kindWeights: Object.freeze({ ...world.kindWeights, ...variant.kindWeights })
+        });
+    }
+    _profKey = levelNumber;
+    _profVal = result;
+    return result;
 }
 
 // Travel direction, deterministic from the level number (was a private

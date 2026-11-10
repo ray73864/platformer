@@ -145,6 +145,52 @@ describe("W5 intensity state machine", () => {
         g2.destroy();
     });
 
+    // W6 pin (W5 review minor): the retry RESET was correct by reading only.
+    // Arm the bed, die, hit Retry: publishLevel's neutral seam must disarm,
+    // the refilled clock must not re-arm on the next tick, and the scheduler
+    // must emit at the CALM rate afterwards — byte-for-byte the same voice
+    // count as an unarmed run of the same seeded level over the same
+    // fake-clock budget (a live bed would strictly exceed it, pinned above).
+    test("retry disarms the bed and schedules zero urgency nodes post-reset", () => {
+        // Identical procedure per mode so loop phase aligns across windows:
+        // publish (music starts at step 0), settle state, then walk the fake
+        // audio clock in quarter-step slices and count started voices.
+        const groveWindow = (mode) => {
+            audio.shutdown();
+            audio.setMuted(false);
+            mountFixture();
+            const g = new Game();
+            g.startGame();
+            g.currentLevel = 5;
+            g.publishLevel(new Level(5, 32, 4242));
+            g.timer.timeRemaining = 9;
+            if (mode !== "calm") audio.setUrgent(true);
+            if (mode === "retry") {
+                g.handleGameOver("pit");   // stops music + disarms (pinned above)
+                g.retryLevel();            // GAME_OVER -> fresh attempt
+                expect(audio.getState().urgent).toBe(false);
+                g.update(0.016);           // fresh clock: must NOT re-arm
+                expect(audio.getState().urgent).toBe(false);
+            }
+            const ctx = createdCtxs[createdCtxs.length - 1];
+            const n0 = nodesStarted;
+            for (let i = 0; i < 160; i++) {
+                ctx.currentTime += 0.025;
+                tickIntervals(1);
+            }
+            const emitted = nodesStarted - n0;
+            g.destroy();
+            return emitted;
+        };
+        const calm = groveWindow("calm");
+        const hot = groveWindow("hot");
+        const retry = groveWindow("retry");
+        // Preconditions: the harness discriminates, and retry ends up calm.
+        expect(calm).toBeGreaterThan(0);
+        expect(hot).toBeGreaterThan(calm);
+        expect(retry).toBe(calm);          // no urgency-scheduled voices live
+    });
+
     test("pause holds the arm but silences the layer; resume restores it in sync", () => {
         const g = timedGame(9);
         g.update(0.016);

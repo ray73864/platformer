@@ -1801,9 +1801,9 @@
       themeBand: 0,
       decorScale: 0.85,
       variants: [
-        { gapMul: 1.35, shaftChance: 0.9, padMul: 1.2 },
-        { gapMul: 1.1, shaftChance: 0.3, padMul: 1 },
-        { gapMul: 1.45, shaftChance: 0.6, padMul: 1.4 }
+        { gapMul: 1.35, shaftChance: 0.9 },
+        { gapMul: 1.1, shaftChance: 0.3 },
+        { gapMul: 1.45, shaftChance: 0.6 }
       ]
     },
     {
@@ -1825,9 +1825,29 @@
       themeBand: 1,
       decorScale: 1.1,
       variants: [
-        { kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.5 }, crateMul: 1 },
-        { kindWeights: { spiny: 1.3, charger: 1.1, bombardier: 0.8 }, crateMul: 1.6 },
-        { kindWeights: { spiny: 0.9, charger: 0.9, bombardier: 1.2 }, padMul: 1.4, gapMul: 1.25 }
+        {
+          segHoldMax: 4,
+          downBias: 0.72,
+          gapMul: 1,
+          bridgeChance: 0.95,
+          shaftChance: 0.5,
+          kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.5 }
+        },
+        {
+          downBias: 0.38,
+          vFlipMul: 1.5,
+          vExtShift: -2,
+          gapMul: 1.3,
+          bridgeChance: 0.25,
+          shaftChance: 1,
+          crateMul: 1.6
+        },
+        {
+          gapMul: 1.4,
+          downBias: 0.55,
+          vExtShift: 0,
+          kindWeights: { spiny: 1.3, charger: 1.1, bombardier: 0.8 }
+        }
       ]
     }
   ];
@@ -1838,12 +1858,24 @@
       return 0;
     return 1 + Math.floor((levelNumber - (MEADOW_LAST_LEVEL + 1)) / WORLD_SPAN);
   }
+  var _profKey = -1;
+  var _profVal = null;
   function profileForLevel(levelNumber) {
+    if (levelNumber === _profKey)
+      return _profVal;
     const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
-    if (!world.variants || levelNumber <= MEADOW_LAST_LEVEL)
-      return world;
-    const variant = world.variants[(levelNumber - (MEADOW_LAST_LEVEL + 1)) % world.variants.length];
-    return { ...world, ...variant };
+    let result = world;
+    if (world.variants && levelNumber > MEADOW_LAST_LEVEL) {
+      const variant = world.variants[(levelNumber - (MEADOW_LAST_LEVEL + 1)) % world.variants.length];
+      result = Object.freeze({
+        ...world,
+        ...variant,
+        kindWeights: Object.freeze({ ...world.kindWeights, ...variant.kindWeights })
+      });
+    }
+    _profKey = levelNumber;
+    _profVal = result;
+    return result;
   }
   function directionForLevel(levelNumber) {
     if (!Number.isInteger(levelNumber) || levelNumber < 1)
@@ -7518,6 +7550,13 @@
       const text = n > 0 ? `+${n}★` : "";
       if (el.textContent !== text) {
         el.textContent = text;
+        if (n > 0) {
+          el.setAttribute("role", "img");
+          el.setAttribute("aria-label", `${n} bonus coin${n === 1 ? "" : "s"}`);
+        } else {
+          el.removeAttribute("role");
+          el.removeAttribute("aria-label");
+        }
         if (n > 0)
           this._queueAnnouncement("secret", `bonus coins ${n}`);
       }
@@ -7632,6 +7671,7 @@
         const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
         text = `WORLD ${worldOrdinalForLevel(levelNumber)} · ${world.name}
 ${text}`;
+        this._queueAnnouncement("world", `entering world ${worldOrdinalForLevel(levelNumber)}, ${world.name}`);
       }
       element.textContent = text;
       element.classList.remove("show");
@@ -9425,6 +9465,7 @@ ${text}`;
   var TITLE_THEME_SPAN = 650;
   var TITLE_FRAME_INTERVAL = 1 / 30;
   var TITLE_SEEDS = [1592590337, 1592590338, 1592590339];
+  var TITLE_PSEUDO_LEVELS = THEMES.map((_, i) => i + 1);
   var PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
   var LOOP_ERROR_RECOVERY_FRAMES = 30;
   var LEVEL_TRANSITION_MAX_STALL_FRAMES = 120;
@@ -9523,6 +9564,7 @@ ${text}`;
       this._titleFrameAcc = TITLE_FRAME_INTERVAL;
       this._titleDirty = true;
       this.settingsOpen = false;
+      this._suppressFocusTick = false;
       this.settingsReturn = "menu";
       this.dust = [];
       this.popups = [];
@@ -9635,6 +9677,7 @@ ${text}`;
           this.ui.hideOverlay("game-complete-screen");
       });
       onClick(pauseBtn, () => {
+        this._uiBlip(SFX_VOICES.UI_CONFIRM);
         this.togglePause();
         pauseBtn.blur();
       });
@@ -9653,6 +9696,7 @@ ${text}`;
         restartLevelBtn.blur();
       });
       onClick(quitMenuBtn, () => {
+        this._uiBlip(SFX_VOICES.UI_CONFIRM);
         this.quitToMenu();
         quitMenuBtn.blur();
       });
@@ -9687,9 +9731,14 @@ ${text}`;
       });
       document.addEventListener("focusin", (e) => {
         const el = e.target;
-        if (el && el.tagName === "BUTTON") {
+        if (!el || el.tagName !== "BUTTON" || this._suppressFocusTick)
+          return;
+        let visible = true;
+        try {
+          visible = el.matches(":focus-visible");
+        } catch {}
+        if (visible)
           this._uiBlip(SFX_VOICES.UI_MOVE);
-        }
       }, { signal: this._abort.signal });
       this.input.onJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
@@ -9756,6 +9805,7 @@ ${text}`;
           } else if (this.state === STATE.GAME_OVER || this.state === STATE.GAME_COMPLETE) {
             this.returnToMenu();
           } else {
+            this._uiBlip(SFX_VOICES.UI_CONFIRM);
             this.togglePause();
           }
         } else if (!e.repeat && (code === "KeyM" || code === "m" || code === "M")) {
@@ -9820,7 +9870,12 @@ ${text}`;
         this.ui.showOverlay("pause-screen");
         this.ui.setPauseLabel(true);
         duckMusic(true);
-        this.ui.focusPauseMenu();
+        this._suppressFocusTick = true;
+        try {
+          this.ui.focusPauseMenu();
+        } finally {
+          this._suppressFocusTick = false;
+        }
       } else if (this.state === STATE.PAUSED) {
         this.setState(STATE.PLAYING);
         this.ui.hideOverlay("pause-screen");
@@ -9869,22 +9924,32 @@ ${text}`;
       this.syncSettingsUI();
       this._setSettingsBackdrop(true);
       this.ui.showOverlay("settings-screen");
-      this.ui.focusSettingsMenu();
+      this._suppressFocusTick = true;
+      try {
+        this.ui.focusSettingsMenu();
+      } finally {
+        this._suppressFocusTick = false;
+      }
     }
     closeSettings() {
       this.settingsOpen = false;
       this._uiBlip(SFX_VOICES.UI_MOVE);
       this.ui.hideOverlay("settings-screen");
       this._setSettingsBackdrop(false);
-      const active = document.activeElement;
-      if (active && typeof active.closest === "function" && active.closest("#settings-screen")) {
-        active.blur();
-      }
-      const openerId = this.settingsReturn === "pause" ? "pause-settings-btn" : "menu-settings-btn";
-      const opener = document.getElementById(openerId);
-      const host = opener && typeof opener.closest === "function" ? opener.closest(".overlay") : null;
-      if (opener && host && !host.classList.contains("hidden")) {
-        opener.focus();
+      this._suppressFocusTick = true;
+      try {
+        const active = document.activeElement;
+        if (active && typeof active.closest === "function" && active.closest("#settings-screen")) {
+          active.blur();
+        }
+        const openerId = this.settingsReturn === "pause" ? "pause-settings-btn" : "menu-settings-btn";
+        const opener = document.getElementById(openerId);
+        const host = opener && typeof opener.closest === "function" ? opener.closest(".overlay") : null;
+        if (opener && host && !host.classList.contains("hidden")) {
+          opener.focus();
+        }
+      } finally {
+        this._suppressFocusTick = false;
       }
     }
     returnToMenu() {
@@ -10607,9 +10672,10 @@ ${text}`;
           const viewH = window.innerHeight;
           const cycle = Math.floor(this._titleScroll / TITLE_THEME_SPAN);
           const themeIdx = (cycle % THEMES.length + THEMES.length) % THEMES.length;
-          sprites.drawBackground(this.ctx, themeIdx + 1, this._titleScroll, viewW, viewH, Infinity, TITLE_SEEDS[themeIdx]);
-          sprites.drawForeground(this.ctx, themeIdx + 1, this._titleScroll, viewW, viewH, TITLE_SEEDS[themeIdx]);
-          sprites.drawVignette(this.ctx, themeIdx + 1, viewW, viewH);
+          const pseudoLevel = TITLE_PSEUDO_LEVELS[themeIdx];
+          sprites.drawBackground(this.ctx, pseudoLevel, this._titleScroll, viewW, viewH, Infinity, TITLE_SEEDS[themeIdx]);
+          sprites.drawForeground(this.ctx, pseudoLevel, this._titleScroll, viewW, viewH, TITLE_SEEDS[themeIdx]);
+          sprites.drawVignette(this.ctx, pseudoLevel, viewW, viewH);
         }
         return;
       }

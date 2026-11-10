@@ -9,6 +9,14 @@ from the filesystem.
 ## Features
 
 - **100-level runs** with a saved high score (`localStorage`)
+- **WORLDS**: every five levels the generation grammar itself changes —
+  MEADOWS (levels 1–10 onramp), then CANYONS, CAVERNS, SKYWARD and RUINS
+  cycling forever. Each world has its own terrain grammar (gap widths,
+  verticality, deck/shaft budgets, hazard garnish), enemy roster weights,
+  pinned palette band and per-world musical arrangement, plus sub-variant
+  rotation so the five levels of one world read as five places *in* that
+  place. A "WORLD n · NAME" title card rides each entry level (and is
+  announced to screen readers through the polite HUD region)
 - **Procedural generation with a fairness contract** — every shipped level
   passes BFS reachability *and* physics-executed route validation before it
   can spawn you (see [Fairness](#fairness))
@@ -21,7 +29,9 @@ from the filesystem.
 - Three travel modes: right-bound, left-bound, and vertical climbs
   (cycling from level 5), plus **deck bridges** over too-wide pits (level 8+)
   and **elevator shafts** on roughly half of vertical climbs from level 13
-- Four enemy kinds with escalating threat grammar:
+- Four enemy kinds with escalating threat grammar, drawn as baked indexed
+  pixel art (idle + walk cycles per kind, deterministic bake; flat-shape
+  fallback when assets are missing):
   | Kind | From | Behavior |
   |---|---|---|
   | Walker | L5 | Patrols its shelf; stompable, dodgeable |
@@ -35,22 +45,36 @@ from the filesystem.
 - **Assist objects** (level 10+): launch pads bounce to a fixed apex and a
   pushable crate may seat in a natural pocket — neither ever appears in a
   validated route requirement
-- **Secret alcoves**: ~3% of level-10+ maps hide a carved shaft behind a
-  tunnel mouth holding a 25-point secret coin — always optional, never
-  counted by the portal gate
+- **Secret alcoves**: carved chambers holding a 25-point secret coin hide in
+  roughly 1-in-8 CAVERNS maps and ~1-in-9 CANYONS maps from level 11 up
+  (lower elsewhere, never in MEADOWS) — always optional, never counted by
+  the portal gate
 - **Juice system** with persisted settings: squash & stretch, impact punch,
   screen shake, score popups, dust and hazard telegraphs; toggles for sound,
   screen shake and reduced motion (follows the OS `prefers-reduced-motion`,
   overridable both ways); HUD chips for score, level, coins and timer
 - **Parallax world**: themed sky/hill/cloud layers scroll behind every
-  level, and the title screen runs a live demo of them
-- **Fully synthesized audio**: procedural SFX and generative ambient music
-  from WebAudio oscillators — zero audio files
+  level — each WORLD pins its palette band (CAVERNS dark jungle rock,
+  CANYONS dusk sandstone, …), and the title screen runs a live demo cycling
+  all three bands
+- **Fully synthesized audio**: procedural SFX and generative music from
+  WebAudio oscillators — zero audio files. Each WORLD gets its own musical
+  arrangement over the band harmony (mode, groove, percussion voicing,
+  tempo character; CAVERNS drone with echo sends, RUINS march in phrygian
+  tension), crossfading smoothly at world boundaries. Under 10 s of clock
+  the loop gains a percussive urgency bed + tempo lift. SFX depth: coin
+  pitch climbs with an airborne streak, landings bucket into thud tiers,
+  secrets get a fanfare variant, and menu/settings navigation chirps
 - **Touch controls**: on coarse-pointer devices, left/right/jump/dash pads
   appear automatically and drive the same input paths as the keyboard
-- Coins unlock the portal (all of them), spikes kill (inset hitboxes keep
-  edge brushes fair), a run-wide 60-second clock (from level 5) gains +2 s
-  per coin and carries over between levels
+- **Two-tier coins**: normal coins are REQUIRED — collecting every one opens
+  the portal (HUD chip reads e.g. `7/10`). Secret coins are a pure bonus
+  tier: +25 points each, banked into score only, never demanded by the gate;
+  banked secrets show as a `+N★` badge beside the chip and split out on the
+  LEVEL_COMPLETE line (`Coins 10/10 · Secrets 2/2★ (+50)` when the level
+  hid two alcoves)
+- Spikes kill (inset hitboxes keep edge brushes fair), a run-wide 60-second
+  clock (from level 5) gains +2 s per coin and carries over between levels
 - Every game-over screen names the cause of death and adds a teachable tip
 
 ## Controls
@@ -174,10 +198,12 @@ game/
 │   ├── physics.js          # Physics engine
 │   ├── player.js           # Player (coyote, buffer, dash, wall slide/kick)
 │   ├── level.js            # Generator + fairness gates (reachability, routes)
+│   ├── worlds.js           # WORLDS profiles: per-band generation grammar data
 │   ├── entities.js         # Base entity class
 │   ├── camera.js           # Camera tracking
 │   ├── ui.js               # UI management (HUD chips, cause-of-death tips)
 │   ├── enemies.js          # Walker/spiny/charger/bombardier AI
+│   ├── enemyart.js         # Baked indexed pixel-art for enemy kinds
 │   ├── projectiles.js      # Bombardier shells
 │   ├── movingplatforms.js  # Deck bridges and elevator shafts
 │   ├── collectibles.js     # Coins (incl. secrets) and scoring
@@ -201,7 +227,8 @@ game/
 │   ├── kenney_pixel-platformer/  # Shipped CC0 sheets + LICENSE.txt
 │   ├── fonts/              # Press Start 2P (OFL 1.1) + OFL.txt
 │   └── dropin/             # Optional local overrides (gitignored)
-└── scripts/                # Utility scripts (verify-assets, trend, mono)
+└── scripts/                # Utility scripts (verify-assets, trend,
+                            #   world-variety, monotonicity-check)
 ```
 
 ## License

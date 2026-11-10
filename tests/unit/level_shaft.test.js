@@ -166,9 +166,21 @@ test("L13..97 vertical sweep: shaft invariants hold on every hosted map", () => 
     // W3a RE-PINNED ceiling: this sweep's vertical stream now includes
     // CAVERNS (profile shaftChance 1.0) — measured 0.72 realized. Floor
     // unchanged keeps the collapse tripwire honest.
+    // W6 TIGHTENED: the widened 0.85 ceiling asserted almost nothing (max
+    // possible 1.0). Re-measured on the post-RUINS-retune profiles: 0.6912
+    // (47/68) — deterministic probe, zero run-to-run variance, so the
+    // ceiling sits at measured + ~0.03: any upward hosting drift (which
+    // squeezes every other vertical motif out) trips immediately, and an
+    // intentional future retune re-pins deliberately like this one does.
+    // HONEST MARGIN (fix round m-2): binomial σ at 47/68 is √(p(1-p)/n) =
+    // 0.056, so 0.72 sits only ~0.5σ above the measurement. That is fine for
+    // a FIXED-SEED probe (variance across seeds is irrelevant here), but it
+    // means ANY upstream change to RNG consumption effectively redraws this
+    // family from the ±0.056 distribution — re-measure before tripping over
+    // a failure, it may be seed luck rather than drift.
     const frac = shafts / maps;
     expect(frac).toBeGreaterThan(0.35);
-    expect(frac).toBeLessThan(0.85);
+    expect(frac).toBeLessThan(0.72);
 });
 
 test("no cabins below the gate and none on horizontal maps (L1..97)", { timeout: 60000 }, () => {

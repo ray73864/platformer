@@ -164,6 +164,12 @@ function baseGoldens() {
     // whose BASE-era stamp now rolls OFF the lower world cragChance. Both
     // directions are the intended per-world concentration (see worlds.js
     // and w3b-report.md); neither touches an unstamped map.
+    // W6 RE-RECORDED 2026-11-10: the RUINS retune (worlds.js variants now
+    // rotate terrain sub-flavours) moves exactly FOUR goldens — L26s532426,
+    // L28s548264, L29s556183, L30s564102, all RUIN-window maps, matching
+    // the 900-map delta sweep attribution (zero non-RUIN diffs; L27 holds
+    // its terrain fold because its variant swap only moved the roster).
+    // MEADOWS L10 verified byte-equal to the W3b capture.
     [10, 405722, "1b906df5"],
     [11, 413641, "8dedff75"],
     [12, 421560, "51a3faf2"],
@@ -180,11 +186,11 @@ function baseGoldens() {
     [23, 508669, "835503b6"],
     [24, 516588, "e71f4396"],
     [25, 524507, "c71fb677"],
-    [26, 532426, "d3f93f63"],
+    [26, 532426, "8f970ee5"],
     [27, 540345, "6fb3a462"],
-    [28, 548264, "948c46ce"],
-    [29, 556183, "1485056d"],
-    [30, 564102, "8ce5b019"],
+    [28, 548264, "590b171f"],
+    [29, 556183, "887eedd6"],
+    [30, 564102, "6476431f"],
     [31, 572021, "5641600f"],
     [32, 579940, "da3039b9"],
     [33, 587859, "4da825f"],

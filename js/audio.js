@@ -59,7 +59,7 @@ const TIER_CREEP_BPM = 6;
 // CAVERNS drone with sparse echoes, SKYWARD floats in high arpeggios and
 // RUINS march in phrygian tension. Indexed by WORLDS[] order (worldOf %
 // WORLDS.length) — one entry per world profile, kept in lockstep with
-// worlds.js by tests/unit/audio_world_identity.test.js.
+// worlds.js by tests/unit/audio.test.js ("one arrangement per WORLD profile").
 //  - bpmShift: moves the world's TEMPO character off the band base (the
 //    per-level ±4 swing and tier creep still ride on top of it).
 //  - scale: null keeps the band scale; an array OVERRIDES the mode (CAVERNS

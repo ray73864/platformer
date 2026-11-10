@@ -594,8 +594,16 @@ test("elevator shafts still host legally on atrium/zigzag maps (L13+ vertical)",
     // probe's stride (L16+ step 3) lands cavern-dense, so realized hosting
     // measured 0.726. Band widened to bracket the world mix; the COLLAPSE
     // guard intent is unchanged (old collapse read 0.33-0.36).
+    // W6 TIGHTENED: 0.85 was near-vacuous. Measured 0.6863 (35/51) on the
+    // post-RUINS-retune profiles (the new stairwell variant's shaftChance
+    // 1.0 vs court's 0.5 nets slightly under W3a's uniform 0.82 rotation);
+    // deterministic probe -> ceiling at measured + ~0.03.
+    // HONEST MARGIN (fix round m-2): binomial σ at 35/51 is √(p(1-p)/n) =
+    // 0.065, so 0.72 sits only ~0.5σ above the measurement — a fixed-seed
+    // probe where any upstream RNG-consumption change effectively redraws
+    // this family; re-measure before tripping over a failure.
     expect(frac).toBeGreaterThan(0.4);
-    expect(frac).toBeLessThan(0.85);
+    expect(frac).toBeLessThan(0.72);
 });
 
 test("shaft hosting holds its band across a fresh-seed population", () => {
@@ -623,6 +631,10 @@ test("shaft hosting holds its band across a fresh-seed population", () => {
     // (caverns 1.0 .. skyward variants 0.3-0.9 .. meadow rotation 0.82);
     // measured on the final profiles below in the W3a report. Band keeps a
     // collapse guard (pre-W3a rate ~0.51, old collapse ~0.33).
+    // W6 TIGHTENED: 0.85 was near-vacuous. Measured 0.6103 (238/390) on the
+    // post-RUINS-retune profiles; binomial sigma at n=390 is ~0.025, so the
+    // ceiling sits at measured + ~2 sigma (0.66) — deterministic probe, and
+    // real drift past two sigma of the pinned seed family trips it.
     expect(frac).toBeGreaterThan(0.4);
-    expect(frac).toBeLessThan(0.85);
+    expect(frac).toBeLessThan(0.66);
 });

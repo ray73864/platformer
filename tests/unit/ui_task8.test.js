@@ -124,6 +124,26 @@ test("showLevelIntro writes 'LEVEL n · THEME' and restarts its animation", () =
     expect(card.textContent).toBe('WORLD 2 \u00b7 CANYONS\nLEVEL 11 \u00b7 DUSK');
 });
 
+// W6 WCAG spot-check (World Program): the intro card is aria-hidden by
+// design, so without a polite-region line the WORLD identity would be
+// vision-only. Entry levels must announce once through #hud-announce;
+// non-entry levels must stay silent (no double-read per level).
+test("W6 WCAG: world-entry cards announce through the polite region", async () => {
+    const ui = new UI();
+    ui.showLevelIntro(11);
+    const region = document.getElementById('hud-announce');
+    expect(region.getAttribute('aria-live')).toBe('polite');
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    expect(region.textContent).toContain('entering world 2, CANYONS');
+    const records = [];
+    const observer = new window.MutationObserver(muts => records.push(...muts));
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    ui.showLevelIntro(12);   // mid-band: card shows, announcement does not
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    expect(records.length).toBe(0);
+    observer.disconnect();
+});
+
 // --- change-gated writers + announcements ----------------------------------------
 
 test("identical HUD writes are skipped (MutationObserver sees nothing)", async () => {

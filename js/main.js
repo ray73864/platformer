@@ -204,6 +204,15 @@ const TITLE_SCROLL_SPEED = 26;        // px/s of synthetic camera travel
 const TITLE_THEME_SPAN = 650;         // px per theme band (~25 s)
 const TITLE_FRAME_INTERVAL = 1 / 30;  // s between backdrop repaints
 const TITLE_SEEDS = [0x5EED0001, 0x5EED0002, 0x5EED0003];
+// Menu-backdrop band addressing (W6 decouple, W3a review minor): the title
+// demo paints sky/hills/foreground per THEME, but the sprite entry points
+// take a LEVEL NUMBER and derive the band via bandIndexForLevel. These
+// dedicated pseudo-levels are the ONLY place that coupling lives, and
+// tests/unit/worlds.test.js pins the contract (bandIndexForLevel(n, k) ===
+// n - 1 for each) — if a future world change moves the MEADOW onramp's band
+// semantics, that pin breaks LOUD here instead of the menu silently drawing
+// CAVERNS art behind the title.
+const TITLE_PSEUDO_LEVELS = THEMES.map((_, i) => i + 1);
 // Pause-menu arrow routing (R29): value is the cycle direction.
 const PAUSE_MENU_ARROWS = { ArrowUp: false, ArrowLeft: false, ArrowDown: true, ArrowRight: true };
 // Consecutive failing frames before the loop tries to recover by rebuilding
@@ -492,6 +501,10 @@ export class Game {
         // Settings overlay bookkeeping (an overlay, not a game STATE — the
         // six-state machine contract is pinned by tests).
         this.settingsOpen = false;
+        // W6 exactly-one-tick rule: set while open/closeSettings moves focus
+        // on purpose (dialog landing, opener restore) so the document focusin
+        // tick never stacks a second chirp onto a transition that owns one.
+        this._suppressFocusTick = false;
         this.settingsReturn = 'menu';
         this.dust = [];          // gameplay-dust pool (own cap, never shares
                                  // the burst list or the ambient mote field)
@@ -719,6 +732,11 @@ export class Game {
         // strobe PAUSED↔PLAYING (input.js suppresses the jump half while a
         // button holds focus, but gameplay must not silently lose it either).
         onClick(pauseBtn, () => {
+            // W6 fix round: siblings blip their own confirm; with the focusin
+            // tick now keyboard-only this chip would otherwise tap silent.
+            // Click-site only — togglePause stays shared with the silent
+            // Escape path and the Resume button keeps its own confirm.
+            this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
             this.togglePause();
             pauseBtn.blur();
         });
@@ -743,6 +761,9 @@ export class Game {
             restartLevelBtn.blur();
         });
         onClick(quitMenuBtn, () => {
+            // W6: siblings blip their own confirm; with the focusin tick now
+            // keyboard-only this button would otherwise click silent.
+            this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
             this.quitToMenu();
             quitMenuBtn.blur();
         });
@@ -789,15 +810,19 @@ export class Game {
             this._uiBlip(audio.SFX_VOICES.UI_TOGGLE);
         });
 
-        // W5: button-focus ticks for keyboard AND coarse-pointer navigation
-        // (focus lands on buttons after taps too). Gated on hasContext so
-        // the pre-first-run menu stays silent per the autoplay doctrine,
-        // and on BUTTON targets so text/canvas focus never chirps.
+        // W5: button-focus ticks for keyboard navigation. W6 tightened the
+        // gate to :focus-visible — pointer clicks land focus too, and those
+        // ticks stacked onto every button's own confirm blip (the settings
+        // round trip chirped twice per transition). Pointer feedback is the
+        // action blip's job; this listener is the KEYBOARD cursor tick. The
+        // suppression flag covers the deliberate focus dances in
+        // open/closeSettings so a transition never pays for its own landing.
         document.addEventListener('focusin', (e) => {
             const el = e.target;
-            if (el && el.tagName === 'BUTTON') {
-                this._uiBlip(audio.SFX_VOICES.UI_MOVE);
-            }
+            if (!el || el.tagName !== 'BUTTON' || this._suppressFocusTick) return;
+            let visible = true;
+            try { visible = el.matches(':focus-visible'); } catch { /* older DOM shims */ }
+            if (visible) this._uiBlip(audio.SFX_VOICES.UI_MOVE);
         }, { signal: this._abort.signal });
 
         // Input listener. Every jump press routes through Player.pressJump():
@@ -917,6 +942,10 @@ export class Game {
                     this.state === STATE.GAME_COMPLETE) {
                     this.returnToMenu();
                 } else {
+                    // W6 fix round: keyboard pause/resume owns its chirp at
+                    // the trigger site (the menu landing inside is suppressed;
+                    // without this line Escape-pause would be silent).
+                    this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
                     this.togglePause();
                 }
             } else if (!e.repeat && (code === 'KeyM' || code === 'm' || code === 'M')) {
@@ -1024,7 +1053,15 @@ export class Game {
             audio.duckMusic(true);
             // R29: focus lands inside the menu so arrow+Enter work
             // immediately and assistive tech announces the available options.
-            this.ui.focusPauseMenu();
+            // W6 fix round: deliberate landing, not a cursor move — the
+            // transition's own confirm comes from the trigger site (chip /
+            // Resume / Escape), so this focus must never stack a tick.
+            this._suppressFocusTick = true;
+            try {
+                this.ui.focusPauseMenu();
+            } finally {
+                this._suppressFocusTick = false;
+            }
         } else if (this.state === STATE.PAUSED) {
             this.setState(STATE.PLAYING);
             this.ui.hideOverlay('pause-screen');
@@ -1094,36 +1131,57 @@ export class Game {
     openSettings(from) {
         this.settingsOpen = true;
         this.settingsReturn = from;
+        // W6 exactly-one-tick rule: the TRANSITION owns its chirp. Pointer
+        // focus on the opener is silent (focus-visible gate), and the dialog
+        // landing below is suppressed — mouse, tap and keyboard all sound
+        // EXACTLY ONE UI_MOVE right here.
         this._uiBlip(audio.SFX_VOICES.UI_MOVE);
         this.syncSettingsUI();
         this._setSettingsBackdrop(true);
         this.ui.showOverlay('settings-screen');
-        this.ui.focusSettingsMenu();
+        // try/finally (fix round m-1): an exception mid-dance must not leave
+        // the tick gate stuck shut for every later keyboard move.
+        this._suppressFocusTick = true;
+        try {
+            this.ui.focusSettingsMenu();
+        } finally {
+            this._suppressFocusTick = false;
+        }
     }
 
     closeSettings() {
         this.settingsOpen = false;
+        // W6 exactly-one-tick rule: the transition owns its chirp (see
+        // openSettings). The blur/restore dance below is suppressed so the
+        // click focus on Back and the opener restore never stack extra ticks
+        // — every close path sounds EXACTLY ONE UI_MOVE, right here.
         this._uiBlip(audio.SFX_VOICES.UI_MOVE);
         this.ui.hideOverlay('settings-screen');
         // Backdrop first: an inert container would silently swallow the
         // restore-focus below (a focused control cannot live inside inert).
         this._setSettingsBackdrop(false);
-        const active = document.activeElement;
-        if (active && typeof active.closest === 'function' &&
-            active.closest('#settings-screen')) {
-            active.blur();
-        }
-        // Return focus to the invoking control (review fix): keyboard users
-        // land back exactly where they opened the dialog from. A resumed run
-        // must never leave focus on a hidden control (Space-eating rule), so
-        // the restore only fires when the opener's overlay is actually shown.
-        const openerId = this.settingsReturn === 'pause'
-            ? 'pause-settings-btn' : 'menu-settings-btn';
-        const opener = document.getElementById(openerId);
-        const host = opener && typeof opener.closest === 'function'
-            ? opener.closest('.overlay') : null;
-        if (opener && host && !host.classList.contains('hidden')) {
-            opener.focus();
+        // try/finally (fix round m-1): see openSettings.
+        this._suppressFocusTick = true;
+        try {
+            const active = document.activeElement;
+            if (active && typeof active.closest === 'function' &&
+                active.closest('#settings-screen')) {
+                active.blur();
+            }
+            // Return focus to the invoking control (review fix): keyboard users
+            // land back exactly where they opened the dialog from. A resumed run
+            // must never leave focus on a hidden control (Space-eating rule), so
+            // the restore only fires when the opener's overlay is actually shown.
+            const openerId = this.settingsReturn === 'pause'
+                ? 'pause-settings-btn' : 'menu-settings-btn';
+            const opener = document.getElementById(openerId);
+            const host = opener && typeof opener.closest === 'function'
+                ? opener.closest('.overlay') : null;
+            if (opener && host && !host.classList.contains('hidden')) {
+                opener.focus();
+            }
+        } finally {
+            this._suppressFocusTick = false;
         }
     }
 
@@ -2515,12 +2573,13 @@ export class Game {
                 const cycle = Math.floor(this._titleScroll / TITLE_THEME_SPAN);
                 const themeIdx = ((cycle % THEMES.length) + THEMES.length) %
                     THEMES.length;
-                sprites.drawBackground(this.ctx, themeIdx + 1,
+                const pseudoLevel = TITLE_PSEUDO_LEVELS[themeIdx];
+                sprites.drawBackground(this.ctx, pseudoLevel,
                     this._titleScroll, viewW, viewH, Infinity,
                     TITLE_SEEDS[themeIdx]);
-                sprites.drawForeground(this.ctx, themeIdx + 1,
+                sprites.drawForeground(this.ctx, pseudoLevel,
                     this._titleScroll, viewW, viewH, TITLE_SEEDS[themeIdx]);
-                sprites.drawVignette(this.ctx, themeIdx + 1, viewW, viewH);
+                sprites.drawVignette(this.ctx, pseudoLevel, viewW, viewH);
             }
             return;
         }

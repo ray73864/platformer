@@ -2,7 +2,7 @@
  "format": "mono-corpus-v1",
  "description": "Recorded deterministic winning runs replayed through the CURRENT engine by scripts/monotonicity-check.js (`bun run mono`). Each entry replays key EVENTS (frame-indexed [frame, code, \"down\"|\"up\"], dispatched BEFORE that frame's fixed-dt update) from a staged standing cell (stage=[col,row], player teleported pre-frame-0; >=3 tiles clear of the portal, idle-safe) and must reproduce the recorded per-frame trajectory hash AND reach the portal rect. Win semantics follow the established mono convention: portal contact attests the run (the all-coins gate is generation fairness territory, not physics). Scripts use legacy keys only (arrows + Space) so pads/crates/dash stay pure-help witnesses.",
  "hashConvention": "FNV-1a (offset 0x811c9dc5, prime 0x01000193) over, per simulated frame: `${p.x},${p.y},${p.vx},${p.vy},${grounded?1:0}|${heldLeft?1:0}${heldRight?1:0}${jumpDownThisFrame?1:0}${dashDownThisFrame?1:0};` rendered hex.",
- "generatedAtHead": "12f8667",
+ "generatedAtHead": "a3c6811",
  "entries": [
   {
    "levelNumber": 2,
@@ -1143,14 +1143,14 @@
    "seed": 2179539192,
    "tier": 3,
    "stage": [
-    8,
+    10,
     19
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 48,
-   "hash": "f95d3aba",
+   "frames": 49,
+   "hash": "c1945e87",
    "events": [
     [
      0,
@@ -1158,25 +1158,26 @@
      "down"
     ],
     [
-     6,
+     3,
      "Space",
      "down"
     ],
     [
-     48,
+     49,
      "Space",
      "up"
     ],
     [
-     48,
+     49,
      "ArrowLeft",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "07e1f97",
+    "generatedAtHead": "a3c6811",
     "generatedOn": "2026-11-10",
-    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop",
+    "note": "W6 integration wave: re-recorded on the uncommitted W6 working tree at HEAD a3c6811 (RUINS variant retune diverged this map; still-win re-proven by beam search on the corpus seed)."
    }
   },
   {
@@ -1185,13 +1186,13 @@
    "tier": 3,
    "stage": [
     22,
-    20
+    19
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
    "frames": 48,
-   "hash": "bb27b1c0",
+   "hash": "d51b4ad",
    "events": [
     [
      0,
@@ -1215,10 +1216,10 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "12f8667",
+    "generatedAtHead": "a3c6811",
     "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop",
-    "note": "W3b fix round: re-recorded on the uncommitted W3b working tree at HEAD 12f8667 (map newly stamped by the alcove-prevalence wave; still-win proven by beam search on the corpus seed)."
+    "note": "W3b fix round: re-recorded on the uncommitted W3b working tree at HEAD 12f8667 (map newly stamped by the alcove-prevalence wave; still-win proven by beam search on the corpus seed). W6 integration wave: re-recorded on the uncommitted W6 working tree at HEAD a3c6811 (RUINS variant retune diverged this map; still-win re-proven by beam search on the corpus seed)."
    }
   },
   {
@@ -1380,50 +1381,71 @@
    "seed": 669487510,
    "tier": 4,
    "stage": [
-    26,
-    19
+    24,
+    22
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 68,
-   "hash": "bb3f4495",
+   "frames": 142,
+   "hash": "45b7cace",
    "events": [
     [
      0,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     17,
+     "ArrowLeft",
+     "up"
+    ],
+    [
+     43,
      "ArrowRight",
      "down"
     ],
     [
-     15,
+     64,
+     "Space",
+     "up"
+    ],
+    [
+     64,
      "Space",
      "down"
     ],
     [
-     66,
+     100,
+     "Space",
+     "up"
+    ],
+    [
+     100,
+     "Space",
+     "down"
+    ],
+    [
+     142,
+     "Space",
+     "up"
+    ],
+    [
+     142,
      "ArrowRight",
-     "up"
-    ],
-    [
-     66,
-     "Space",
-     "up"
-    ],
-    [
-     66,
-     "Space",
-     "down"
-    ],
-    [
-     68,
-     "Space",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "07e1f97",
+    "generatedAtHead": "a3c6811",
     "generatedOn": "2026-11-10",
-    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop",
+    "note": "W6 integration wave: re-recorded on the uncommitted W6 working tree at HEAD a3c6811 (RUINS variant retune diverged this map; still-win re-proven by beam search on the corpus seed)."
    }
   },
   {
@@ -1842,5 +1864,5 @@
    }
   }
  ],
- "generatedAtHeadNote": "Per-entry provenance.generatedAtHead marks where each SCRIPT was authored/regenerated: 23 entries are the 07e1f97-era better-wave/W3a captures replayed green ever since; L29/L36 were re-recorded on the W3b working tree at HEAD 12f8667. The top-level generatedAtHead marks the LAST corpus assembly."
+ "generatedAtHeadNote": "Per-entry provenance.generatedAtHead marks where each SCRIPT was authored/regenerated (last-verified-at semantics: every entry replays green through the CURRENT engine). 20 entries are the 07e1f97-era better-wave/W3a captures; L36 is the W3b re-record at HEAD 12f8667 (trace unchanged since); L27/L29/L53 scripts were re-recorded on the uncommitted W6 working tree at HEAD a3c6811 after the RUINS variant retune diverged their maps (L29 additionally carries its earlier W3b re-record note). The top-level generatedAtHead marks the LAST corpus assembly."
 }

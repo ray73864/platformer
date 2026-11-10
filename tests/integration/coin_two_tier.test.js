@@ -132,6 +132,29 @@ test("star badge appears exactly after the first secret and tracks the count", (
     expect(badge().textContent).toBe('+2\u2605');
 });
 
+// W6 WCAG spot-check (World Program): "+N★" explores as "plus N black star"
+// — meaningless. The badge therefore carries role="img" plus a spoken
+// equivalent for direct AT exploration (a generic span cannot host
+// aria-label), while dynamic changes keep riding the polite region exactly
+// once per increment (W1 doctrine unchanged, pinned below the fold).
+test("W6 WCAG: the star badge explores as spoken text, not glyph noise", () => {
+    const game = startCrafted();
+    expect(badge().getAttribute('role')).toBe(null); // zero: no label either
+    const secrets = game.level.coins.filter(c => c.secret);
+    stepAirborne(game, secrets[0].x, secrets[0].y);
+    expect(badge().getAttribute('role')).toBe('img');
+    expect(badge().getAttribute('aria-label')).toBe('1 bonus coin');
+    stepAirborne(game, secrets[1].x, secrets[1].y);
+    expect(badge().getAttribute('aria-label')).toBe('2 bonus coins');
+    // Fix round N-3: a fresh-level reset must strip the spoken label too —
+    // a hidden-but-labelled badge would still answer direct AT exploration
+    // with a stale "2 bonus coins" on a level that has none banked.
+    game.ui.updateSecretBadge(0);
+    expect(badge().hidden).toBe(true);
+    expect(badge().getAttribute('role')).toBe(null);
+    expect(badge().getAttribute('aria-label')).toBe(null);
+});
+
 test("portal opens at 3/3 with BOTH secrets still uncollected", () => {
     const game = startCrafted();
     const normals = game.level.coins.filter(c => !c.secret);
