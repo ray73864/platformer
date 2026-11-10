@@ -22,6 +22,7 @@ import { test, expect } from "bun:test";
 import {
     Level, computeMustPassCells, gauntletViolations
 } from "../../js/level.js";
+import { directionForLevel } from "../../js/worlds.js";
 
 const T = 32;
 const MAX_H_JUMP = 4; // mirrors the module constant in js/level.js
@@ -205,13 +206,17 @@ test("mirror sanity on a real shaft map: ride edges exist, blind graph has no ro
     // computation finds no mandatory cell at all (load-bearing shaft).
     let checked = 0;
     for (let i = 0; i < 10 && checked < 3; i++) {
-        const level = new Level(13, T, 13 * 10000 + 1000 + i);
+        // W3a re-pin: the probe moved L13 -> L16. L13 now lives in CANYONS
+        // whose dirCycle reads horizontal there (no shafts exist); L16 is a
+        // CAVERNS vertical with shaftChance 1.0 — the same load-bearing
+        // shaft geometry the mirror assertions model.
+        const level = new Level(16, T, 16 * 10000 + 1000 + i);
         if (!level.shaftGap) continue;
         checked++;
         const g = level.shaftGap;
         const blind = computeMustPassCells(level.tiles, level.width,
             level.height, level.spawnTile, level.portalTile, level.bridgeGap);
-        expect(blind, `L13 s${130000 + 1000 + i}: shaft not load-bearing?`)
+        expect(blind, `L16 s${160000 + 1000 + i}: shaft not load-bearing?`)
             .toBe(null);
         const mp = computeMustPassCellsShaft(level);
         expect(mp).not.toBe(null);
@@ -239,7 +244,10 @@ test("structural pin L13..L100 x 10 seeds: ZERO shaft-blind gauntlet configurati
     // measurement: with shaft rides modeled, no vertical map hosts a
     // >=3-body zero-pocket stack on a must-pass neighborhood.
     let shaftMaps = 0, touchedMaps = 0, violMaps = 0, totalBodies = 0;
-    for (let lvl = 13; lvl <= 100; lvl += 3) { // (lvl-5)%3===2 -> verticals
+    for (let lvl = 13; lvl <= 100; lvl++) {
+        // W3a: the legacy (lvl-5)%3 vertical stream is gone — take every
+        // level whose PROFILE ships vertical (same disjoint seed family).
+        if (directionForLevel(lvl) !== 'vertical') continue;
         for (let i = 0; i < 10; i++) {
             const seed = lvl * 10000 + 1000 + i;
             const level = new Level(lvl, T, seed);

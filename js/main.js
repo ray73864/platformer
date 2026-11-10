@@ -8,6 +8,7 @@ import { COIN_POINTS, SECRET_COIN_SCORE } from './collectibles.js';
 import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
 import { Sprites, THEMES } from './sprites.js';
+import { bandIndexForLevel } from './worlds.js';
 import { MovingPlatformManager, applyJumpBoost } from './movingplatforms.js';
 import { LaunchPad, padUnderFeet, applyPadLaunch, drawPads, PAD_SQUASH_TIME } from './pads.js';
 import { Crate, cratePushDirection, stepCrate, drawCrates, crateContainmentWalls } from './crates.js';
@@ -792,7 +793,7 @@ export class Game {
                 // gated; the mechanic itself never reads any FX flag.
                 if (this.player.wallLockTimer > 0 && lockBefore <= 0 &&
                     wallBefore !== 0 && FX.dust) {
-                    const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    const wTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                     spawnDust(this.dust,
                         wallBefore === -1 ? this.player.x : this.player.x + this.player.width,
                         this.player.y + this.player.height / 2,
@@ -831,7 +832,7 @@ export class Game {
             // (cooldown / arc spent) stay silent exactly like the dust below.
             audio.playSfx(audio.SFX_VOICES.DASH);
             if (FX.dust) {
-                const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                const dTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                 spawnDust(this.dust,
                     this.player.dashDir === -1
                         ? this.player.x + this.player.width : this.player.x,
@@ -1465,11 +1466,12 @@ export class Game {
         // run (the menu stays deliberately silent — no context exists until
         // gameplay). unduck covers loop-error recovery, which resumes to
         // PLAYING without passing through togglePause's resume branch. The
-        // band preset comes from the THEMES cycle; an identical running
+        // band preset comes from the WORLD profile (bandIndexForLevel —
+        // MEADOW keeps the legacy THEMES cycle); an identical running
         // track (retry/recovery) crossfades nothing.
         audio.init();
         audio.duckMusic(false);
-        audio.startMusic((Math.max(1, this.currentLevel) - 1) % THEMES.length,
+        audio.startMusic(bandIndexForLevel(this.currentLevel, THEMES.length),
             this.currentLevel);
     }
 
@@ -1853,7 +1855,7 @@ export class Game {
                     // each spawn-gated exactly like the Wave-B family above
                     // (draw gates live in fx.drawRings / drawPads).
                     if (FX.dust) {
-                        const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                        const pTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                         spawnDust(this.dust,
                             pad.x + pad.width / 2, pad.y + pad.height - 4,
                             dustTint(pTheme),
@@ -1881,7 +1883,7 @@ export class Game {
                 this._landDepth = Math.min(1, Math.max(0.25,
                     vyBeforeResolve / LAND_DEPTH_REF_VY));
                 if (FX.dust) {
-                    const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    const dTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                     spawnDust(this.dust,
                         this.player.x + this.player.width / 2,
                         this.player.y + this.player.height - 8,
@@ -1918,7 +1920,7 @@ export class Game {
             if (this.player.grounded && FX.dust &&
                 this._prevFrameVx * this.player.vx < 0 &&
                 Math.abs(this._prevFrameVx) >= SKID_MIN_SPEED) {
-                const sTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                const sTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                 spawnDust(this.dust,
                     this.player.x + this.player.width / 2,
                     this.player.y + this.player.height - 8,
@@ -1939,7 +1941,7 @@ export class Game {
                 if (footTx !== this._dustTx) {
                     this._dustTx = footTx;
                     const dir = this.player.vx > 0 ? -1 : 1;
-                    const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+                    const themeIdx = bandIndexForLevel(this.currentLevel, THEMES.length);
                     spawnDust(this.dust,
                         this.player.x + this.player.width / 2 - dir * 10,
                         this.player.y + this.player.height - 8,
@@ -1967,7 +1969,7 @@ export class Game {
                 this._slideDustT += dt;
                 if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
                     this._slideDustT = 0;
-                    const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    const wTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                     spawnDust(this.dust,
                         this.player.sliding === -1
                             ? this.player.x : this.player.x + this.player.width,
@@ -1990,7 +1992,7 @@ export class Game {
                     this._crateDustT = 0;
                     const cdx = this.crate.x -
                         (this.crate.prevX ?? this.crate.x);
-                    const cTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    const cTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                     spawnDust(this.dust,
                         this.crate.x + this.crate.width / 2,
                         this.crate.y + this.crate.height - 6,
@@ -2302,7 +2304,7 @@ export class Game {
                 if (gate && FX.pulse) {
                     const gx = gate.x + gate.width / 2;
                     const gy = gate.y + gate.height / 2;
-                    const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+                    const pTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
                     spawnRing(this.rings, gx, gy, pTheme.portalGlow);
                     spawnBurst(this.particles, gx, gy, pTheme.portalGlow, 10);
                 }
@@ -2458,7 +2460,7 @@ export class Game {
             // Visible world extent at the current zoom.
             const effW = viewW / zoom;
             const effH = viewH / zoom;
-            const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+            const themeIdx = bandIndexForLevel(this.currentLevel, THEMES.length);
 
             // Impact zoom punch (Wave B): 1 -> 1.03 -> 1 over ~120 ms around
             // the viewport centre, composed OUTSIDE the world transform so it

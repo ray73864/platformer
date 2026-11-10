@@ -5,6 +5,7 @@
 // arithmetic against a fake clock) and the storage-throws mute fallback.
 import { test, expect, describe } from "bun:test";
 import * as audio from "../../js/audio.js";
+import { bandIndexForLevel } from "../../js/worlds.js";
 
 describe("audio preset mapping", () => {
     test("bands cycle with the THEMES pattern ((level-1) % 3)", () => {
@@ -12,7 +13,10 @@ describe("audio preset mapping", () => {
         expect(audio.presetForLevel(2).index).toBe(1);
         expect(audio.presetForLevel(3).index).toBe(2);
         expect(audio.presetForLevel(4).index).toBe(0);
+        // W3a note: L100 lands in SKYWARD whose pinned DAY band happens to
+        // equal the legacy cycle value here — kept as a cross-check.
         expect(audio.presetForLevel(100).index).toBe(0);
+        expect(audio.presetForLevel(11).index).toBe(1); // CANYON: dusk
     });
 
     test("base tempos sit in the calm band per preset", () => {
@@ -22,11 +26,14 @@ describe("audio preset mapping", () => {
     });
 
     test("expert tier and above creep +6 BPM (levels >= 25)", () => {
-        expect(audio.presetForLevel(24).bpm).toBe(78); // advanced: no creep
+        // W3a re-pin: levels 24/25/50/75 live in SKYWARD (DAY band), 26 in
+        // RUINS (DUSK). Bands come from worlds.js now; the creep rule itself
+        // is untouched — only which band each pinned level sits in.
+        expect(audio.presetForLevel(24).bpm).toBe(72); // advanced: no creep
         expect(audio.presetForLevel(25).bpm).toBe(72 + 6);
-        expect(audio.presetForLevel(26).bpm).toBe(66 + 6);
-        expect(audio.presetForLevel(50).bpm).toBe(66 + 6); // master, dusk band
-        expect(audio.presetForLevel(75).bpm).toBe(78 + 6); // legend, jungle
+        expect(audio.presetForLevel(26).bpm).toBe(66 + 6); // ruins, dusk band
+        expect(audio.presetForLevel(50).bpm).toBe(72 + 6); // master, sky day
+        expect(audio.presetForLevel(75).bpm).toBe(72 + 6); // legend, sky day
     });
 
     test("seed is deterministic per level and differs across levels", () => {
@@ -106,9 +113,14 @@ describe("audio per-level music variants (musicVariantFor)", () => {
         }
     });
 
-    test("band mapping follows the THEMES cycle like presetForLevel", () => {
-        for (let level = 1; level <= 12; level++) {
-            expect(audio.musicVariantFor(level).index).toBe((level - 1) % 3);
+    test("band mapping follows the world bands from worlds.js", () => {
+        // W3a re-pin: the old pin said "follows (level-1)%3" — true only for
+        // MEADOW grammar. The contract now is that audio delegates to the
+        // world profile's band helper, so pin against that directly across
+        // several full world cycles instead of a hardcoded formula.
+        for (let level = 1; level <= 60; level++) {
+            expect(audio.musicVariantFor(level).index)
+                .toBe(bandIndexForLevel(level, 3));
         }
     });
 

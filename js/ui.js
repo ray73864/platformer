@@ -1,4 +1,5 @@
 import { THEMES } from './sprites.js';
+import { bandIndexForLevel, isWorldEntry, worldOf, worldOrdinalForLevel, WORLDS } from './worlds.js';
 import { FX } from './fx.js';
 
 // The clock chip turns urgent below this many seconds (Wave C HUD). Pure
@@ -311,22 +312,30 @@ export class UI {
     };
 
     // Theme label for the level-intro card ("LEVEL 23 · DUSK"). Single source
-    // is the THEMES table's `name`; unknown shapes degrade to no suffix.
+    // is the THEMES table's `name` at the WORLD band index (js/worlds.js —
+    // MEADOW keeps the legacy cycle); unknown shapes degrade to no suffix.
     static themeNameFor(levelNumber) {
-        const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+        const theme = THEMES[bandIndexForLevel(levelNumber, THEMES.length)];
         return theme && typeof theme.name === 'string' ? theme.name : '';
     }
 
     // Between-levels card shown while the freshly published level plays
     // underneath (Wave C). Presentation-only: it never pauses or extends the
     // transition, carries aria-hidden (the HUD already announces the level),
-    // and hides itself via the CSS animation's end state.
+    // and hides itself via the CSS animation's end state. W3a: on world-
+    // entry levels the card gains a "WORLD n · NAME" line riding the SAME
+    // animation (zero extra transition time).
     showLevelIntro(levelNumber) {
         const element = this.ensureElement('level-intro-card');
         const name = UI.themeNameFor(levelNumber);
-        element.textContent = name
+        let text = name
             ? `LEVEL ${levelNumber} \u00b7 ${name}`
             : `LEVEL ${levelNumber}`;
+        if (isWorldEntry(levelNumber)) {
+            const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
+            text = `WORLD ${worldOrdinalForLevel(levelNumber)} \u00b7 ${world.name}\n${text}`;
+        }
+        element.textContent = text;
         // Restart the CSS animation even on back-to-back shows: removing the
         // class, forcing a style flush, then re-adding is the standard trick.
         element.classList.remove('show');

@@ -31,6 +31,7 @@ import { FX } from './fx.js';
 // Enemy art is a leaf module (no imports of its own — no cycle, no
 // simulation reach): indexed frames + the deterministic bake.
 import { buildEnemyCanvases, ENEMY_DIMS, ENEMY_BLIT, GUN_DIMS } from './enemyart.js';
+import { bandIndexForLevel } from './worlds.js';
 
 export const SHEETS = {
     tiles: { src: './assets/kenney_pixel-platformer/tiles.png', cols: 20, cell: 18 },
@@ -75,7 +76,9 @@ const PORTAL_CELL = 32;
 // 2026-11-10 enemy art pass: every kind now bakes from js/enemyart.js in the
 // same indexed-pixel-art convention as the hero below.
 
-// Background themes cycled by level number ((level - 1) % THEMES.length).
+// Background themes indexed per level by bandIndexForLevel (js/worlds.js):
+// MEADOW keeps the legacy (level - 1) % THEMES.length cycle; later worlds pin
+// their band so each world reads as its own place (W3a).
 // The sheet's three theme columns are NOT equal thirds (measured from the
 // shipped PNG): day spans x 0-95 (two cloud variants), dusk x 96-143,
 // jungle x 144-191. `sky` is the solid band colour (and the gradient's
@@ -1349,7 +1352,7 @@ export class Sprites {
     // — render-only: same seed => same backdrop, every frame, every retry.
     drawBackground(ctx, levelNumber, cameraX, viewW, viewH,
         worldBottomScreen = Infinity, seed = null) {
-        const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
         const theme = THEMES[themeIdx];
         ctx.fillStyle = this._skyGradient(ctx, themeIdx, viewH);
         ctx.fillRect(0, 0, viewW, viewH);
@@ -1444,7 +1447,7 @@ export class Sprites {
     // hazard-readability ruling. The rect is padded past the viewport so the
     // death shake never exposes an untinted edge.
     drawMoodTint(ctx, levelNumber, cameraX, cameraY, effW, effH) {
-        const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+        const theme = THEMES[bandIndexForLevel(levelNumber, THEMES.length)];
         ctx.fillStyle = theme.mood;
         ctx.fillRect(cameraX - 16, -cameraY - 16, effW + 32, effH + 32);
     }
@@ -1455,7 +1458,7 @@ export class Sprites {
     // camera's gameplay band centre or the HUD corner. `seed` must match the
     // one passed to drawBackground or the shared backdrop cache would thrash.
     drawForeground(ctx, levelNumber, cameraX, viewW, viewH, seed = null) {
-        const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
         const bd = this._ensureBackdrop(levelNumber, themeIdx, seed);
         const art = this._foreArt[themeIdx] ?? buildForeArt(themeIdx);
         this._foreArt[themeIdx] = art;
@@ -1484,7 +1487,7 @@ export class Sprites {
     // toward the centre without dimming anything the player must react to.
     // Gradient rebuilt only when the viewport size changes.
     drawVignette(ctx, levelNumber, viewW, viewH) {
-        const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
         const theme = THEMES[themeIdx];
         let entry = this._vigCache[themeIdx];
         if (!entry || entry.w !== viewW || entry.h !== viewH) {
@@ -1651,7 +1654,13 @@ export class Sprites {
     _ensureDecor(level) {
         if (this._decorSource === level) return this._decor;
         const decor = [];
-        const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(level.levelNumber, THEMES.length);
+        // W3a world decor density scale (level.decorScale; 1 everywhere the
+        // profile says legacy). Surface-growth hit chance only: the rng draw
+        // sequence per cell is untouched, so decor stays a pure render-layer
+        // concern and never perturbs generation fingerprints.
+        const decorScale = Math.min(1.5, Math.max(0.3,
+            typeof level.decorScale === 'number' ? level.decorScale : 1));
         const rng = makeRng(Math.imul(level.levelNumber, 0x51F3B6A1) ^ 0xB3D7B9F2);
         const spikeNear = (tx, ty, r) => {
             for (let y = ty - r; y <= ty + r; y++) {
@@ -1705,7 +1714,7 @@ export class Sprites {
                 if (onCeiling(tx, ty)) continue;
                 if (tx !== prevEligibleTx + 1) { flowerLastTx = -99; flowerRunCount = 0; }
                 prevEligibleTx = tx;
-                if (rng() <= 0.20) {
+                if (rng() <= 0.20 * decorScale) {
                     let roll = rng();
                     let kind = KINDS[KINDS.length - 1][0];
                     for (const [name, weight] of KINDS) {
@@ -1821,7 +1830,7 @@ export class Sprites {
         // entity draw in main.js's frame order.
         this._level = level;
         const size = level.tileSize;
-        const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(level.levelNumber, THEMES.length);
         const art = this._ensureTerrainArt(themeIdx);
         // +1px destination overlap: 18px source scaled to a fractional CSS
         // pixel size would otherwise leave hairline gaps between columns
@@ -2005,7 +2014,7 @@ export class Sprites {
     // frames, and the method works headlessly (stub contexts) as well as in
     // the browser. Drawn after tiles/props, before entities (main.js order).
     drawMovingPlatforms(ctx, platforms, levelNumber) {
-        const m = PLATFORM_METALS[(Math.max(1, levelNumber) - 1) % THEMES.length];
+        const m = PLATFORM_METALS[bandIndexForLevel(levelNumber, THEMES.length)];
         const H = 14; // visual deck thickness; collision rect stays 1 tile tall
         for (const p of platforms) {
             // Soft drop shadow: two stacked translucent slabs under the deck.
@@ -2188,7 +2197,7 @@ export class Sprites {
         // band-neutral so the "not yet" read never changes meaning between
         // biomes.
         const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.2);
-        const themeIdx = (Math.max(1, this._level?.levelNumber ?? 1) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(this._level?.levelNumber ?? 1, THEMES.length);
         const colour = unlocked ? THEMES[themeIdx].portalGlow : '#8a7fa8';
         ctx.globalAlpha = unlocked ? 0.34 + 0.28 * pulse : 0.12;
         const gs = (unlocked ? 124 : 92) + 16 * pulse;

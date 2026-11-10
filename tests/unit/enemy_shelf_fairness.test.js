@@ -23,6 +23,14 @@ const T = 32;
 // every fixture built from the same seed.
 function fixture(seed, pillarWidth) {
     const level = new Level(38, T, seed);
+    // W3a: level 38 now lives in CANYONS (bridgeChance ~1) — a real bridge/
+    // shaft descriptor from construction would veto marker sites near its
+    // lip. This fixture owns its geometry wholesale, so drop them. The
+    // canyon dirCycle also flips L38 left-facing; the fixture's pillar sits
+    // on a right-facing route, so pin the direction the spawn-scan needs.
+    level.bridgeGap = null;
+    level.shaftGap = null;
+    level.direction = "right";
     const W = 20;
     const H = 10;
     level.width = W;

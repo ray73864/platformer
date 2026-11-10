@@ -155,8 +155,12 @@ test("winning the level before the final one advances into FINAL_LEVEL and start
 
     expect(game.state).toBe(STATE.PLAYING);
     expect(game.currentLevel).toBe(FINAL_LEVEL);
-    expect(game.level.direction).toBe('vertical');
-    expect([game.level.width, game.level.height]).toEqual([15, 24]);
+    // W3a re-pin: L100 now lives in SKYWARD whose dirCycle reads 'left' —
+    // the finale is a floating island chain instead of the legacy vertical
+    // climb (15x24 -> generated horizontal 40x30). What matters and stays
+    // pinned: the constructor publishes a playable, path-valid final map.
+    expect(game.level.direction).toBe('left');
+    expect([game.level.width, game.level.height]).toEqual([40, 30]);
     expect(game.level.hasValidPath()).toBe(true);
 });
 

@@ -86,7 +86,7 @@ test("legacy long-run blocking still holds behind the R1' wall", () => {
 const SOFTLOCK_REPROS = [
     { lvl: 83, seed: 1514804096, fp: "c92e247d" },
     { lvl: 32, seed: 32010, fp: "b46d9e79" },
-    { lvl: 44, seed: 44019, fp: "df7311b8" },
+    { lvl: 44, seed: 44019, fp: "944eef03" }, // W3a re-recorded (CAVERNS)
     { lvl: 32, seed: 32313, fp: "cbf15943" },
     { lvl: 59, seed: 59309, fp: "c70058b2" }
 ];

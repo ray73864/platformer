@@ -20,18 +20,15 @@ import { FX } from "../../js/fx.js";
 
 const DT = 1 / 60;
 // Fixtures harvested from the generator (deterministic per seed):
-// L11 s40943764 ships one pad at cell (7,16) — floor line y=544 — a B1
-// purposefulness survivor (EXPRESS lane gain 2; the bounce shortens a
-// non-secret coin's hop distance by two); the previous fixture L11
-// s20261108 intentionally ships NO pad now that pointless pads are
-// rejected (its BASE-era bounce measured 0 hops on both lanes — see
-// tests/integration/pad_purposefulness.test.js);
-// L25 s607974 (vertical) ships one crate seated at col 12 row 20 with a
-// 4-cell channel [11..14] — the reviewer's 64 px push-proof map.
+// W3a RE-HARVESTED: L11 now lives in CANYONS, so the old M3-era fixtures
+// moved. L11 s40943818 ships one pad at cell (8,16) and no crate;
+// L16 s600048 (CAVERNS) ships one crate seated at col 12 row 20 with a
+// 4-cell channel [11..14] — the same push-proof geometry the reviewer used
+// on the pre-world L25 s607974.
 const PAD_LEVEL = 11;
-const PAD_SEED = 40943764;
-const CRATE_LEVEL = 25;
-const CRATE_SEED = 607974;
+const PAD_SEED = 40943818;
+const CRATE_LEVEL = 16;
+const CRATE_SEED = 600048;
 
 function startAt(levelNumber, seed) {
     mountFixture();
@@ -114,9 +111,15 @@ test("standing on a crate never drags it", () => {
     const game = startAt(CRATE_LEVEL, CRATE_SEED);
     const crate = game.crate;
     const p = game.player;
+    // W3a fixture hygiene (same seam as the push tests): DROP from just
+    // above the box and settle, instead of teleport-flush — a flush
+    // teleport leaves stale prevX/prevY that trip the push detector's
+    // vertical-overlap gate and eject the rider off the seat.
     p.x = crate.x + 4;
-    p.y = crate.y - p.height;   // flush on top
+    p.y = crate.y - p.height - 24;
     p.vx = 0; p.vy = 0;
+    for (let f = 0; f < 10; f++) game.update(DT); // land flush on top
+    expect(p.grounded).toBe(true);
     const x0 = crate.x;
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight' }));
     for (let f = 0; f < 30; f++) game.update(DT);

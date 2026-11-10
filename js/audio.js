@@ -1,6 +1,7 @@
 // Procedural audio: synthesized SFX + generative ambient music, zero audio
 // files, zero dependencies. Everything is built from oscillators and gain
 // envelopes on a single lazily-created AudioContext.
+import { bandIndexForLevel } from './worlds.js';
 //
 // Lifecycle rules (browser autoplay policy):
 //  - NO AudioContext exists until init() runs from a user-gesture path
@@ -125,7 +126,9 @@ function musicSeedForLevel(levelNumber) {
     return (Math.imul(levelNumber, 0x9E3779B1) ^ 0x51a7f2b3) >>> 0;
 }
 
-// Map a level number onto its music preset: band from the THEMES cycle,
+// Map a level number onto its music preset: band from the WORLD profile
+// (js/worlds.js bandIndexForLevel — MEADOW keeps the legacy THEMES cycle,
+// later worlds pin their band so each world has its own musical identity),
 // tempo with the expert-tier creep, seed for the melody variation.
 // Same validity contract as difficulty.configFor: non-positive-integer
 // input warns and falls back to the level-1 preset instead of silently
@@ -136,7 +139,7 @@ export function presetForLevel(levelNumber) {
             levelNumber, '- defaulting to level 1 preset');
         levelNumber = 1;
     }
-    const index = (levelNumber - 1) % MUSIC_PRESETS.length;
+    const index = bandIndexForLevel(levelNumber, MUSIC_PRESETS.length);
     const preset = MUSIC_PRESETS[index];
     const bpm = preset.bpm + (levelNumber >= TIER_CREEP_FIRST_LEVEL ? TIER_CREEP_BPM : 0);
     return { index, preset, bpm, seed: musicSeedForLevel(levelNumber) };

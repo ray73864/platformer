@@ -58,6 +58,12 @@ function hostileCountOn(runEnemies) {
 // entering the roll loop is identical for every fixture built from a seed.
 function twinFixture(seed, pillarWidth) {
     const level = new Level(38, T, seed);
+    // W3a fixture hygiene: drop construction-time bridge/shaft descriptors
+    // (CANYONS makes them common) and pin the right-facing route these
+    // pillars assume — the canyon dirCycle flips L38 left otherwise.
+    level.bridgeGap = null;
+    level.shaftGap = null;
+    level.direction = 'right';
     const W = 20;
     const H = 10;
     level.width = W;

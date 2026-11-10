@@ -67,13 +67,14 @@ test("L12 s1154663 (owner's cited example): walk-past-the-flag pad is gone", () 
     // after the flag once you have collected all the coins." Controller
     // recon pinned this seed: dir=left, pad=(1,14) BEHIND the portal at
     // (4,15). Value of that cell: 0 route / 0 express. Now: no pad.
+    // W3a RE-PINNED: L12 now lives in CANYONS and its dirCycle reads
+    // vertical here — same seed, different map, same outcome: the map ships
+    // NO pad at all, so the directive's failure mode cannot recur. The
+    // value RULE itself stays pinned by the surrounding suite.
     const L = new Level(12, T, 1154663);
-    expect(L.direction).toBe("left");
-    expect([L.portalTile.x, L.portalTile.y]).toEqual([4, 15]);
+    expect(L.direction).toBe("vertical");
+    expect([L.portalTile.x, L.portalTile.y]).toEqual([7, 4]);
     expect(L.pads.length).toBe(0);
-    const g = laneGains(L, { col: 1, row: 14 });
-    expect(g.route).toBe(0);
-    expect(g.express).toBe(0);
 });
 
 test("L10 s719909: the shipped pad demonstrably shortens route AND express", () => {

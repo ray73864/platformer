@@ -222,11 +222,11 @@ test("pad plate squash holds while PAUSED and decays on resume (B2)", () => {
     // every state, so pausing right after a bounce leaked the squash back
     // to rest behind the frozen overlay — held time must read as HELD
     // (look-A ruling, same gate family as the motes). Fixture: L11
-    // s40943764 ships one pad (house fixture from pad_crate_loop).
+    // s40943818 ships one pad (house fixture from pad_crate_loop).
     mountFixture();
     const game = new Game();
     document.getElementById('start-btn').click();
-    game.levelSeeds.set(11, 40943764);
+    game.levelSeeds.set(11, 40943818);
     game.currentLevel = 11;
     game.startLevel();
     try {

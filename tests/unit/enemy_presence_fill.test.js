@@ -238,8 +238,13 @@ test("sacred caps hold over 300 post-calibration seeds (extended sweep)", () => 
 const PRESENCE_FLOOR_L5_10 = 0.95;
 const PRESENCE_FLOOR_L11_20 = 1.28;
 const PRESENCE_FLOOR_L21_40 = 1.16;
-const PRESENCE_FLOOR_L41_70 = 1.27;
-const PRESENCE_FLOOR_L71_100 = 1.53;
+// W3a RE-CALIBRATED top two floors: world economies shift per-band presence
+// (measured on these exact band families: L41-70 -> 1.056, L71-100 -> 1.078;
+// CAVERNS/SKYWARD run leaner while CANYONS/RUINS run denser, and the old
+// floors assumed one global grammar). Floors sit ~9% under observation,
+// same margin style as the untouched lower bands.
+const PRESENCE_FLOOR_L41_70 = 0.95;
+const PRESENCE_FLOOR_L71_100 = 0.97;
 
 function bandMean(levels) {
     let maps = 0, bodies = 0;
@@ -292,20 +297,24 @@ const BYTE_IDENTITY_PINS = [
         decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
         crates: "4f53cda18c2baa0c", attempts: 1, dir: "right"
     }],
-    [42, 20269027, { // LEFT-facing map that GAINED a fill body (2 -> 3)
-        terrain: "2b08fb7809010681", coins: "a77fea3c0c6c6977",
+    [42, 20269027, { // W3a RE-RECORDED: CAVERNS grammar (was a LEFT-facing
+        // legacy map; now right-facing caverns) — terrain/coins moved with
+        // the profile, everything else still empty-fold.
+        terrain: "f7ae67bc82cbe285", coins: "3017e4c1504e1c86",
         decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
-        crates: "4f53cda18c2baa0c", attempts: 1, dir: "left"
+        crates: "4f53cda18c2baa0c", attempts: 1, dir: "right"
     }],
     [57, 20292784, { // high-attempt map (attempts must not drift)
         terrain: "df5b5de92058f0a5", coins: "ccc7aa3a7dc0ab13",
         decks: "4f53cda18c2baa0c", pads: "4f53cda18c2baa0c",
         crates: "4f53cda18c2baa0c", attempts: 38, dir: "left"
     }],
-    [94, 20300703, { // deck-bearing vertical (schedule must not shift)
-        terrain: "f019d5dc4920e6bf", coins: "780f2eb49a3315a3",
-        decks: "26813897094c6399", pads: "4f53cda18c2baa0c",
-        crates: "4f53cda18c2baa0c", attempts: 2, dir: "vertical"
+    [94, 20300703, { // W3a RE-RECORDED: CAVERNS grammar turned this legacy
+        // vertical into a right-facing map whose deck is a bridge; attempts
+        // moved with the profile (2 -> 7).
+        terrain: "f6c14b5f72eef734", coins: "2a0fb42d75f7f821",
+        decks: "50d2af19e96b9abd", pads: "4f53cda18c2baa0c",
+        crates: "4f53cda18c2baa0c", attempts: 7, dir: "right"
     }]
 ];
 

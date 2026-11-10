@@ -1711,6 +1711,162 @@
     }
   }
 
+  // js/worlds.js
+  var WORLD_SPAN = 5;
+  var MEADOW_LAST_LEVEL = 10;
+  var WORLDS = [
+    {
+      name: "MEADOWS",
+      dirCycle: ["right", "left", "vertical"],
+      gapMul: 1,
+      downBias: 0.55,
+      segHoldMax: 4,
+      bridgeChance: 0.6,
+      shaftChance: 0.82,
+      vFlipMul: 1,
+      vExtShift: 0,
+      padMul: 1,
+      crateMul: 1,
+      kindWeights: { spiny: 1, charger: 1, bombardier: 1 },
+      spikeMul: 1,
+      markerSpikeBan: 4,
+      themeBand: null,
+      decorScale: 1
+    },
+    {
+      name: "CANYONS",
+      dirCycle: ["right", "left", "vertical", "left", "vertical"],
+      gapMul: 1.35,
+      downBias: 0.55,
+      segHoldMax: 4,
+      bridgeChance: 1,
+      shaftChance: 0.7,
+      vFlipMul: 1,
+      vExtShift: 0,
+      padMul: 1,
+      crateMul: 1,
+      kindWeights: { spiny: 1, charger: 1.5, bombardier: 1 },
+      spikeMul: 1,
+      markerSpikeBan: 2,
+      themeBand: 1,
+      decorScale: 1.15,
+      variants: [
+        { segHoldMax: 7, bridgeChance: 1, gapMul: 1.5 },
+        { segHoldMax: 3, bridgeChance: 0.4, gapMul: 1 },
+        { segHoldMax: 4, bridgeChance: 0.85, gapMul: 1.3 }
+      ]
+    },
+    {
+      name: "CAVERNS",
+      dirCycle: ["vertical", "right", "vertical", "vertical"],
+      gapMul: 0.9,
+      downBias: 0.45,
+      segHoldMax: 3,
+      bridgeChance: 0.45,
+      shaftChance: 1,
+      vFlipMul: 1.5,
+      vExtShift: -1,
+      padMul: 0.6,
+      crateMul: 2,
+      kindWeights: { spiny: 1, charger: 0.8, bombardier: 1.2 },
+      spikeMul: 0.75,
+      markerSpikeBan: 2,
+      themeBand: 2,
+      decorScale: 0.6,
+      variants: [
+        { vFlipMul: 1.5, vExtShift: -1, spikeMul: 1.15 },
+        { vFlipMul: 0.8, vExtShift: 0, spikeMul: 0.75, downBias: 0.7 },
+        { vFlipMul: 1.3, vExtShift: -2, spikeMul: 1.3 }
+      ]
+    },
+    {
+      name: "SKYWARD",
+      dirCycle: ["right", "vertical", "left"],
+      gapMul: 1.3,
+      downBias: 0.55,
+      segHoldMax: 3,
+      bridgeChance: 0.85,
+      shaftChance: 0.9,
+      vFlipMul: 1,
+      vExtShift: 0,
+      padMul: 1,
+      crateMul: 1,
+      kindWeights: { spiny: 1, charger: 1.2, bombardier: 1 },
+      spikeMul: 1,
+      markerSpikeBan: 2,
+      themeBand: 0,
+      decorScale: 0.85,
+      variants: [
+        { gapMul: 1.35, shaftChance: 0.9, padMul: 1.2 },
+        { gapMul: 1.1, shaftChance: 0.3, padMul: 1 },
+        { gapMul: 1.45, shaftChance: 0.6, padMul: 1.4 }
+      ]
+    },
+    {
+      name: "RUINS",
+      dirCycle: ["right", "left", "vertical"],
+      gapMul: 1.1,
+      downBias: 0.55,
+      segHoldMax: 3,
+      bridgeChance: 0.5,
+      shaftChance: 0.82,
+      vFlipMul: 1.2,
+      vExtShift: -1,
+      padMul: 1,
+      crateMul: 1,
+      kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.3 },
+      spikeMul: 1.5,
+      markerSpikeBan: 2,
+      themeBand: 1,
+      decorScale: 1.1,
+      variants: [
+        { kindWeights: { spiny: 1, charger: 0.9, bombardier: 1.5 }, crateMul: 1 },
+        { kindWeights: { spiny: 1.3, charger: 1.1, bombardier: 0.8 }, crateMul: 1.6 },
+        { kindWeights: { spiny: 0.9, charger: 0.9, bombardier: 1.2 }, padMul: 1.4, gapMul: 1.25 }
+      ]
+    }
+  ];
+  function worldOf(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return 0;
+    if (levelNumber <= MEADOW_LAST_LEVEL)
+      return 0;
+    return 1 + Math.floor((levelNumber - (MEADOW_LAST_LEVEL + 1)) / WORLD_SPAN);
+  }
+  function profileForLevel(levelNumber) {
+    const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
+    if (!world.variants || levelNumber <= MEADOW_LAST_LEVEL)
+      return world;
+    const variant = world.variants[(levelNumber - (MEADOW_LAST_LEVEL + 1)) % world.variants.length];
+    return { ...world, ...variant };
+  }
+  function directionForLevel(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return "right";
+    if (levelNumber < 5)
+      return "right";
+    const cycle = profileForLevel(levelNumber).dirCycle;
+    return cycle[(levelNumber - 5) % cycle.length];
+  }
+  function bandIndexForLevel(levelNumber, bandCount) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return 0;
+    const band = profileForLevel(levelNumber).themeBand;
+    if (band === null)
+      return (levelNumber - 1) % bandCount;
+    return (band % bandCount + bandCount) % bandCount;
+  }
+  function worldOrdinalForLevel(levelNumber) {
+    return worldOf(levelNumber) + 1;
+  }
+  function isWorldEntry(levelNumber) {
+    if (!Number.isInteger(levelNumber) || levelNumber < 1)
+      return false;
+    if (levelNumber === 1)
+      return true;
+    return worldOf(levelNumber) !== worldOf(levelNumber - 1);
+  }
+
   // js/level.js
   var DIFFICULTY = new Difficulty;
   var MAX_GENERATION_ATTEMPTS = 200;
@@ -1943,7 +2099,6 @@
   }
   var DECK_BRIDGE_FIRST_LEVEL = 8;
   var MAX_DECK_BRIDGES = 1;
-  var BRIDGE_CHANCE = 0.6;
   var MIN_DECK_GAP = 6;
   var MAX_DECK_GAP = 7;
   var BRIDGE_MIN_START_COL = 7;
@@ -1955,7 +2110,6 @@
   var BRIDGE_LIP_BAN_COLS = 3;
   var ELEVATOR_FIRST_LEVEL = 13;
   var MAX_SHAFTS = 1;
-  var SHAFT_CHANCE = 0.82;
   var MIN_SHAFT_LIFT = 4;
   var MAX_SHAFT_LIFT = 6;
   var SHAFT_COLS = 2;
@@ -2234,11 +2388,6 @@
       return 0;
     const t = Math.min(1, (levelNumber - firstLevel + 1) / rampLevels);
     return maxChance * t;
-  }
-  function directionForLevel(levelNumber) {
-    if (levelNumber < PHASE2_FIRST_LEVEL)
-      return "right";
-    return ["right", "left", "vertical"][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
   }
   var MOTIF_GATES = {
     hills: 12,
@@ -2578,6 +2727,9 @@
       this.rng = makeRng(resolvedSeed);
       this.seedResolved = resolvedSeed;
       this.seed = seed === undefined ? null : resolvedSeed;
+      this.worldIndex = worldOf(levelNumber);
+      this.profile = profileForLevel(levelNumber);
+      this.decorScale = this.profile.decorScale;
       this.direction = directionForLevel(levelNumber);
       this.motif = motifForLevel(levelNumber);
       if (this.direction === "vertical") {
@@ -2743,13 +2895,22 @@
     generateVertical(tiles) {
       const w = this.width;
       const h = this.height;
-      const kv = this.motif === "atrium" ? { extMin: 4, extMax: 8, flipChance: 0.12, flipCap: 7, standardStream: false } : this.motif === "zigzag" ? { extMin: 1, extMax: 2, flipChance: 0.45, flipCap: 4, standardStream: false } : { extMin: 2, extMax: 5, flipChance: 0.16, flipCap: 6, standardStream: true };
+      const kvBase = this.motif === "atrium" ? { extMin: 4, extMax: 8, flipChance: 0.12, flipCap: 7, standardStream: false } : this.motif === "zigzag" ? { extMin: 1, extMax: 2, flipChance: 0.45, flipCap: 4, standardStream: false } : { extMin: 2, extMax: 5, flipChance: 0.16, flipCap: 6, standardStream: true };
+      const kv = this.profile.vFlipMul === 1 && this.profile.vExtShift === 0 ? kvBase : (() => {
+        const extMin = Math.max(1, kvBase.extMin + this.profile.vExtShift);
+        return {
+          ...kvBase,
+          extMin,
+          extMax: Math.max(extMin, kvBase.extMax + this.profile.vExtShift),
+          flipChance: Math.min(0.6, kvBase.flipChance * this.profile.vFlipMul)
+        };
+      })();
       for (let x = 0;x < w; x++) {
         for (let y = h - 3;y < h; y++) {
           tiles[y][x] = 1;
         }
       }
-      if (this.levelNumber >= ELEVATOR_FIRST_LEVEL && this.rng() < SHAFT_CHANCE) {
+      if (this.levelNumber >= ELEVATOR_FIRST_LEVEL && this.rng() < this.profile.shaftChance) {
         const lift = MIN_SHAFT_LIFT + Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
         const spawnX = Math.floor(w / 2);
         const sxSlots = [];
@@ -2884,14 +3045,14 @@
     generatePlatforms(tiles) {
       const isPhase2 = DIFFICULTY.hasPhase2Content(this.levelNumber);
       const maxGap = this.levelNumber >= 3 ? 3 : 2;
-      const gapChance = isPhase2 ? Math.min(0.22 + 0.02 * (this.levelNumber - 4), GAP_CHANCE_CAP) : 0.18 + 0.04 * this.levelNumber;
+      const gapChance = isPhase2 ? Math.min((0.22 + 0.02 * (this.levelNumber - 4)) * this.profile.gapMul, GAP_CHANCE_CAP) : 0.18 + 0.04 * this.levelNumber;
       let segRemaining = 0;
       let currentY = this.height - 3;
       let gapStreak = 0;
       let bridgeA = -1;
       let bridgeW = 0;
       let bridgeS = -1;
-      if (this.levelNumber >= DECK_BRIDGE_FIRST_LEVEL && this.rng() < BRIDGE_CHANCE) {
+      if (this.levelNumber >= DECK_BRIDGE_FIRST_LEVEL && this.rng() < this.profile.bridgeChance) {
         const bandLo = HAZARD_SPAWN_EXCLUDE_COLS;
         const bandHi = this.width - 6;
         const slots = [];
@@ -2945,7 +3106,7 @@
         if (bridgeA >= 0 && x === bridgeA + bridgeW) {
           for (let y = currentY;y < this.height; y++)
             tiles[y][x] = 1;
-          segRemaining = 1 + Math.floor(this.rng() * 4);
+          segRemaining = 1 + Math.floor(this.rng() * this.profile.segHoldMax);
           continue;
         }
         const isSpawnZone = x < 6;
@@ -3030,7 +3191,7 @@
             else if (atFloor)
               step = -1;
             else
-              step = this.rng() < 0.55 ? 1 : -1;
+              step = this.rng() < this.profile.downBias ? 1 : -1;
           }
           currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
           if (popped) {
@@ -3040,7 +3201,7 @@
           } else if (arch !== null && resumedAfterWideGap) {
             segRemaining = 0;
           } else {
-            segRemaining = 1 + Math.floor(this.rng() * 4);
+            segRemaining = 1 + Math.floor(this.rng() * this.profile.segHoldMax);
           }
           if (arch !== null)
             arch.depth = 2 + (this.rng() < 0.3 ? 1 : 0);
@@ -3382,7 +3543,7 @@
     placeSpikes(tiles) {
       if (!DIFFICULTY.hasPhase2Content(this.levelNumber))
         return;
-      const target = Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), SPIKE_TARGET_CAP, Math.floor(this.width * this.height * 0.1));
+      const target = Math.floor(Math.min(2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2), SPIKE_TARGET_CAP, Math.floor(this.width * this.height * 0.1)) * this.profile.spikeMul + 0.5);
       const besideDropOff = (x, y) => {
         for (let dx = -3;dx <= 3; dx++) {
           if (dx === 0)
@@ -3520,7 +3681,8 @@
             return false;
         }
       }
-      for (let dx = -4;dx <= 4; dx++) {
+      const ban = this.profile.markerSpikeBan;
+      for (let dx = -ban;dx <= ban; dx++) {
         const nx = x + dx;
         if (nx < 0 || nx >= this.width)
           continue;
@@ -3752,9 +3914,10 @@
       deploySpawns = protectPortalShelf(this.tiles, this.width, this.height, this.portalTile, this.direction, deploySpawns, this.pathCells);
       this._deployedSites = deploySpawns;
       this._routeMustPass = routeMustPass;
-      const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX);
-      const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX);
-      const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX);
+      const kindW = this.profile.kindWeights;
+      const spinyChance = kindChance(this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS, SPINY_CHANCE_MAX) * kindW.spiny;
+      const chargerChance = kindChance(this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS, CHARGER_CHANCE_MAX) * kindW.charger;
+      const bombardierChance = kindChance(this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS, BOMBARDIER_CHANCE_MAX) * kindW.bombardier;
       const spinyCap = Math.ceil(deploySpawns.length / SPINY_CAP_DIVISOR);
       const bombardierCap = Math.ceil(deploySpawns.length / BOMBARDIER_CAP_DIVISOR);
       let spinies = 0;
@@ -4077,7 +4240,7 @@
         this.rng();
       }
       const prng = makeRng(((this.seedResolved ?? 0) ^ PAD_SIDE_SALT) >>> 0);
-      if (prng() < PAD_CHANCE && cands.length > 0) {
+      if (prng() < Math.min(1, PAD_CHANCE * this.profile.padMul) && cands.length > 0) {
         const ctx = this._padValueContext();
         const accepting = [];
         for (const cell of cands) {
@@ -4094,7 +4257,7 @@
           });
         }
       }
-      if (this.rng() < CRATE_CHANCE) {
+      if (this.rng() < Math.min(1, CRATE_CHANCE * this.profile.crateMul)) {
         const cands = this._findCrateCandidates(this._capabilityForbiddenCells(true));
         if (cands.length > 0) {
           const pocket = cands[Math.floor(this.rng() * cands.length)];
@@ -6266,7 +6429,7 @@
       return this._backdrop;
     }
     drawBackground(ctx, levelNumber, cameraX, viewW, viewH, worldBottomScreen = Infinity, seed = null) {
-      const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
       const theme = THEMES[themeIdx];
       ctx.fillStyle = this._skyGradient(ctx, themeIdx, viewH);
       ctx.fillRect(0, 0, viewW, viewH);
@@ -6315,12 +6478,12 @@
       }
     }
     drawMoodTint(ctx, levelNumber, cameraX, cameraY, effW, effH) {
-      const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      const theme = THEMES[bandIndexForLevel(levelNumber, THEMES.length)];
       ctx.fillStyle = theme.mood;
       ctx.fillRect(cameraX - 16, -cameraY - 16, effW + 32, effH + 32);
     }
     drawForeground(ctx, levelNumber, cameraX, viewW, viewH, seed = null) {
-      const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
       const bd = this._ensureBackdrop(levelNumber, themeIdx, seed);
       const art = this._foreArt[themeIdx] ?? buildForeArt(themeIdx);
       this._foreArt[themeIdx] = art;
@@ -6346,7 +6509,7 @@
       ctx.restore();
     }
     drawVignette(ctx, levelNumber, viewW, viewH) {
-      const themeIdx = (Math.max(1, levelNumber) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(levelNumber, THEMES.length);
       const theme = THEMES[themeIdx];
       let entry = this._vigCache[themeIdx];
       if (!entry || entry.w !== viewW || entry.h !== viewH) {
@@ -6465,7 +6628,8 @@
       if (this._decorSource === level)
         return this._decor;
       const decor = [];
-      const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(level.levelNumber, THEMES.length);
+      const decorScale = Math.min(1.5, Math.max(0.3, typeof level.decorScale === "number" ? level.decorScale : 1));
       const rng = makeRng2(Math.imul(level.levelNumber, 1374926497) ^ 3017259506);
       const spikeNear = (tx, ty, r) => {
         for (let y = ty - r;y <= ty + r; y++) {
@@ -6518,7 +6682,7 @@
             flowerRunCount = 0;
           }
           prevEligibleTx = tx;
-          if (rng() <= 0.2) {
+          if (rng() <= 0.2 * decorScale) {
             let roll = rng();
             let kind = KINDS[KINDS.length - 1][0];
             for (const [name, weight] of KINDS) {
@@ -6629,7 +6793,7 @@
     drawWorld(ctx, level, cameraX, cameraY, viewW, viewH) {
       this._level = level;
       const size = level.tileSize;
-      const themeIdx = (Math.max(1, level.levelNumber) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(level.levelNumber, THEMES.length);
       const art = this._ensureTerrainArt(themeIdx);
       const drawn = size + 1;
       const capScale = drawn / 18;
@@ -6764,7 +6928,7 @@
       }
     }
     drawMovingPlatforms(ctx, platforms, levelNumber) {
-      const m = PLATFORM_METALS[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      const m = PLATFORM_METALS[bandIndexForLevel(levelNumber, THEMES.length)];
       const H = 14;
       for (const p of platforms) {
         ctx.fillStyle = "rgba(8,12,24,0.10)";
@@ -6902,7 +7066,7 @@
       const cx = portal.x + portal.width / 2;
       const cy = feetY - h / 2;
       const pulse = 0.5 + 0.5 * Math.sin(this.clock * 1.2);
-      const themeIdx = (Math.max(1, this._level?.levelNumber ?? 1) - 1) % THEMES.length;
+      const themeIdx = bandIndexForLevel(this._level?.levelNumber ?? 1, THEMES.length);
       const colour = unlocked ? THEMES[themeIdx].portalGlow : "#8a7fa8";
       ctx.globalAlpha = unlocked ? 0.34 + 0.28 * pulse : 0.12;
       const gs = (unlocked ? 124 : 92) + 16 * pulse;
@@ -7312,13 +7476,19 @@
       projectile: "Shells arc — wait for the muzzle flash, then slip past on the far side."
     };
     static themeNameFor(levelNumber) {
-      const theme = THEMES[(Math.max(1, levelNumber) - 1) % THEMES.length];
+      const theme = THEMES[bandIndexForLevel(levelNumber, THEMES.length)];
       return theme && typeof theme.name === "string" ? theme.name : "";
     }
     showLevelIntro(levelNumber) {
       const element = this.ensureElement("level-intro-card");
       const name = UI.themeNameFor(levelNumber);
-      element.textContent = name ? `LEVEL ${levelNumber} · ${name}` : `LEVEL ${levelNumber}`;
+      let text = name ? `LEVEL ${levelNumber} · ${name}` : `LEVEL ${levelNumber}`;
+      if (isWorldEntry(levelNumber)) {
+        const world = WORLDS[worldOf(levelNumber) % WORLDS.length];
+        text = `WORLD ${worldOrdinalForLevel(levelNumber)} · ${world.name}
+${text}`;
+      }
+      element.textContent = text;
       element.classList.remove("show");
       element.offsetWidth;
       element.classList.add("show");
@@ -7978,7 +8148,7 @@
       console.warn("Invalid level number for music preset:", levelNumber, "- defaulting to level 1 preset");
       levelNumber = 1;
     }
-    const index = (levelNumber - 1) % MUSIC_PRESETS.length;
+    const index = bandIndexForLevel(levelNumber, MUSIC_PRESETS.length);
     const preset = MUSIC_PRESETS[index];
     const bpm = preset.bpm + (levelNumber >= TIER_CREEP_FIRST_LEVEL ? TIER_CREEP_BPM : 0);
     return { index, preset, bpm, seed: musicSeedForLevel(levelNumber) };
@@ -8972,7 +9142,7 @@
         if (this.player.vy < vyBefore) {
           playSfx(SFX_VOICES.JUMP);
           if (this.player.wallLockTimer > 0 && lockBefore <= 0 && wallBefore !== 0 && FX.dust) {
-            const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const wTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
             spawnDust(this.dust, wallBefore === -1 ? this.player.x : this.player.x + this.player.width, this.player.y + this.player.height / 2, dustTint(wTheme), {
               count: 5,
               dir: -Math.sign(this.player.vx),
@@ -8997,7 +9167,7 @@
           return;
         playSfx(SFX_VOICES.DASH);
         if (FX.dust) {
-          const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+          const dTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
           spawnDust(this.dust, this.player.dashDir === -1 ? this.player.x + this.player.width : this.player.x, this.player.y + this.player.height / 2, dustTint(dTheme), {
             count: 4,
             dir: -this.player.dashDir,
@@ -9367,7 +9537,7 @@
       this.resetEffectState();
       init();
       duckMusic(false);
-      startMusic((Math.max(1, this.currentLevel) - 1) % THEMES.length, this.currentLevel);
+      startMusic(bandIndexForLevel(this.currentLevel, THEMES.length), this.currentLevel);
     }
     retryLevel() {
       this.restartCurrentLevel("game-over-screen");
@@ -9550,7 +9720,7 @@
             playSfx(SFX_VOICES.PAD_BOUNCE);
             this._launchStretch = LAUNCH_STRETCH_TIME;
             if (FX.dust) {
-              const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+              const pTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
               spawnDust(this.dust, pad.x + pad.width / 2, pad.y + pad.height - 4, dustTint(pTheme), {
                 count: 5,
                 dir: 0,
@@ -9569,7 +9739,7 @@
           this.squashTimer = 0.12;
           this._landDepth = Math.min(1, Math.max(0.25, vyBeforeResolve / LAND_DEPTH_REF_VY));
           if (FX.dust) {
-            const dTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const dTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
             spawnDust(this.dust, this.player.x + this.player.width / 2, this.player.y + this.player.height - 8, dustTint(dTheme), {
               count: 3 + Math.round(3 * this._landDepth),
               dir: 0,
@@ -9590,7 +9760,7 @@
         }
         this._prevGrounded = this.player.grounded;
         if (this.player.grounded && FX.dust && this._prevFrameVx * this.player.vx < 0 && Math.abs(this._prevFrameVx) >= SKID_MIN_SPEED) {
-          const sTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+          const sTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
           spawnDust(this.dust, this.player.x + this.player.width / 2, this.player.y + this.player.height - 8, dustTint(sTheme), {
             count: 6,
             dir: -Math.sign(this.player.vx),
@@ -9605,7 +9775,7 @@
           if (footTx !== this._dustTx) {
             this._dustTx = footTx;
             const dir = this.player.vx > 0 ? -1 : 1;
-            const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+            const themeIdx = bandIndexForLevel(this.currentLevel, THEMES.length);
             spawnDust(this.dust, this.player.x + this.player.width / 2 - dir * 10, this.player.y + this.player.height - 8, dustTint(THEMES[themeIdx]), {
               count: 1 + (footTx & 1),
               dir,
@@ -9626,7 +9796,7 @@
           this._slideDustT += dt;
           if (this._slideDustT >= WALL_SLIDE_DUST_INTERVAL) {
             this._slideDustT = 0;
-            const wTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const wTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
             spawnDust(this.dust, this.player.sliding === -1 ? this.player.x : this.player.x + this.player.width, this.player.y + this.player.height - 12, dustTint(wTheme), {
               count: 2,
               dir: 0,
@@ -9644,7 +9814,7 @@
           if (this._crateDustT >= CRATE_PUSH_DUST_INTERVAL) {
             this._crateDustT = 0;
             const cdx = this.crate.x - (this.crate.prevX ?? this.crate.x);
-            const cTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const cTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
             spawnDust(this.dust, this.crate.x + this.crate.width / 2, this.crate.y + this.crate.height - 6, dustTint(cTheme), {
               count: 2,
               dir: cdx !== 0 ? -Math.sign(cdx) : 0,
@@ -9793,7 +9963,7 @@
           if (gate && FX.pulse) {
             const gx = gate.x + gate.width / 2;
             const gy = gate.y + gate.height / 2;
-            const pTheme = THEMES[(Math.max(1, this.currentLevel) - 1) % THEMES.length];
+            const pTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
             spawnRing(this.rings, gx, gy, pTheme.portalGlow);
             spawnBurst(this.particles, gx, gy, pTheme.portalGlow, 10);
           }
@@ -9871,7 +10041,7 @@
         const zoom = this.zoom;
         const effW = viewW / zoom;
         const effH = viewH / zoom;
-        const themeIdx = (Math.max(1, this.currentLevel) - 1) % THEMES.length;
+        const themeIdx = bandIndexForLevel(this.currentLevel, THEMES.length);
         const punch = punchScale(PUNCH_TIME - this._punchTime);
         if (punch !== 1) {
           this.ctx.translate(viewW / 2, viewH / 2);

@@ -74,26 +74,23 @@ function ruleBViolations(level) {
 
 // --- (a) constructed-map pins on the reported seeds -------------------------
 
-test("reported map L20/3906687302: portal shelf holds one patroller, capped cluster stays clear", () => {
+test("reported map L20/3906687302: portal shelf stays clear, capped cluster stays clear", () => {
     const level = new Level(20, T, 3906687302);
     const bs = bodiesOf(level);
-    // Exact shipped layout derived from the fixed generator (deterministic):
-    // the second portal-shelf walker and two of the three lower-run bodies
-    // are skipped placements; kinds shifted downstream exactly once (the
-    // former spiny roll lands as a walker — stream note in level.js).
+    // W3a RE-PINNED: L20 now lives in CAVERNS (vertical climb, up-biased
+    // walk) — the reported horizontal layout became a single spiny on a
+    // lower run while the portal sits high on the chimney wall. Same
+    // contracts pinned: exact deterministic layout, zero rule-A/B violations,
+    // and never more than ONE patroller sharing the portal's run.
     expect(bs).toEqual([
-        { col: 21, row: 14, left: 21, right: 22, kind: 'walker' },
-        { col: 10, row: 15, left: 10, right: 14, kind: 'walker' }
+        { col: 0, row: 12, left: 0, right: 2, kind: 'spiny' }
     ]);
-    // No shared-run pair anywhere, and the portal run keeps >=1 clear cell
-    // between the sweep edge and the portal column (col 23 stays free).
     expect(ruleAViolations(level)).toEqual([]);
     expect(ruleBViolations(level)).toEqual([]);
     const pt = level.portalTile;
     const shelf = bs.filter(b => runKeyAt(level, b.col, b.row) ===
         runKeyAt(level, pt.x, pt.y));
-    expect(shelf.length).toBe(1);
-    expect(shelf[0].right).toBeLessThanOrEqual(pt.x - 1 - CLEAR);
+    expect(shelf.length).toBeLessThanOrEqual(1);
 });
 
 test("rule-B-only map L23/21924098: wide portal run keeps ONE patroller (cap alone would keep both)", () => {
@@ -105,8 +102,13 @@ test("rule-B-only map L23/21924098: wide portal run keeps ONE patroller (cap alo
     const pt = level.portalTile;
     const shelf = bodiesOf(level).filter(b =>
         runKeyAt(level, b.col, b.row) === runKeyAt(level, pt.x, pt.y));
+    // W3a RE-PINNED: L23 now lives in SKYWARD; the portal run's single
+    // patroller shifted from a 2-wide walker (21..22) to a spiny on the
+    // same columns of this deterministic map. The rule-B contract is
+    // unchanged: exactly ONE body shares the portal's run and it keeps its
+    // clearance (right 22 <= portal col 25 - 1 - CLEAR).
     expect(shelf.length).toBe(1);
-    expect(shelf[0]).toEqual({ col: 21, row: 14, left: 21, right: 22, kind: 'walker' });
+    expect(shelf[0]).toEqual({ col: 21, row: 14, left: 21, right: 22, kind: 'spiny' });
     expect(ruleBViolations(level)).toEqual([]);
 });
 
@@ -118,6 +120,10 @@ test("rule-B-only map L23/21924098: wide portal run keeps ONE patroller (cap alo
 // interaction). Deployment count therefore equals the run's capacity.
 function shelfFixture(seed, shelfWidth) {
     const level = new Level(38, T, seed);
+    // W3a fixture hygiene: drop construction-time bridge/shaft descriptors
+    // (CANYONS makes them common) — these fixtures own their geometry.
+    level.bridgeGap = null;
+    level.shaftGap = null;
     const W = 24, H = 12;
     level.width = W;
     level.height = H;
@@ -153,6 +159,10 @@ test("cap math caps at the WALKABLE run: a tooth-split mass is two runs", () => 
     // (3 wide -> 1): two markers per half deploy ONE per half, proving the
     // denominator is the ledge players walk, not the rock beneath it.
     const level = new Level(38, T, 4243);
+    // W3a fixture hygiene: drop construction-time bridge/shaft descriptors
+    // (CANYONS makes them common) — this fixture owns its geometry.
+    level.bridgeGap = null;
+    level.shaftGap = null;
     const W = 24, H = 12;
     level.width = W; level.height = H; level.direction = 'right';
     level.pathCells = null;
@@ -184,6 +194,10 @@ test("cap math caps at the WALKABLE run: a tooth-split mass is two runs", () => 
 // INSIDE every span -> the sweep crosses the goal tile.
 function portalShelfFixture(seed, markerCols, pcol) {
     const level = new Level(38, T, seed);
+    // W3a fixture hygiene: drop construction-time bridge/shaft descriptors
+    // (CANYONS makes them common) — these fixtures own their geometry.
+    level.bridgeGap = null;
+    level.shaftGap = null;
     const W = 24, H = 12;
     level.width = W; level.height = H; level.direction = 'right';
     level.pathCells = null;
@@ -236,13 +250,18 @@ test("portal shelf: two otherwise-legal patrollers reduce to one", () => {
 // 8a9109f before any of this task's code existed in the tree): the rules run
 // after extractCoins, consume no draws of their own, and write no grid cell,
 // so every hash must match byte-for-byte while enemy sets shrink.
+// W3a RE-BASELINED 2026-11-10: world profiles legitimately change terrain on
+// every non-meadow level; these pins guard FUTURE drift (enemy-rule work must
+// not move tiles/spikes/coins), so the hashes were re-recorded from the new
+// deterministic bytes — L12 CANYONS, L20 CAVERNS, L23 SKYWARD, L30 RUINS,
+// L45 CAVERNS, L77 MEADOWS-rotation (motif-chain coupling).
 const TERRAIN_PINS = [
-    [20, 3906687302, "97852b63"],
-    [23, 95830402, "4bdc6185"],
-    [30, 4104669369, "5a7c6f5d"],
-    [12, 20308622, "501eb0f4"],
-    [45, 20545163, "f3ab5d3c"],
-    [77, 20797493, "4a535429"]
+    [20, 3906687302, "7771cdb0"],
+    [23, 95830402, "41c765de"],
+    [30, 4104669369, "0e78f169"],
+    [12, 20308622, "7e867c24"],
+    [45, 20545163, "72605ec1"],
+    [77, 20797493, "48b5f22f"]
 ];
 function fnv1a(str) {
     let h = 0x811c9dc5;

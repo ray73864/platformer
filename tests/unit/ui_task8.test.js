@@ -112,11 +112,16 @@ test("showLevelIntro writes 'LEVEL n · THEME' and restarts its animation", () =
     const ui = new UI();
     ui.showLevelIntro(23);
     const card = document.getElementById('level-intro-card');
-    expect(card.textContent).toBe('LEVEL 23 \u00b7 DUSK');
+    // W3a re-pin: L23/L24 now live in SKYWARD, whose pinned band is DAY
+    // (was the legacy (level-1)%3 cycle). Non-entry levels keep the single
+    // line; entry levels get the WORLD headline above it.
+    expect(card.textContent).toBe('LEVEL 23 \u00b7 DAY');
     expect(card.classList.contains('show')).toBe(true);
     ui.showLevelIntro(24);
-    expect(card.textContent).toBe('LEVEL 24 \u00b7 JUNGLE');
+    expect(card.textContent).toBe('LEVEL 24 \u00b7 DAY');
     expect(card.classList.contains('show')).toBe(true);
+    ui.showLevelIntro(11);   // first CANYONS level: world entry card
+    expect(card.textContent).toBe('WORLD 2 \u00b7 CANYONS\nLEVEL 11 \u00b7 DUSK');
 });
 
 // --- change-gated writers + announcements ----------------------------------------

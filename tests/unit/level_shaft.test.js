@@ -89,8 +89,10 @@ test("L13..97 vertical sweep: shaft invariants hold on every hosted map", () => 
             const level = new Level(lvl, T, seed);
             const where = `L${lvl} seed ${seed}`;
             if (level.direction !== "vertical") {
-                expect(level.getMovingPlatforms().length, `${where}: horiz cabin`)
-                    .toBe(0);
+                // W3a: horizontal maps legitimately carry BRIDGE decks now
+                // (world bridgeChances), so a blanket zero-deck check is
+                // wrong; the invariant that matters is no SHAFT leak — an
+                // elevator cabin only exists when shaftGap geometry does.
                 expect(level.shaftGap, `${where}: horiz shaft`).toBe(null);
                 continue;
             }
@@ -161,9 +163,12 @@ test("L13..97 vertical sweep: shaft invariants hold on every hosted map", () => 
         }
     }
     // Realized coverage band (raw SHAFT_CHANCE=0.7 minus burned attempts).
+    // W3a RE-PINNED ceiling: this sweep's vertical stream now includes
+    // CAVERNS (profile shaftChance 1.0) — measured 0.72 realized. Floor
+    // unchanged keeps the collapse tripwire honest.
     const frac = shafts / maps;
     expect(frac).toBeGreaterThan(0.35);
-    expect(frac).toBeLessThan(0.7);
+    expect(frac).toBeLessThan(0.85);
 });
 
 test("no cabins below the gate and none on horizontal maps (L1..97)", { timeout: 60000 }, () => {

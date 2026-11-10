@@ -117,9 +117,12 @@ test("real Level constructions grow across difficulty tiers on horizontal levels
     const intermediate = new Level(5, 32);
     const advanced = new Level(11, 32);
 
+    // W3a re-pin: L11 opens CANYONS, whose dirCycle reads 'left' here.
+    // The growth contract this test owns is SIZE monotonicity across tiers
+    // on horizontal constructions — direction just has to stay horizontal.
     expect(basic.direction).toBe('right');
     expect(intermediate.direction).toBe('right');
-    expect(advanced.direction).toBe('right');
+    expect(advanced.direction).toBe('left');
 
     expect([basic.width, basic.height]).toEqual([20, 15]);
     expect([intermediate.width, intermediate.height]).toEqual([24, 18]);
@@ -131,7 +134,9 @@ test("real Level constructions grow across difficulty tiers on horizontal levels
     expect(intermediate.height).toBeLessThan(advanced.height);
 
     // The mirrored advanced horizontal (left) keeps the same footprint.
-    const advancedLeft = new Level(12, 32);
+    // W3a re-pin: L12 rolled 'vertical' under the legacy cycle but CANYONS
+    // reads it as a mesa climb now — L13 is the band's left-facing twin.
+    const advancedLeft = new Level(13, 32);
     expect(advancedLeft.direction).toBe('left');
     expect([advancedLeft.width, advancedLeft.height]).toEqual([28, 21]);
 });

@@ -48,6 +48,9 @@ function fixture(seed, markers, shelfCols) {
     level.bridgeGap = null;
     level.shaftGap = null;
     level.pathCells = null;
+    // W3a: CANYONS flips L38 left-facing; these pillars sit on a
+    // right-facing scan route, so pin the direction the fixture assumes.
+    level.direction = 'right';
     level.spawnEnemies();
     return level;
 }

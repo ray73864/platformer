@@ -163,7 +163,11 @@ test("the bombardier band changes KINDS only — positions byte-stable vs a no-b
 // site #1 rolls BOMBARDIER -> fails the firing-lane gate -> walker, key
 // unclaimed; site #2 rolls CHARGER -> deploys hostile on that very run.
 function laneReclaimFixture(rolls, blockLane) {
-    const level = new Level(61, T, 12345); // L61: bombardier at its plateau
+    // W3a re-pin: L61 -> L81. L61 now lives in CANYONS whose kindWeights
+    // (charger x1.5) widen the charger band so the scripted roll 0.5 reads
+    // CHARGER instead of BOMBARDIER. L81 sits in a MEADOWS rotation band at
+    // full plateau tier: identical legacy bands [0,.25)|.45|.60) below.
+    const level = new Level(81, T, 12345); // plateau bombardier weights
     const W = 20, H = 10;
     level.width = W;
     level.height = H;

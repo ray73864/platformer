@@ -419,7 +419,10 @@ button:focus-visible {
     padding: 12px 22px;
     font-size: clamp(0.85rem, 2.4vw, 1.2rem);
     letter-spacing: 0.12em;
-    white-space: nowrap;
+    /* W3a: pre-line (was nowrap) so world-entry cards can carry the
+       "WORLD n · NAME" line above the level line; single-line cards and
+       the 1.6s animation are unchanged. */
+    white-space: pre-line;
 }
 
 #level-intro-card.show {

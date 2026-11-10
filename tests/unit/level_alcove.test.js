@@ -132,7 +132,11 @@ test("sweep: every SHIPPED alcove passes post-carve structural checks", () => {
     // proves the checker bites; the sweep reports what the generator ships.
     console.log(`alcove sweep: ${alcoves}/${maps} tier>=2 maps shipped an alcove`);
     expect(maps).toBeGreaterThanOrEqual(100);
-});
+}, 20_000); // W3a RE-BASELINED (2026-11-10): world profiles raise generation
+// attempts on banded maps (e.g. L16/L40 CAVERNS stacks), pushing this 120-build
+// sweep past the default 5s once the suite's module/DOM context is loaded
+// (measured 5.4-6.0s after game_loop_elements, ~4.5s standalone). Deterministic
+// assertions unchanged — budget only.
 
 test("determinism: identical seeds carve identical worlds", () => {
     const fingerprint = (lvlN, seed) => {
@@ -149,7 +153,9 @@ test("determinism: identical seeds carve identical worlds", () => {
             expect(fingerprint(lvlN, seed)).toBe(fingerprint(lvlN, seed));
         }
     }
-});
+}, 20_000); // W3a RE-BASELINED (2026-11-10): suite-context slowdown (see the
+// sweep test above) — these two sweeps crossed the default 5s with identical
+// deterministic assertions. Budget only.
 
 test("R4: secret coins never gate the portal; required subset drives it", () => {
     const c = new Collectibles();
@@ -192,4 +198,4 @@ test("predicate agrees with every shipped carve (reconstructable pre-grid check)
     }
     console.log(`predicate re-check: ${checked} shipped alcoves validated`);
     expect(checked).toBeGreaterThanOrEqual(0); // honest zero allowed; fixture covers
-});
+}, 20_000); // W3a RE-BASELINED (2026-11-10): suite-context slowdown, see above.

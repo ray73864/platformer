@@ -15,11 +15,12 @@ import { Game, STATE } from "../../js/main.js";
 
 const DT = 1 / 60;
 const T = 32;
-// L25 s607974 (vertical) ships one crate seated at col 12 row 20 with a
-// 4-cell channel [11..14] — the reviewer's push-proof map reused from
-// pad_crate_loop.test.js (floor top y=672; blocker at col 11 x=352).
-const CRATE_LEVEL = 25;
-const CRATE_SEED = 607974;
+// W3a RE-HARVESTED: L16 s600048 (CAVERNS) ships one crate seated at col 12
+// row 20 with a 4-cell channel [11..14] — the same push-proof geometry the
+// pre-world L25 s607974 delivered (floor top y=672; blocker at col 11),
+// reused from pad_crate_loop.test.js.
+const CRATE_LEVEL = 16;
+const CRATE_SEED = 600048;
 
 function startAt(levelNumber, seed) {
     mountFixture();

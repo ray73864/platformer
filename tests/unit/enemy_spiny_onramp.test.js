@@ -70,7 +70,10 @@ test("on-ramp morphology holds across the sampled debut window",
                 }
             }
         }
-        expect(checkedMaps).toBeGreaterThan(40);
+        // W3a: world dirCycles shift how many in-window levels roll
+        // horizontal routed maps (measured exactly 40 now); floor relaxed one
+        // notch below observation — this guards vacuity, not a level count.
+        expect(checkedMaps).toBeGreaterThan(35);
     });
 
 test("window stays non-vacuous: spinies and enemy presence survive the ramp",
@@ -99,7 +102,8 @@ test("window stays non-vacuous: spinies and enemy presence survive the ramp",
         // TIONALLY trades raw presence for per-run readability (see
         // BODIES_PER_RUN_DIVISOR in js/level.js and task-2-report.md for the
         // measured cost/bot A/B). Floor set well under observation.
-        expect(maps).toBeGreaterThan(60);
+        // W3a: same dirCycle effect as above — exactly 60 routed maps now.
+        expect(maps).toBeGreaterThan(55);
         expect(spinies).toBeGreaterThanOrEqual(6);
         expect(enemies / maps).toBeGreaterThanOrEqual(1.2);
         expect(enemies / maps).toBeLessThanOrEqual(5.0);
@@ -136,13 +140,20 @@ test("arm separation: each on-ramp clause independently holds on its own seeds",
         // Seeds where a hostile stands (post-demotion walker) with runW < 6
         // — justified ONLY by the general bar (off-route or wide enough to
         // pass the route arm anyway).
+        // W3a RE-SELECTED 2026-11-10: world profiles changed in-window maps,
+        // so the old seeds no longer exhibit the footprints. These were
+        // re-found on the shipped bytes with EXACT arm attribution computed
+        // directly (post-demotion walker + run width + must-pass sweep):
+        // GENERAL_ONLY = runW < 6 and NOT sweeping must-pass (only the
+        // general bar blocks it); ROUTE_ONLY = runW 6..7 sweeping a
+        // must-pass cell (clears the general bar, route clause is the sole
+        // blocker). Attribution logic is the same one the original
+        // HEAD-vs-tree harness proved by mutation on this wave's lineage.
         const GENERAL_ONLY = [
-            [16, 664611], [10, 513586], [13, 663600], [16, 813618]
+            [11, 464655], [13, 544652], [15, 624669], [15, 624673]
         ];
-        // Seeds with runW 6..7 sweeping a must-pass cell — justified ONLY by
-        // the route clause (they clear the general bar).
         const ROUTE_ONLY = [
-            [12, 504636], [14, 584615], [15, 624629], [17, 863586]
+            [11, 464604], [13, 544606], [15, 624602], [18, 744616]
         ];
         const scan = (lvl, seed) => {
             const level = new Level(lvl, T, seed);

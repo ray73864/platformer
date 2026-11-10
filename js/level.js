@@ -7,6 +7,7 @@ import { Physics, aabbOverlap } from './physics.js';
 import { Player } from './player.js';
 import { ProjectileManager } from './projectiles.js';
 import { PAD_APEX_CELLS } from './pads.js';
+import { profileForLevel, worldOf, directionForLevel } from './worlds.js';
 
 const DIFFICULTY = new Difficulty();
 
@@ -588,12 +589,13 @@ export function protectPortalShelf(tiles, width, height, portalTile,
 //    wave (the manager already supports axis 'v' and the prev-top catch fix).
 const DECK_BRIDGE_FIRST_LEVEL = 8;
 const MAX_DECK_BRIDGES = 1;          // per map this wave (structural gate)
-// Per-attempt roll for a bridge on an eligible horizontal map. MEASURED
-// realized coverage of shipped horizontal L8+ maps (12 seeds x L8..100):
-// raw 0.45 -> 26%, 0.55 -> 31%, 0.60 -> 37%, 0.65 -> 41%. Tuned to 0.60 for
-// the middle of the 30-45% band; realized < raw because narrow tiers
-// (L8..24) have no feasible slots at all and failing attempts reroll.
-const BRIDGE_CHANCE = 0.6;
+// Per-attempt roll for a bridge on an eligible horizontal map is now the
+// world profile knob WORLDS[*].bridgeChance (js/worlds.js). Legacy value and
+// MEASURED realized coverage of shipped horizontal L8+ maps (12 seeds x
+// L8..100): raw 0.45 -> 26%, 0.55 -> 31%, 0.60 -> 37%, 0.65 -> 41%. Tuned to
+// 0.60 for the middle of the 30-45% band; realized < raw because narrow
+// tiers (L8..24) have no feasible slots at all and failing attempts reroll.
+// (W3a: was `const BRIDGE_CHANCE = 0.6`; MEADOW keeps exactly that.)
 // WHY 6: Step-0 physics measurement (scratch sim on the shipped Player/
 // Physics, brute-forced press frames incl. the full coyote window) shows a
 // flush-flanked pit is jumpable up to 5 tiles at same height (~2.7px pixel-
@@ -649,7 +651,8 @@ const MAX_SHAFTS = 1;                // per map (structural gate)
 // (n=3000, thrown=0) — back inside the 40-60% design target and within one
 // binomial sigma of HEAD parity. Parity comes from attempt ECONOMICS only:
 // every shaft fairness gate and reachability validation is untouched.
-const SHAFT_CHANCE = 0.82;
+// (W3a: was `const SHAFT_CHANCE = 0.82`; now the world profile knob
+// WORLDS[*].shaftChance — MEADOW keeps exactly that, CAVERN raises to 1.0.)
 // WHY 4: Step-0 measurement (scratch sim on the shipped Player/Physics,
 // brute-forced press frames incl. run-ups/coyote/buffer, maxrise.mjs): the
 // movement MODEL climbs exactly 1 row per jump (computeReachable steps up to
@@ -1020,12 +1023,9 @@ function kindChance(levelNumber, firstLevel, rampLevels, maxChance) {
 
 // Travel direction is deterministic from the level number so tests and E2E
 // flows can rely on it: the shipped Phase 1 ramp (levels 1-4) stays
-// right-facing, then right/left/vertical cycle from level 5 onward
-// (L5 right, L6 left, L7 vertical, L8 right, L9 left).
-function directionForLevel(levelNumber) {
-    if (levelNumber < PHASE2_FIRST_LEVEL) return 'right';
-    return ['right', 'left', 'vertical'][(levelNumber - PHASE2_FIRST_LEVEL) % 3];
-}
+// right-facing, then each WORLD's dirCycle indexes off the absolute level
+// (see js/worlds.js; MEADOW keeps the shipped ['right','left','vertical']
+// cycle byte-for-byte across its whole rotation).
 
 // --- Layout motifs -----------------------------------------------------------
 // Player ruling 2026-11-04: "A lot of the levels just seem same old same
@@ -1896,6 +1896,15 @@ export class Level {
         this.seedResolved = resolvedSeed;
         this.seed = seed === undefined ? null : resolvedSeed;
 
+        // W3a worlds: the generation grammar profile governing this level
+        // (see js/worlds.js). Pure function of the level number; MEADOW
+        // (levels 1..10 and every later rotation slot) carries the exact
+        // legacy knob values, so its streams stay byte-identical.
+        this.worldIndex = worldOf(levelNumber);
+        this.profile = profileForLevel(levelNumber);
+        // Render-only decor density hint (sprites._ensureDecor reads it).
+        this.decorScale = this.profile.decorScale;
+
         // Task 9: travel direction varies per level (deterministic mapping).
         this.direction = directionForLevel(levelNumber);
 
@@ -2279,11 +2288,26 @@ export class Level {
         // alone measured avg 14.5 with 0 throws over 400 maps while reading
         // visibly denser. A PROBABILISTIC flip is different: mean forward run
         // stays multi-link, and the constructor BFS stays the safety net.
-        const kv = this.motif === 'atrium'
+        const kvBase = this.motif === 'atrium'
             ? { extMin: 4, extMax: 8, flipChance: 0.12, flipCap: 7, standardStream: false }
             : this.motif === 'zigzag'
                 ? { extMin: 1, extMax: 2, flipChance: 0.45, flipCap: 4, standardStream: false }
                 : { extMin: 2, extMax: 5, flipChance: 0.16, flipCap: 6, standardStream: true };
+        // W3a world bias on the ledge-chain machine (MEADOW: mul 1 / shift 0
+        // keeps the SAME object, so its stream and geometry stay byte-exact).
+        const kv = this.profile.vFlipMul === 1 && this.profile.vExtShift === 0
+            ? kvBase
+            : (() => {
+                const extMin = Math.max(1, kvBase.extMin + this.profile.vExtShift);
+                return {
+                    ...kvBase,
+                    extMin,
+                    extMax: Math.max(extMin,
+                        kvBase.extMax + this.profile.vExtShift),
+                    flipChance: Math.min(0.6,
+                        kvBase.flipChance * this.profile.vFlipMul)
+                };
+            })();
 
         // Ground band along the bottom: full-width solid from row h-3 down,
         // so the standing surface is row h-4 across the whole floor and the
@@ -2302,7 +2326,7 @@ export class Level {
         // consumes exactly one draw here whether it hits or not, which is an
         // ACCEPTED design change reshuffling vertical maps from the gate up.
         if (this.levelNumber >= ELEVATOR_FIRST_LEVEL &&
-            this.rng() < SHAFT_CHANCE) {
+            this.rng() < this.profile.shaftChance) {
             const lift = MIN_SHAFT_LIFT +
                 Math.floor(this.rng() * (MAX_SHAFT_LIFT - MIN_SHAFT_LIFT + 1));
             // Ledges need SHAFT_LEDGE_W columns each side (stop shelves and
@@ -2609,9 +2633,11 @@ export class Level {
         const maxGap = this.levelNumber >= 3 ? 3 : 2;
         // Plateaued at GAP_CHANCE_CAP (see constant): uncapped this ramp reads
         // 2.12 at level 99, which turns every segment edge into a pit and
-        // leaves no flat ground for spike/marker sites.
+        // leaves no flat ground for spike/marker sites. The world profile's
+        // gapMul scales the ramp UNDER the cap (MEADOW mul 1 = float-exact).
         const gapChance = isPhase2
-            ? Math.min(0.22 + 0.02 * (this.levelNumber - 4), GAP_CHANCE_CAP) // .24 at lvl 5 .. .64 at 25+
+            ? Math.min((0.22 + 0.02 * (this.levelNumber - 4)) *
+                this.profile.gapMul, GAP_CHANCE_CAP) // .24 at lvl 5 .. .64 at 25+
             : 0.18 + 0.04 * this.levelNumber;      // early-game ramp
         // Terrain reads as designed plateaus, not per-column sawtooth noise:
         // each elevation holds for a segment, then steps at a junction.
@@ -2639,7 +2665,7 @@ export class Level {
         let bridgeW = 0;
         let bridgeS = -1;
         if (this.levelNumber >= DECK_BRIDGE_FIRST_LEVEL &&
-            this.rng() < BRIDGE_CHANCE) {
+            this.rng() < this.profile.bridgeChance) {
             const bandLo = HAZARD_SPAWN_EXCLUDE_COLS;   // 9
             const bandHi = this.width - 6;
             const slots = [];
@@ -2726,7 +2752,8 @@ export class Level {
                 // Always painted full-depth even under thin-island motifs:
                 // the flush-flank contract wants ordinary mass at the lip.
                 for (let y = currentY; y < this.height; y++) tiles[y][x] = 1;
-                segRemaining = 1 + Math.floor(this.rng() * 4);
+                segRemaining = 1 + Math.floor(this.rng() *
+                    this.profile.segHoldMax);
                 continue;
             }
 
@@ -2847,7 +2874,7 @@ export class Level {
                     const atFloor = currentY >= this.height - 3;
                     if (atTop) step = 1;
                     else if (atFloor) step = -1;
-                    else step = this.rng() < 0.55 ? 1 : -1;
+                    else step = this.rng() < this.profile.downBias ? 1 : -1;
                 }
                 currentY = Math.min(this.height - 3, Math.max(3, currentY + step));
                 if (popped) {
@@ -2869,7 +2896,8 @@ export class Level {
                     // paint grounded-looking slabs).
                     segRemaining = 0;
                 } else {
-                    segRemaining = 1 + Math.floor(this.rng() * 4);
+                    segRemaining = 1 + Math.floor(this.rng() *
+                        this.profile.segHoldMax);
                 }
                 // Mostly 2-row slabs: thin decks read as floating; the
                 // occasional 3 still gives islands some mass.
@@ -3420,11 +3448,11 @@ export class Level {
         // lower anyway because THREAT_SPACING claims 9 columns per spike, so
         // on the widest shipped map (~26 band columns) only ~3 fit — the cap
         // documents intent and stops the formula outrunning geometry.
-        const target = Math.min(
+        const target = Math.floor(Math.min(
             2 + Math.floor((this.levelNumber - PHASE2_FIRST_LEVEL) / 2),
             SPIKE_TARGET_CAP,
             Math.floor(this.width * this.height * 0.1)
-        );
+        ) * this.profile.spikeMul + 0.5);
 
         // Surface hazards only: air tiles directly above solid ground, never
         // inside the direction's exclusion zones, never within two columns
@@ -3684,10 +3712,16 @@ export class Level {
         // turns "dodge the enemy" into "land on the spike" (playtest bot:
         // this pairing alone accounted for every level-5 death). Checks the
         // marker row AND the row above it — a spike on the shelf beside the
-        // patrol stands one row higher than the marker cell itself. THREAT_
-        // SPACING matches placeSpikes' claim window: one jump decision at
-        // a time, never a chained frame-perfect sequence.
-        for (let dx = -4; dx <= 4; dx++) {
+        // patrol stands one row higher than the marker cell itself. The
+        // radius is a WORLD PROFILE knob (BW-2 ruling 2026-11-10): MEADOW
+        // keeps the legacy ±4 (its byte-identity + onramp economics), later
+        // worlds narrow to ±2 so patrols may seat closer to teeth — presence
+        // was an owner pain point, and the original ±4 was bot-era provenance
+        // (147cfb1) never owner-ratified. Survivability of the narrower seats
+        // was adjudicated by forced-death hunt (see w3a report §spike dial);
+        // THREAT_SPACING between SPIKES themselves is untouched.
+        const ban = this.profile.markerSpikeBan;
+        for (let dx = -ban; dx <= ban; dx++) {
             const nx = x + dx;
             if (nx < 0 || nx >= this.width) continue;
             if (tiles[y][nx] === 2) return false;
@@ -4134,15 +4168,21 @@ export class Level {
         // finished (spawnEnemies is the last rng consumer and affects no
         // grid cell), so generation streams stay byte-identical and same
         // seed still replays the exact map AND the exact kind sequence.
+        // W3a: each chance carries the world profile's kind weight (MEADOW
+        // weights 1 = float-exact; spiny stays 1 in EVERY world so the
+        // SPINY_ONRAMP debut economics of L10..18 cannot shift). Deployed
+        // caps (SPINY_CAP_DIVISOR / BOMBARDIER_CAP_DIVISOR / shelf gates)
+        // keep biting unchanged.
+        const kindW = this.profile.kindWeights;
         const spinyChance = kindChance(
             this.levelNumber, SPINY_FIRST_LEVEL, SPINY_RAMP_LEVELS,
-            SPINY_CHANCE_MAX);
+            SPINY_CHANCE_MAX) * kindW.spiny;
         const chargerChance = kindChance(
             this.levelNumber, CHARGER_FIRST_LEVEL, CHARGER_RAMP_LEVELS,
-            CHARGER_CHANCE_MAX);
+            CHARGER_CHANCE_MAX) * kindW.charger;
         const bombardierChance = kindChance(
             this.levelNumber, BOMBARDIER_FIRST_LEVEL, BOMBARDIER_RAMP_LEVELS,
-            BOMBARDIER_CHANCE_MAX);
+            BOMBARDIER_CHANCE_MAX) * kindW.bombardier;
         const spinyCap = Math.ceil(deploySpawns.length / SPINY_CAP_DIVISOR);
         const bombardierCap = Math.ceil(
             deploySpawns.length / BOMBARDIER_CAP_DIVISOR);
@@ -4644,7 +4684,8 @@ export class Level {
             this.rng(); // BASE slot-2 parity; value intentionally unused
         }
         const prng = makeRng(((this.seedResolved ?? 0) ^ PAD_SIDE_SALT) >>> 0);
-        if (prng() < PAD_CHANCE && cands.length > 0) {
+        if (prng() < Math.min(1, PAD_CHANCE * this.profile.padMul) &&
+            cands.length > 0) {
             const ctx = this._padValueContext();
             const accepting = [];
             for (const cell of cands) {
@@ -4662,7 +4703,9 @@ export class Level {
         }
         // Crate: same discipline; initial seat is the stand-run midpoint so
         // the bounded travel stays symmetric around a visible resting spot.
-        if (this.rng() < CRATE_CHANCE) {
+        // W3a: CRATE_CHANCE carries the world profile's crate weight
+        // (MEADOW 1 = float-exact; CAVERN welcomes crates at chance 1.0).
+        if (this.rng() < Math.min(1, CRATE_CHANCE * this.profile.crateMul)) {
             const cands = this._findCrateCandidates(
                 this._capabilityForbiddenCells(true));
             if (cands.length > 0) {

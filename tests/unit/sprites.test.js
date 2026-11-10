@@ -558,7 +558,11 @@ test("canyon canopy rock hosts no surface growth (vines below stay)", () => {
             }
         }
     }
-    expect(maps).toBe(6);
+    // W3a: the sampled stride now lands two canyon levels on vertical
+    // climbs (mesa rises), which have no horizontal canopies — measured 4
+    // of 6. Guard stays "the motif is not a no-op", so count floors instead
+    // of an exact map tally.
+    expect(maps).toBeGreaterThanOrEqual(4);
 });
 
 // ---------------------------------------------------------------------------

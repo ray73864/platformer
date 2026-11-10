@@ -2,7 +2,7 @@
  "format": "mono-corpus-v1",
  "description": "Recorded deterministic winning runs replayed through the CURRENT engine by scripts/monotonicity-check.js (`bun run mono`). Each entry replays key EVENTS (frame-indexed [frame, code, \"down\"|\"up\"], dispatched BEFORE that frame's fixed-dt update) from a staged standing cell (stage=[col,row], player teleported pre-frame-0; >=3 tiles clear of the portal, idle-safe) and must reproduce the recorded per-frame trajectory hash AND reach the portal rect. Win semantics follow the established mono convention: portal contact attests the run (the all-coins gate is generation fairness territory, not physics). Scripts use legacy keys only (arrows + Space) so pads/crates/dash stay pure-help witnesses.",
  "hashConvention": "FNV-1a (offset 0x811c9dc5, prime 0x01000193) over, per simulated frame: `${p.x},${p.y},${p.vx},${p.vy},${grounded?1:0}|${heldLeft?1:0}${heldRight?1:0}${jumpDownThisFrame?1:0}${dashDownThisFrame?1:0};` rendered hex.",
- "generatedAtHead": "392578f",
+ "generatedAtHead": "07e1f97",
  "entries": [
   {
    "levelNumber": 2,
@@ -70,8 +70,8 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -141,8 +141,8 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -212,8 +212,8 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -293,8 +293,8 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -384,8 +384,8 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -435,69 +435,89 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
    "levelNumber": 9,
-   "seed": 729638002,
+   "seed": 2300898977,
    "tier": 1,
    "stage": [
-    8,
-    13
+    12,
+    14
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 121,
-   "hash": "f1ae9607",
+   "frames": 168,
+   "hash": "4126619c",
    "events": [
     [
      0,
-     "Space",
-     "down"
-    ],
-    [
-     43,
      "ArrowLeft",
      "down"
     ],
     [
-     49,
-     "Space",
-     "up"
-    ],
-    [
-     49,
+     15,
      "Space",
      "down"
     ],
     [
-     85,
+     17,
      "ArrowLeft",
      "up"
     ],
     [
-     85,
+     88,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     88,
      "Space",
      "up"
     ],
     [
-     85,
+     88,
      "Space",
      "down"
     ],
     [
-     121,
+     159,
+     "ArrowLeft",
+     "up"
+    ],
+    [
+     159,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     162,
      "Space",
+     "up"
+    ],
+    [
+     162,
+     "Space",
+     "down"
+    ],
+    [
+     168,
+     "Space",
+     "up"
+    ],
+    [
+     168,
+     "ArrowRight",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -657,24 +677,24 @@
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
    "levelNumber": 12,
-   "seed": 2070122086,
+   "seed": 3644458165,
    "tier": 2,
    "stage": [
-    10,
-    17
+    7,
+    6
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 123,
-   "hash": "c2dd9af5",
+   "frames": 72,
+   "hash": "7a399d23",
    "events": [
     [
      0,
@@ -682,60 +702,233 @@
      "down"
     ],
     [
-     15,
+     0,
      "Space",
      "down"
     ],
     [
-     51,
+     37,
      "Space",
      "up"
     ],
     [
-     51,
+     37,
      "Space",
      "down"
     ],
     [
-     64,
+     72,
+     "Space",
+     "up"
+    ],
+    [
+     72,
      "ArrowLeft",
-     "up"
-    ],
-    [
-     87,
-     "ArrowLeft",
-     "down"
-    ],
-    [
-     87,
-     "Space",
-     "up"
-    ],
-    [
-     87,
-     "Space",
-     "down"
-    ],
-    [
-     100,
-     "ArrowLeft",
-     "up"
-    ],
-    [
-     123,
-     "Space",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
-   "levelNumber": 15,
-   "seed": 3837669159,
+   "levelNumber": 14,
+   "seed": 3436341355,
+   "tier": 2,
+   "stage": [
+    3,
+    6
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 72,
+   "hash": "692985da",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     37,
+     "Space",
+     "up"
+    ],
+    [
+     37,
+     "Space",
+     "down"
+    ],
+    [
+     72,
+     "Space",
+     "up"
+    ],
+    [
+     72,
+     "ArrowRight",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 17,
+   "seed": 3636888185,
+   "tier": 2,
+   "stage": [
+    6,
+    8
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 116,
+   "hash": "8afc634f",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     37,
+     "Space",
+     "up"
+    ],
+    [
+     37,
+     "Space",
+     "down"
+    ],
+    [
+     73,
+     "Space",
+     "up"
+    ],
+    [
+     73,
+     "Space",
+     "down"
+    ],
+    [
+     109,
+     "Space",
+     "up"
+    ],
+    [
+     109,
+     "Space",
+     "down"
+    ],
+    [
+     116,
+     "Space",
+     "up"
+    ],
+    [
+     116,
+     "ArrowRight",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 19,
+   "seed": 1857518656,
+   "tier": 2,
+   "stage": [
+    7,
+    8
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 116,
+   "hash": "9007b142",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     37,
+     "Space",
+     "up"
+    ],
+    [
+     37,
+     "Space",
+     "down"
+    ],
+    [
+     73,
+     "Space",
+     "up"
+    ],
+    [
+     73,
+     "Space",
+     "down"
+    ],
+    [
+     109,
+     "Space",
+     "up"
+    ],
+    [
+     109,
+     "Space",
+     "down"
+    ],
+    [
+     116,
+     "Space",
+     "up"
+    ],
+    [
+     116,
+     "ArrowRight",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 22,
+   "seed": 477371523,
    "tier": 2,
    "stage": [
     11,
@@ -744,8 +937,109 @@
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 120,
-   "hash": "7fed41ee",
+   "frames": 305,
+   "hash": "767699f2",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     6,
+     "Space",
+     "down"
+    ],
+    [
+     84,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     84,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     108,
+     "Space",
+     "up"
+    ],
+    [
+     108,
+     "Space",
+     "down"
+    ],
+    [
+     159,
+     "Space",
+     "up"
+    ],
+    [
+     159,
+     "Space",
+     "down"
+    ],
+    [
+     195,
+     "Space",
+     "up"
+    ],
+    [
+     195,
+     "Space",
+     "down"
+    ],
+    [
+     212,
+     "ArrowLeft",
+     "up"
+    ],
+    [
+     255,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     258,
+     "Space",
+     "up"
+    ],
+    [
+     258,
+     "Space",
+     "down"
+    ],
+    [
+     305,
+     "Space",
+     "up"
+    ],
+    [
+     305,
+     "ArrowLeft",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 24,
+   "seed": 271418297,
+   "tier": 2,
+   "stage": [
+    5,
+    10
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 171,
+   "hash": "eb97a0fc",
    "events": [
     [
      0,
@@ -764,49 +1058,140 @@
     ],
     [
      42,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     42,
+     "Space",
+     "up"
+    ],
+    [
+     42,
+     "Space",
+     "down"
+    ],
+    [
+     56,
+     "Space",
+     "up"
+    ],
+    [
+     56,
+     "Space",
+     "down"
+    ],
+    [
+     63,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     92,
      "ArrowLeft",
      "down"
     ],
     [
-     42,
+     92,
      "Space",
      "up"
     ],
     [
-     42,
+     92,
      "Space",
      "down"
     ],
     [
-     120,
+     128,
      "Space",
      "up"
     ],
     [
-     120,
+     128,
+     "Space",
+     "down"
+    ],
+    [
+     164,
+     "Space",
+     "up"
+    ],
+    [
+     164,
+     "Space",
+     "down"
+    ],
+    [
+     171,
+     "Space",
+     "up"
+    ],
+    [
+     171,
      "ArrowLeft",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
-   "levelNumber": 18,
-   "seed": 4104340023,
-   "tier": 2,
+   "levelNumber": 27,
+   "seed": 2179539192,
+   "tier": 3,
    "stage": [
-    9,
-    17
+    8,
+    19
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 125,
-   "hash": "5119505f",
+   "frames": 48,
+   "hash": "f95d3aba",
+   "events": [
+    [
+     0,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     6,
+     "Space",
+     "down"
+    ],
+    [
+     48,
+     "Space",
+     "up"
+    ],
+    [
+     48,
+     "ArrowLeft",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 29,
+   "seed": 400235901,
+   "tier": 3,
+   "stage": [
+    22,
+    20
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 68,
+   "hash": "7daa67ed",
    "events": [
     [
      0,
@@ -814,121 +1199,132 @@
      "down"
     ],
     [
-     15,
+     3,
      "Space",
      "down"
     ],
     [
-     15,
+     68,
+     "Space",
+     "up"
+    ],
+    [
+     68,
      "ArrowRight",
      "up"
-    ],
-    [
-     57,
-     "ArrowLeft",
-     "down"
-    ],
-    [
-     81,
-     "Space",
-     "up"
-    ],
-    [
-     81,
-     "Space",
-     "down"
-    ],
-    [
-     123,
-     "Space",
-     "up"
-    ],
-    [
-     123,
-     "Space",
-     "down"
-    ],
-    [
-     125,
-     "Space",
-     "up"
-    ],
-    [
-     125,
-     "ArrowLeft",
-     "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
-   "levelNumber": 22,
-   "seed": 477371523,
-   "tier": 2,
-   "stage": [
-    7,
-    4
-   ],
-   "phase": 0,
-   "outcome": "WIN",
-   "winCheck": "portal-touch",
-   "frames": 120,
-   "hash": "b13043e8",
-   "events": [
-    [
-     18,
-     "Space",
-     "down"
-    ],
-    [
-     60,
-     "ArrowLeft",
-     "down"
-    ],
-    [
-     84,
-     "Space",
-     "up"
-    ],
-    [
-     84,
-     "Space",
-     "down"
-    ],
-    [
-     120,
-     "Space",
-     "up"
-    ],
-    [
-     120,
-     "ArrowLeft",
-     "up"
-    ]
-   ],
-   "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
-    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
-   }
-  },
-  {
-   "levelNumber": 25,
-   "seed": 2318515650,
+   "levelNumber": 36,
+   "seed": 1260326589,
    "tier": 3,
    "stage": [
-    9,
-    10
+    10,
+    19
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 158,
-   "hash": "413aeadb",
+   "frames": 109,
+   "hash": "938e8785",
+   "events": [
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     43,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     49,
+     "Space",
+     "up"
+    ],
+    [
+     49,
+     "Space",
+     "down"
+    ],
+    [
+     109,
+     "Space",
+     "up"
+    ],
+    [
+     109,
+     "ArrowLeft",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 42,
+   "seed": 1721257023,
+   "tier": 3,
+   "stage": [
+    22,
+    20
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 48,
+   "hash": "f73ef837",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     48,
+     "Space",
+     "up"
+    ],
+    [
+     48,
+     "ArrowRight",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 47,
+   "seed": 142430228,
+   "tier": 3,
+   "stage": [
+    22,
+    20
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 84,
+   "hash": "c70b85ce",
    "events": [
     [
      0,
@@ -941,105 +1337,45 @@
      "down"
     ],
     [
-     23,
+     48,
      "Space",
      "up"
     ],
     [
-     23,
+     48,
      "Space",
      "down"
     ],
     [
-     31,
+     61,
      "ArrowRight",
      "up"
     ],
     [
-     59,
-     "ArrowLeft",
-     "down"
-    ],
-    [
-     59,
+     84,
      "Space",
-     "up"
-    ],
-    [
-     59,
-     "Space",
-     "down"
-    ],
-    [
-     95,
-     "Space",
-     "up"
-    ],
-    [
-     95,
-     "Space",
-     "down"
-    ],
-    [
-     112,
-     "Space",
-     "up"
-    ],
-    [
-     112,
-     "Space",
-     "down"
-    ],
-    [
-     120,
-     "ArrowLeft",
-     "up"
-    ],
-    [
-     148,
-     "ArrowRight",
-     "down"
-    ],
-    [
-     148,
-     "Space",
-     "up"
-    ],
-    [
-     148,
-     "Space",
-     "down"
-    ],
-    [
-     158,
-     "Space",
-     "up"
-    ],
-    [
-     158,
-     "ArrowRight",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
-   "levelNumber": 28,
-   "seed": 1006459397,
-   "tier": 3,
+   "levelNumber": 53,
+   "seed": 669487510,
+   "tier": 4,
    "stage": [
-    3,
-    8
+    26,
+    19
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 125,
-   "hash": "e50db79",
+   "frames": 68,
+   "hash": "bb3f4495",
    "events": [
     [
      0,
@@ -1047,115 +1383,287 @@
      "down"
     ],
     [
-     0,
+     15,
      "Space",
      "down"
     ],
     [
-     37,
-     "Space",
-     "up"
-    ],
-    [
-     37,
-     "Space",
-     "down"
-    ],
-    [
-     73,
-     "Space",
-     "up"
-    ],
-    [
-     73,
-     "Space",
-     "down"
-    ],
-    [
-     109,
-     "Space",
-     "up"
-    ],
-    [
-     109,
-     "Space",
-     "down"
-    ],
-    [
-     125,
-     "Space",
-     "up"
-    ],
-    [
-     125,
+     66,
      "ArrowRight",
+     "up"
+    ],
+    [
+     66,
+     "Space",
+     "up"
+    ],
+    [
+     66,
+     "Space",
+     "down"
+    ],
+    [
+     68,
+     "Space",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
   {
-   "levelNumber": 30,
-   "seed": 798409019,
-   "tier": 3,
+   "levelNumber": 61,
+   "seed": 1998078670,
+   "tier": 4,
    "stage": [
-    9,
-    17
+    10,
+    22
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 121,
-   "hash": "2bc2b876",
+   "frames": 49,
+   "hash": "7ad380d0",
    "events": [
     [
      0,
-     "ArrowRight",
+     "ArrowLeft",
      "down"
     ],
     [
-     21,
+     3,
      "Space",
      "down"
     ],
     [
-     21,
-     "ArrowRight",
+     49,
+     "Space",
+     "up"
+    ],
+    [
+     49,
+     "ArrowLeft",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 68,
+   "seed": 211205597,
+   "tier": 4,
+   "stage": [
+    4,
+    11
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 274,
+   "hash": "dd73740a",
+   "events": [
+    [
+     0,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     3,
+     "Space",
+     "down"
+    ],
+    [
+     63,
+     "Space",
      "up"
     ],
     [
      63,
+     "Space",
+     "down"
+    ],
+    [
+     80,
+     "Space",
+     "up"
+    ],
+    [
+     80,
+     "Space",
+     "down"
+    ],
+    [
+     88,
+     "ArrowLeft",
+     "up"
+    ],
+    [
+     116,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     125,
+     "Space",
+     "up"
+    ],
+    [
+     125,
+     "Space",
+     "down"
+    ],
+    [
+     182,
+     "Space",
+     "up"
+    ],
+    [
+     182,
+     "Space",
+     "down"
+    ],
+    [
+     190,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     214,
+     "Space",
+     "up"
+    ],
+    [
+     214,
+     "Space",
+     "down"
+    ],
+    [
+     216,
      "ArrowLeft",
      "down"
     ],
     [
-     75,
+     216,
      "Space",
      "up"
     ],
     [
-     75,
+     216,
      "Space",
      "down"
     ],
     [
-     121,
+     218,
      "Space",
      "up"
     ],
     [
-     121,
+     218,
+     "Space",
+     "down"
+    ],
+    [
+     220,
+     "ArrowLeft",
+     "up"
+    ],
+    [
+     220,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     229,
+     "Space",
+     "up"
+    ],
+    [
+     229,
+     "Space",
+     "down"
+    ],
+    [
+     237,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     265,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     265,
+     "Space",
+     "up"
+    ],
+    [
+     265,
+     "Space",
+     "down"
+    ],
+    [
+     274,
+     "Space",
+     "up"
+    ],
+    [
+     274,
      "ArrowLeft",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 72,
+   "seed": 2520653178,
+   "tier": 4,
+   "stage": [
+    0,
+    4
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 48,
+   "hash": "72709cc6",
+   "events": [
+    [
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     6,
+     "Space",
+     "down"
+    ],
+    [
+     48,
+     "Space",
+     "up"
+    ],
+    [
+     48,
+     "ArrowRight",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   },
@@ -1164,49 +1672,160 @@
    "seed": 1946133786,
    "tier": 5,
    "stage": [
-    10,
-    25
+    6,
+    10
    ],
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 120,
-   "hash": "2c578899",
+   "frames": 174,
+   "hash": "579b7d70",
    "events": [
     [
-     12,
+     0,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     6,
      "Space",
      "down"
     ],
     [
-     54,
+     13,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     42,
+     "ArrowRight",
+     "down"
+    ],
+    [
+     45,
+     "Space",
+     "up"
+    ],
+    [
+     45,
+     "Space",
+     "down"
+    ],
+    [
+     59,
+     "Space",
+     "up"
+    ],
+    [
+     59,
+     "Space",
+     "down"
+    ],
+    [
+     66,
+     "ArrowRight",
+     "up"
+    ],
+    [
+     95,
      "ArrowLeft",
      "down"
     ],
     [
-     78,
+     95,
      "Space",
      "up"
     ],
     [
-     78,
+     95,
      "Space",
      "down"
     ],
     [
-     120,
+     131,
      "Space",
      "up"
     ],
     [
-     120,
+     131,
+     "Space",
+     "down"
+    ],
+    [
+     167,
+     "Space",
+     "up"
+    ],
+    [
+     167,
+     "Space",
+     "down"
+    ],
+    [
+     174,
+     "Space",
+     "up"
+    ],
+    [
+     174,
      "ArrowLeft",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "392578f",
-    "generatedOn": "2026-11-09",
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+   }
+  },
+  {
+   "levelNumber": 97,
+   "seed": 543214394,
+   "tier": 5,
+   "stage": [
+    10,
+    26
+   ],
+   "phase": 0,
+   "outcome": "WIN",
+   "winCheck": "portal-touch",
+   "frames": 64,
+   "hash": "6fc5e88d",
+   "events": [
+    [
+     0,
+     "ArrowLeft",
+     "down"
+    ],
+    [
+     0,
+     "Space",
+     "down"
+    ],
+    [
+     37,
+     "Space",
+     "up"
+    ],
+    [
+     37,
+     "Space",
+     "down"
+    ],
+    [
+     64,
+     "Space",
+     "up"
+    ],
+    [
+     64,
+     "ArrowLeft",
+     "up"
+    ]
+   ],
+   "provenance": {
+    "generatedAtHead": "07e1f97",
+    "generatedOn": "2026-11-10",
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   }

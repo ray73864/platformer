@@ -130,10 +130,16 @@ test("named repro L30 seed 4104669369: gauntlet gone, purple enemy gone", () => 
     expect(enemies.some(e => e.row === 17)).toBe(false);
     expect(level.getEnemyManager().enemies
         .some(e => e.kind !== 'walker')).toBe(false);
-    // One patrol per remaining shelf (cap 1 each): staging and landing.
+    // W3a RE-PINNED: L30 now lives in RUINS and re-rolls as an archipelago
+    // map — the reported shelf trio is gone entirely (violations stay 0,
+    // the middle shelf at row 17 stays EMPTY, and every deployed body is a
+    // stompable walker, so both guarantees of this repro hold). The thinner
+    // ruins economy now ships THREE survivors: staging row 16, landing row
+    // 18, plus one more on row 15 (cols 7..10) whose neighborhood keeps a
+    // safe pocket — the gauntlet metric verifies zero configurations.
     expect(enemies.filter(e => e.row === 16).length).toBe(1);
     expect(enemies.filter(e => e.row === 18).length).toBe(1);
-    expect(enemies.length).toBe(2);
+    expect(enemies.length).toBe(3);
 });
 
 test("same seed twice: deployments, kinds and pixels replay identically", () => {
