@@ -1717,6 +1717,7 @@
   var WORLDS = [
     {
       name: "MEADOWS",
+      cragChance: 0,
       dirCycle: ["right", "left", "vertical"],
       gapMul: 1,
       downBias: 0.55,
@@ -1735,6 +1736,7 @@
     },
     {
       name: "CANYONS",
+      cragChance: 0.5,
       dirCycle: ["right", "left", "vertical", "left", "vertical"],
       gapMul: 1.35,
       downBias: 0.55,
@@ -1758,6 +1760,7 @@
     },
     {
       name: "CAVERNS",
+      cragChance: 1,
       dirCycle: ["vertical", "right", "vertical", "vertical"],
       gapMul: 0.9,
       downBias: 0.45,
@@ -1781,6 +1784,7 @@
     },
     {
       name: "SKYWARD",
+      cragChance: 0.2,
       dirCycle: ["right", "vertical", "left"],
       gapMul: 1.3,
       downBias: 0.55,
@@ -1804,6 +1808,7 @@
     },
     {
       name: "RUINS",
+      cragChance: 0.3,
       dirCycle: ["right", "left", "vertical"],
       gapMul: 1.1,
       downBias: 0.55,
@@ -2672,6 +2677,8 @@
   var SECRET_COIN_MIN = 1;
   var SECRET_COIN_MAX = 3;
   var CRAG_CHANCE = 1;
+  var STAMP_FILL_BUDGET = 24;
+  var STAMP_SITE_RETRIES = 2;
   function cragHash(v) {
     v ^= v >>> 16;
     v = Math.imul(v, 2146121005);
@@ -2759,19 +2766,33 @@
       };
       while (!fair && attempt < MAX_GENERATION_ATTEMPTS) {
         this.tiles = this.generateLevel();
-        const stampTrial = this._beginStampCrag(attempt);
         const mainRng = this.rng;
-        if (stampTrial)
+        let outcome = null;
+        let shippedStamp = null;
+        for (let ord = 0;ord <= STAMP_SITE_RETRIES; ord++) {
+          const stampTrial = this._beginStampCrag(attempt, ord);
+          if (!stampTrial)
+            break;
           this.rng = makeRng(stampTrial.forkSeed);
-        let outcome = evaluateAttempt();
-        if (stampTrial && !outcome.fair) {
+          outcome = evaluateAttempt();
+          if (outcome.fair && stampTrial.retentionKey !== undefined && !this.reachableTiles.has(stampTrial.retentionKey)) {
+            outcome = { valid: false, fair: false };
+          }
+          if (outcome.fair) {
+            shippedStamp = stampTrial;
+            break;
+          }
           this._undoStampCrag(stampTrial);
           this.rng = mainRng;
-          outcome = evaluateAttempt();
-        } else if (stampTrial) {
-          this.cragSite = stampTrial.site;
-          this.cragFilled = stampTrial.filled;
+          if (stampTrial.retentionKey === undefined)
+            break;
+        }
+        if (shippedStamp) {
+          this.cragSite = shippedStamp.site;
+          this.cragFilled = shippedStamp.filled;
         } else {
+          this.rng = mainRng;
+          outcome = evaluateAttempt();
           this.cragSite = null;
           this.cragFilled = null;
         }
@@ -4472,82 +4493,206 @@
       }
       return false;
     }
-    _beginStampCrag(attempt) {
-      if (CRAG_CHANCE <= 0)
+    _beginStampCrag(attempt, siteOrd = 0) {
+      const chance = this.profile?.cragChance ?? CRAG_CHANCE;
+      if (chance <= 0)
         return null;
       if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN)
         return null;
-      if (this.direction !== "vertical")
+      const base = cragHash((this.seedResolved ^ Math.imul(attempt + 1, 2654435761)) >>> 0);
+      if (base / 4294967296 >= chance)
         return null;
       const w = this.width, hgt = this.height, tiles = this.tiles;
-      const ground = new Array(w);
-      for (let x = 0;x < w; x++) {
-        let r = 0;
-        while (r < hgt && tiles[r][x] !== 1)
-          r++;
-        ground[x] = r;
-      }
-      const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
-      const sites = [];
-      for (const side of [-1, 1]) {
-        for (let c = 2;c <= w - 3; c++) {
-          const tunnelX = side === -1 ? c - 1 : c + 2;
-          const terraceX = side === -1 ? c - 2 : c + 3;
-          const farX = side === -1 ? c + 2 : c - 1;
-          if (terraceX < 1 || terraceX > w - 2)
-            continue;
-          const p = ground[c];
-          if (p >= hgt)
-            continue;
-          if (ground[c + 1] !== p || ground[tunnelX] !== p || ground[farX] !== p || ground[terraceX] !== p)
-            continue;
-          const e = p - 1;
-          if (e < ALCOVE_H_MAX + 1)
-            continue;
-          for (let h = ALCOVE_H_MIN;h <= ALCOVE_H_MAX; h++) {
-            let ok = true;
-            for (let r = e - h;r <= e && ok; r++) {
-              if (!fillable(r, c) || !fillable(r, c + 1))
-                ok = false;
-            }
-            for (let r = e - h + 1;r <= e && ok; r++) {
-              if (!fillable(r, tunnelX) || !fillable(r, farX)) {
-                ok = false;
+      if (this.direction === "vertical") {
+        const ground = new Array(w);
+        for (let x = 0;x < w; x++) {
+          let r = 0;
+          while (r < hgt && tiles[r][x] !== 1)
+            r++;
+          ground[x] = r;
+        }
+        const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
+        const sites = [];
+        for (const side of [-1, 1]) {
+          for (let c = 2;c <= w - 3; c++) {
+            const tunnelX = side === -1 ? c - 1 : c + 2;
+            const terraceX = side === -1 ? c - 2 : c + 3;
+            const farX = side === -1 ? c + 2 : c - 1;
+            if (terraceX < 1 || terraceX > w - 2)
+              continue;
+            const p = ground[c];
+            if (p >= hgt)
+              continue;
+            if (ground[c + 1] !== p || ground[tunnelX] !== p || ground[farX] !== p || ground[terraceX] !== p)
+              continue;
+            const e = p - 1;
+            if (e < ALCOVE_H_MAX + 1)
+              continue;
+            for (let h = ALCOVE_H_MIN;h <= ALCOVE_H_MAX; h++) {
+              let ok = true;
+              for (let r = e - h;r <= e && ok; r++) {
+                if (!fillable(r, c) || !fillable(r, c + 1))
+                  ok = false;
               }
+              for (let r = e - h + 1;r <= e && ok; r++) {
+                if (!fillable(r, tunnelX) || !fillable(r, farX)) {
+                  ok = false;
+                }
+              }
+              if (ok)
+                sites.push({ col: c, entryRow: e, h, side });
             }
-            if (ok)
-              sites.push({ col: c, entryRow: e, h, side });
+          }
+        }
+        if (sites.length > 0) {
+          const site = sites[cragHash((base ^ sites.length ^ 12648430) >>> 0) % sites.length];
+          const { col: c, entryRow: e, h, side } = site;
+          const tunnelX = side === -1 ? c - 1 : c + 2;
+          const farX = side === -1 ? c + 2 : c - 1;
+          const saved = [];
+          for (let r = e - h;r <= e; r++) {
+            for (const x of [c, c + 1]) {
+              saved.push({ r, x, prev: tiles[r][x] });
+              tiles[r][x] = 1;
+            }
+          }
+          for (let r = e - h + 1;r <= e; r++) {
+            for (const x of [tunnelX, farX]) {
+              saved.push({ r, x, prev: tiles[r][x] });
+              tiles[r][x] = 1;
+            }
+          }
+          const filled = new Set(saved.map((s) => s.r * w + s.x));
+          return { site, saved, filled, forkSeed: cragHash((base ^ 15784877) >>> 0) };
+        }
+      }
+      const excl = (x) => this.bridgeGap && x >= this.bridgeGap.a && x <= this.bridgeGap.b || this.shaftGap && x >= this.shaftGap.sx && x <= this.shaftGap.ex;
+      let best = [];
+      let bestFills = STAMP_FILL_BUDGET + 1;
+      for (let e = ALCOVE_H_MIN + 1;e <= hgt - 2; e++) {
+        for (let c = 1;c <= w - 3; c++) {
+          for (const side of [-1, 1]) {
+            const tunnelX = side === -1 ? c - 1 : c + 2;
+            const terraceX = side === -1 ? c - 2 : c + 3;
+            const flankX = side === -1 ? c + 2 : c - 1;
+            if (terraceX < 0 || terraceX > w - 1)
+              continue;
+            if (excl(c) || excl(c + 1) || excl(tunnelX) || excl(flankX))
+              continue;
+            for (let h = ALCOVE_H_MIN;h <= ALCOVE_H_MAX; h++) {
+              if (e - h < 0)
+                continue;
+              if (tiles[e][terraceX] !== 0 || tiles[e + 1][terraceX] !== 1)
+                continue;
+              if (tiles[e + 1][tunnelX] !== 1)
+                continue;
+              if (tiles[e + 1][c] !== 1 || tiles[e + 1][c + 1] !== 1)
+                continue;
+              if (this.direction !== "vertical") {
+                if (e + 2 < hgt && tiles[e + 1][flankX] === 0 && tiles[e + 2][flankX] === 1)
+                  continue;
+                if (e + 3 < hgt && tiles[e + 2][flankX] === 0 && tiles[e + 3][flankX] === 1)
+                  continue;
+              }
+              if (this.direction === "vertical" && (tiles[e - h][c] !== 1 || tiles[e - h][c + 1] !== 1))
+                continue;
+              let fills = 0;
+              let ok = true;
+              const need = (r, x) => {
+                const t = tiles[r][x];
+                if (t === 1)
+                  return;
+                if (t === 0) {
+                  fills++;
+                  return;
+                }
+                ok = false;
+              };
+              need(e, tunnelX);
+              for (let r = e - h;r <= e && ok; r++) {
+                need(r, c);
+                need(r, c + 1);
+              }
+              for (let r = e - h + 1;r <= e - 1 && ok; r++) {
+                need(r, tunnelX);
+              }
+              for (let r = e - h + 1;r <= e && ok; r++) {
+                need(r, flankX);
+              }
+              if (!ok)
+                continue;
+              if (fills > bestFills)
+                continue;
+              const site = { col: c, entryRow: e, h, side };
+              if (fills < bestFills) {
+                best = [site];
+                bestFills = fills;
+              } else
+                best.push(site);
+            }
           }
         }
       }
-      if (sites.length === 0)
+      if (best.length === 0)
         return null;
-      const base = cragHash((this.seedResolved ^ Math.imul(attempt + 1, 2654435761)) >>> 0);
-      if (base / 4294967296 >= CRAG_CHANCE)
-        return null;
-      const site = sites[cragHash((base ^ sites.length ^ 12648430) >>> 0) % sites.length];
-      const { col: c, entryRow: e, h, side } = site;
-      const tunnelX = side === -1 ? c - 1 : c + 2;
-      const farX = side === -1 ? c + 2 : c - 1;
-      const saved = [];
-      for (let r = e - h;r <= e; r++) {
-        for (const x of [c, c + 1]) {
+      const bandA = this.direction === "left" ? 2 : w - 4;
+      const bandB = this.direction === "left" ? 4 : w - 2;
+      const nearBand = (site) => this.direction === "vertical" ? site.entryRow - site.h <= VERTICAL_PORTAL_MAX_Y : (site.side === -1 ? site.col - 1 : site.col) <= bandB && (site.side === -1 ? site.col + 2 : site.col + 3) >= bandA;
+      const portalSurvives = () => {
+        const spawn = this.getSpawnTile();
+        const reach = computeReachable(tiles, w, hgt, spawn, this.direction === "vertical", this.bridgeGap, this.shaftGap, []);
+        for (const k of reach) {
+          const x = k % w;
+          const y = (k - x) / w;
+          if (x === spawn.x && y === spawn.y)
+            continue;
+          if (this.direction === "vertical" ? y <= VERTICAL_PORTAL_MAX_Y : x >= bandA && x <= bandB)
+            return true;
+        }
+        return false;
+      };
+      const pick0 = cragHash((base ^ best.length ^ 12648430) >>> 0) % best.length;
+      let bfsBudget = 4;
+      for (let i = siteOrd;i < best.length; i++) {
+        const site = best[(pick0 + i) % best.length];
+        const { col: c, entryRow: e, h, side } = site;
+        const tunnelX = side === -1 ? c - 1 : c + 2;
+        const flankX = side === -1 ? c + 2 : c - 1;
+        const saved = [];
+        const put = (r, x) => {
           saved.push({ r, x, prev: tiles[r][x] });
           tiles[r][x] = 1;
+        };
+        put(e, tunnelX);
+        for (let r = e - h;r <= e; r++) {
+          put(r, c);
+          put(r, c + 1);
         }
-      }
-      for (let r = e - h + 1;r <= e; r++) {
-        for (const x of [tunnelX, farX]) {
-          saved.push({ r, x, prev: tiles[r][x] });
-          tiles[r][x] = 1;
+        for (let r = e - h + 1;r <= e - 1; r++)
+          put(r, tunnelX);
+        for (let r = e - h + 1;r <= e; r++)
+          put(r, flankX);
+        if (!nearBand(site) || bfsBudget-- > 0 && portalSurvives()) {
+          const filled = new Set(saved.map((s) => s.r * w + s.x));
+          const terraceX = side === -1 ? c - 2 : c + 3;
+          return {
+            site,
+            saved,
+            filled,
+            retentionKey: e * w + terraceX,
+            forkSeed: cragHash((base ^ 15784877) >>> 0)
+          };
         }
+        for (let j = saved.length - 1;j >= 0; j--)
+          tiles[saved[j].r][saved[j].x] = saved[j].prev;
       }
-      const filled = new Set(saved.map((s) => s.r * w + s.x));
-      return { site, saved, filled, forkSeed: cragHash((base ^ 15784877) >>> 0) };
+      return null;
     }
     _undoStampCrag(trial) {
-      for (const s of trial.saved)
+      for (let i = trial.saved.length - 1;i >= 0; i--) {
+        const s = trial.saved[i];
         this.tiles[s.r][s.x] = s.prev;
+      }
     }
     placeAlcove() {
       this.alcove = null;

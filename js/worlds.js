@@ -31,9 +31,31 @@ export const MEADOW_LAST_LEVEL = 10; // inclusive end of the byte-frozen onramp
 // comment. MEADOW's values are the pre-world constants verbatim — do not
 // "tidy" them; tests/unit/worlds.test.js pins each against the legacy value
 // so a future retune cannot silently drift the onramp.
+//
+// cragChance (W3b, owner ruling 2026-11-10 "RAISE alcove prevalence"): the
+// per-attempt roll gate for the secret-alcove crag stamp (level.js
+// _beginStampCrag). Concentration follows the owner's directive — secrets
+// belong UNDERGROUND: CAVERNS highest, CANYONS next, RUINS moderate, SKYWARD
+// low-but-present, MEADOWS zero (the byte-frozen onramp reads as open
+// meadow; hidden chambers contradict the zone's semantics, and later
+// MEADOW bands keep that reading). Values are the shipped point of the
+// prevalence frontier measured in the W3b report (attempts economy + ms
+// budget + exhaustion-zero over >= 2000 tier>=2 seeds). The numbers are
+// calibrated against REALIZED shipped prevalence, not raw roll odds: host
+// geometry differs per world (hollow CAVERNS maps convert chance into fewer
+// stamps than solid RUINS walls), so equal chances would NOT preserve the
+// mandated ordering (measured at equal-ish chances: RUINS out-shipped
+// CANYONS despite the lower knob).
+// MEADOWS zero-stamp disclosure (M-1, controller-approved 2026-11-10): the
+// cragChance: 0 policy also ERASES the rare BASE-era stamped vertical L10
+// maps that the old uniform CRAG_CHANCE produced (~0.2% of L1..10 runs —
+// 4/2000 controller-measured, 2/2000 on the W3b seed family). Intentional:
+// MEADOW is the tutorial world and secrets belong from L11 up; this is a
+// deliberate break of strict byte-freeze for exactly those seeds.
 export const WORLDS = [
     {
         name: 'MEADOWS',
+        cragChance: 0,      // open meadows hide nothing (see header above)
         // Legacy travel cycle (directionForLevel in level.js pre-W3a).
         dirCycle: ['right', 'left', 'vertical'],
         gapMul: 1,          // generatePlatforms: phase-2 gap chance scalar
@@ -53,6 +75,7 @@ export const WORLDS = [
     },
     {
         name: 'CANYONS',
+        cragChance: 0.5,    // terrace faces host chambers; kept under CAVERNS
         // Horizontal world: wide terraces read as canyon floors, and the
         // extra climb slots go into deck bridges instead. Two mesa-climbs
         // per five levels keep neighbouring canyons structurally distinct
@@ -86,6 +109,7 @@ export const WORLDS = [
     },
     {
         name: 'CAVERNS',
+        cragChance: 1,      // secrets belong underground: the top host world
         // Vertical-heavy world: three climbs in five levels, denser shelf
         // switchbacks, and the elevator ships whenever geometry allows.
         dirCycle: ['vertical', 'right', 'vertical', 'vertical'],
@@ -113,6 +137,7 @@ export const WORLDS = [
     },
     {
         name: 'SKYWARD',
+        cragChance: 0.2,    // low-but-present: sealed rock reads wrong over void
         // Floating-chain world: gap-heavy surfaces plus near-guaranteed deck
         // corridors read as island chains over open void.
         dirCycle: ['right', 'vertical', 'left'],
@@ -140,6 +165,7 @@ export const WORLDS = [
     },
     {
         name: 'RUINS',
+        cragChance: 0.3,    // moderate: rubble hides cellars
         // Spike-garnished ledge maze: short tight platforms, broken ground,
         // the densest hazard economy the spacing rules allow.
         dirCycle: ['right', 'left', 'vertical'],

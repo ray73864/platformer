@@ -164,10 +164,19 @@ const requiredCoinKeys = level => level.coins
 const carveAdditions = level => {
     const a = level.getAlcove && level.getAlcove();
     if (!a) return new Set();
-    return new Set([
+    // W3b: direction-aware. Verticals (headroom-aware shipped BFS): the
+    // shaft-floor pair only (+2) — the tunnel cell lacks the open head.
+    // Horizontals (plain BFS): the pair PLUS the carved tunnel mouth (+3),
+    // which reads standable once flipped to air. Mirrors the pinned delta
+    // in alcove_stamp_safety.test.js.
+    const s = new Set([
         a.entryRow * level.width + a.col,
         a.entryRow * level.width + a.col + 1
     ]);
+    if (level.direction !== 'vertical') {
+        s.add(a.tunnel.r * level.width + a.tunnel.x);
+    }
+    return s;
 };
 
 // ---------------------------------------------------------------------------

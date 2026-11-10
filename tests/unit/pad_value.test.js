@@ -157,15 +157,22 @@ function baseGoldens() {
     // non-meadow level; L10 (MEADOWS) verified byte-equal to the BASE-era
     // capture — the rest are re-hashed from the new deterministic bytes so
     // this keeps guarding FUTURE model/reachability drift.
+    // W3b RE-RECORDED 2026-11-10: the alcove-prevalence wave moves SIX
+    // goldens (verified against the BASE tree; every other golden is
+    // byte-equal to its W3a capture): L11s413641, L13s429479, L15s445317,
+    // L18s469074 and L27s540345 newly-STAMPED by class B, and L28s548264
+    // whose BASE-era stamp now rolls OFF the lower world cragChance. Both
+    // directions are the intended per-world concentration (see worlds.js
+    // and w3b-report.md); neither touches an unstamped map.
     [10, 405722, "1b906df5"],
-    [11, 413641, "72470596"],
+    [11, 413641, "8dedff75"],
     [12, 421560, "51a3faf2"],
-    [13, 429479, "9f719d16"],
+    [13, 429479, "643d3392"],
     [14, 437398, "82ec32a7"],
-    [15, 445317, "101f9603"],
+    [15, 445317, "3d63e457"],
     [16, 453236, "736b8b6"],
     [17, 461155, "c9513259"],
-    [18, 469074, "a4acf6fd"],
+    [18, 469074, "40c58f08"],
     [19, 476993, "8843eef3"],
     [20, 484912, "77a3a26a"],
     [21, 492831, "37802381"],
@@ -174,8 +181,8 @@ function baseGoldens() {
     [24, 516588, "e71f4396"],
     [25, 524507, "c71fb677"],
     [26, 532426, "d3f93f63"],
-    [27, 540345, "cb95469d"],
-    [28, 548264, "96226bf"],
+    [27, 540345, "6fb3a462"],
+    [28, 548264, "948c46ce"],
     [29, 556183, "1485056d"],
     [30, 564102, "8ce5b019"],
     [31, 572021, "5641600f"],

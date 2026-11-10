@@ -17,8 +17,9 @@ import { Collectibles } from "../../js/collectibles.js";
 
 // Deterministic numeric-seed band (>>>0 coerced — string seeds would all
 // collapse to one terrain per level, the very probe bug fix round 1 fixes).
-// Levels chosen empirically: these are the ones whose seed-derived direction
-// (vertical) + wide ledges host the stamp; 16/150 maps ship stamped alcoves.
+// W3b: these levels span four host worlds (CANYONS/CAVERNS/SKYWARD/RUINS);
+// class-B face chambers ship mostly on the horizontal ones. ~10/150 maps
+// ship stamped alcoves in-band.
 const LEVELS = [10, 13, 19, 25, 28];
 function sweepMaps() {
     const out = [];
@@ -104,12 +105,20 @@ test("carve standable delta on shipped stamped maps is pure addition (+2/-0)",
                 expect(post.has(k)).toBe(true); // NOTHING lost (-0)
             }
             const added = [...post].filter((k) => !L.reachableTiles.has(k));
-            // Exactly the shaft-floor pair (+2): the tunnel cell lacks the
-            // open head the vertical BFS requires, interior rows have no floor.
-            expect(new Set(added)).toEqual(new Set([
+            // W3b: the added set depends on the BFS the DIRECTION ships.
+            // Verticals (headroom-aware): exactly the shaft-floor pair (+2)
+            // — the tunnel cell lacks the open head, interior rows no floor.
+            // Horizontals (plain BFS): the pair PLUS the tunnel mouth (+3),
+            // which reads standable once carved. Both are pure additions of
+            // dead-end carve cells; nothing outside the footprint changes.
+            const expectSet = new Set([
                 a.entryRow * L.width + a.col,
                 a.entryRow * L.width + a.col + 1
-            ]));
+            ]);
+            if (L.direction !== 'vertical') {
+                expectSet.add(a.tunnel.r * L.width + a.tunnel.x);
+            }
+            expect(new Set(added)).toEqual(expectSet);
         }
         console.log(`standable-delta check: ${checked} shipped stamped maps`);
         expect(checked).toBeGreaterThanOrEqual(5);

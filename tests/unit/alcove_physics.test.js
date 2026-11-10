@@ -207,3 +207,133 @@ test("predicate negatives: 3-wide, 1-wide and no-cap shapes never ship", () => {
     expect(alcoveGeometryValid(noCap, 14, 12, { col: 6, entryRow: 9, h: 3, side: -1 }))
         .toBe(false);
 });
+
+// ---------------------------------------------------------------------------
+// W3b CLASS B — face chambers embedded in mesa-step relief (the new host
+// shape the fill planner manufactures on horizontal maps). The post-carve
+// interior is the SAME proven chimney family, but the doctrine demands an
+// explicit sim over the new host's parameterized shape: deep entry row,
+// NATURAL cap inside the massif body, flank/far walls carried by the step's
+// own rock. Fixture geometry mirrors measured shipped layouts (e.g. L11
+// seed 191841: massif pillar rising above the walk line, mouth at the
+// standable row, chamber fully sub-surface under the pillar cap).
+// ---------------------------------------------------------------------------
+function faceChamber(h, side = -1) {
+    const H = 14, W = 16;
+    const pre = Array.from({ length: H }, () => ".".repeat(W));
+    const e = 10;                       // entry row == walk-line row
+    const topRow = e - h;               // natural cap row (pillar top)
+    // Walk-line ground under rows 11..13, full width.
+    for (let r = 11; r < H; r++) pre[r] = "#".repeat(W);
+    // Massif pillar: cols 5..8; cap row carries cols 6..7 only.
+    for (let r = topRow + 1; r <= 10; r++) {
+        for (const x of [5, 6, 7, 8]) pre[r] = slice(pre[r], x, "#");
+    }
+    for (const x of [6, 7]) pre[topRow] = slice(pre[topRow], x, "#");
+    // Mirror for side +1 (terrace on the right).
+    const rows = side === -1 ? pre : pre.map((r) => [...r].reverse().join(""));
+    const c = side === -1 ? 6 : W - 1 - 7;   // shaft left column
+    const grid = rows.map((r) => [...r].map((ch) => (ch === "#" ? 1 : 0)));
+    return { grid, W, H, e, c, topRow, side };
+}
+function slice(row, x, ch) {
+    return row.slice(0, x) + ch + row.slice(x + 1);
+}
+
+test("class-B face chambers pass the predicate pre-carve for h=3..5, both sides", () => {
+    for (const side of [-1, 1]) {
+        for (const h of [3, 4, 5]) {
+            const f = faceChamber(h, side);
+            expect(alcoveGeometryValid(f.grid, f.W, f.H,
+                { col: f.c, entryRow: f.e, h, side }), `h=${h} side=${side}`)
+                .toBe(true);
+        }
+    }
+});
+
+test("class-B face chambers climb through the mouth for h=3..5 (real engine)", () => {
+    for (const h of [3, 4, 5]) {
+        const f = faceChamber(h, -1);
+        // Carve exactly like _carveAlcove: mouth + shaft columns.
+        const post = f.grid.map((r) => r.slice());
+        post[f.e][f.c - 1] = 0;
+        for (let r = f.e - h + 1; r <= f.e; r++) { post[r][f.c] = 0; post[r][f.c + 1] = 0; }
+        const rowsStr = post.map((r) => r.map((t) => (t === 1 ? "#" : ".")).join(""));
+        // Walk in from the terrace (hold right until inside the shaft),
+        // then hand over to the alternating climber (tunnel-mouth doctrine).
+        let entered = false;
+        const guide = (p) => {
+            if (!entered && p.grounded && p.x >= f.c * T - 4) entered = true;
+            if (!entered) return { press: false, r: true };
+            return climber(p);
+        };
+        const res = climb(rowsStr, 2 * T, f.e * T, 1500, guide);
+        expect(entered, `enter h=${h}`).toBe(true);
+        expect(res.climbedRows, `climb h=${h}`)
+            .toBeGreaterThanOrEqual(h - 1 - 0.01);
+    }
+});
+
+test("class-B face chambers climb for h=3..5 on BOTH sides (away-mouth doctrine)", () => {
+    // The W3b natural-loop finding, pinned at sim level: a grounded hop
+    // toward the OPEN mouth lets the bottom-row wall kick slide the player
+    // straight back out through the tunnel cell. Grounded hops must steer
+    // DEEP (away from the mouth); mid-air steering stays face-toward-wall.
+    const deepClimber = (p, deepRight) => {
+        if (p.grounded) return deepRight
+            ? { press: true, r: true }
+            : { press: true, l: true };
+        const towardR = p.wallSide !== 1;
+        const fresh = p._airFrames > 2;
+        const press = p.wallSide !== 0 && p.wallLockTimer <= 0 &&
+            p.wallSide !== p.lastKickSide;
+        return { press, l: towardR ? false : fresh, r: towardR ? fresh : false };
+    };
+    for (const side of [-1, 1]) {
+        for (const h of [3, 4, 5]) {
+            const f = faceChamber(h, side);
+            const post = f.grid.map((r) => r.slice());
+            const tunnelX = side === -1 ? f.c - 1 : f.c + 2;
+            post[f.e][tunnelX] = 0;
+            for (let r = f.e - h + 1; r <= f.e; r++) {
+                post[r][f.c] = 0; post[r][f.c + 1] = 0;
+            }
+            const rowsStr = post.map((r) =>
+                r.map((t) => (t === 1 ? "#" : ".")).join(""));
+            let entered = false;
+            const deepRight = side === -1;
+            // Shaft-centre entry (edge thresholds start the climb half in
+            // the tunnel cell, where the first kick escapes outward).
+            const inside = (p) => side === -1
+                ? p.x >= (f.c + 1) * T - 6
+                : p.x <= (f.c + 1) * T + 6;
+            const guide = (p) => {
+                if (!entered && p.grounded && inside(p)) entered = true;
+                if (!entered) return { press: false, r: deepRight, l: !deepRight };
+                return deepClimber(p, deepRight);
+            };
+            const startX = side === -1 ? 2 * T : (f.W - 3) * T;
+            const res = climb(rowsStr, startX, f.e * T, 1500, guide);
+            expect(entered, `enter h=${h} side=${side}`).toBe(true);
+            expect(res.climbedRows, `climb h=${h} side=${side}`)
+                .toBeGreaterThanOrEqual(h - 1 - 0.01);
+        }
+    }
+});
+
+test("class-B negatives: no cap, no terrace floor, hazard in the shaft", () => {
+    const h = 3;
+    const f = faceChamber(h, -1);
+    const noCap = f.grid.map((r) => r.slice());
+    noCap[f.e - h][f.c] = 0; noCap[f.e - h][f.c + 1] = 0;
+    expect(alcoveGeometryValid(noCap, f.W, f.H,
+        { col: f.c, entryRow: f.e, h, side: -1 })).toBe(false);
+    const noTerraceFloor = f.grid.map((r) => r.slice());
+    noTerraceFloor[f.e + 1][f.c - 2] = 0;
+    expect(alcoveGeometryValid(noTerraceFloor, f.W, f.H,
+        { col: f.c, entryRow: f.e, h, side: -1 })).toBe(false);
+    const spiked = f.grid.map((r) => r.slice());
+    spiked[f.e - 1][f.c] = 2; // spike where the stamp would need rock
+    expect(alcoveGeometryValid(spiked, f.W, f.H,
+        { col: f.c, entryRow: f.e, h, side: -1 })).toBe(false);
+});

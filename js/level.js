@@ -1780,11 +1780,14 @@ const CRATE_MAX_TRAVEL_PAST_END = 3;
 // NO budget roll at the finder itself: natural eligible sites are ZERO on
 // horizontal heightmaps (steps <= 1 row) and ZERO on verticals too (the full
 // fix-round study — see the CRAG_ header); what hosts alcoves is the crag
-// STAMP, whose own chance gate (CRAG_CHANCE, shipped 1.0) lives upstream in
-// the attempt loop. Measured shipped prevalence with the stamp: ~2.4-3.2% of
-// tier>=2 maps carry a carved alcove (bands in the Task 6 report fix-round
-// section). The "<= 1 per map" budget is structural (one pick), and
-// candidate preference scoring still differentiates seeds by SITE PRESENCE.
+// STAMP, whose own chance gate now reads the WORLD PROFILE
+// (profile.cragChance, W3b; fallback CRAG_CHANCE). Measured shipped
+// prevalence after W3b: ~7-8% of tier>=2 maps overall, CONCENTRATED in the
+// host worlds per the owner ruling (CAVERNS ~12%, CANYONS/RUINS ~10-12%,
+// SKYWARD ~4%, MEADOWS 0 — frontier table + three-way numbers in the W3b
+// report; pre-W3b it was ~2.4-3.2%, vertical-only habitat). The "<= 1 per
+// map" budget is structural (one pick), and candidate preference scoring
+// still differentiates seeds by SITE PRESENCE.
 const ALCOVE_TIER_MIN = 2;
 const ALCOVE_H_MIN = 3;   // shaft rows (interior above the shaft floor = h-1)
 const ALCOVE_H_MAX = 5;
@@ -1809,14 +1812,29 @@ const SECRET_COIN_MAX = 3;
 // upstream of the trial, so they are untouched; downstream floats (deck
 // speed/phase, coin placement, pad/crate picks) draw from the fork on
 // STAMPED maps only — documented intentional delta.
-// SHIPPED VALUE (fix round 1 frontier under the fork/undo protocol,
+// SHIPPED VALUE history (fix round 1 frontier under the fork/undo protocol,
 // L10..60 x 20 numeric seeds/tree + disjoint 2040-seed exhaustion band,
 // /tmp/opencode/t6-alcove): chance {0.25, 0.55, 1.0} all satisfy mean
 // attempts <= BASE+1.0 and ms < 15% with ZERO exhaustion; 1.0 maximizes
 // prevalence (~3% of tier>=2 maps ship a carved alcove — vertical habitat).
 // Stamped maps INTENTIONALLY differ from BASE; unstamped maps are verified
 // byte-identical on the unstamped subset (report fix-round gate (a)).
+// W3b (owner ruling "RAISE"): this constant is now the FALLBACK DEFAULT for
+// profiles without a cragChance field (stubbed Level fixtures in tests).
+// Per-world policy lives in js/worlds.js profile.cragChance — MEADOWS 0,
+// CAVERNS 1, CANYONS/RUINS/SKYWARD tuned along the W3b prevalence frontier
+// (table in the W3b report). The roll position/fork discipline below is
+// UNCHANGED: decision/site-pick/fork-seed come from cragHash only.
 const CRAG_CHANCE = 1;
+
+// Class-B face-chamber fill planner (W3b): maximum stamp-written cells for
+// an accepted site. Bounds terrain damage per map; sites needing more never
+// ship. Sized above the tallest class-A bump (h=5 writes 15 cells) so the
+// legacy habitat's shape space stays expressible through the planner too.
+const STAMP_FILL_BUDGET = 24;
+// Extra class-B site tries per terrain after the first dies in validation
+// (zero attempt cost, wall time only — see the constructor site-retry loop).
+const STAMP_SITE_RETRIES = 2;
 
 // Hash for the stamp's decision/site-pick/fork-seed (fix round 1): a pure
 // avalanche mix, NOT the level rng — the stamp must never consume main-
@@ -2025,18 +2043,48 @@ export class Level {
             //  * a failing stamp costs NO generation attempt (the unstamped
             //    verdict for the same terrain still stands), so the stamp
             //    cannot burn the retry budget.
-            const stampTrial = this._beginStampCrag(attempt);
             const mainRng = this.rng;
-            if (stampTrial) this.rng = makeRng(stampTrial.forkSeed);
-            let outcome = evaluateAttempt();
-            if (stampTrial && !outcome.fair) {
+            let outcome = null;
+            let shippedStamp = null;
+            // SITE RETRIES (W3b fix round): a class-B site can die in the
+            // real validator even when other equal-min-fill sites of the
+            // SAME terrain would survive (portal burial measured, route
+            // deaths remain). Each retry re-picks down the rotation with a
+            // fresh forked stream; failed stamps still cost ZERO generation
+            // attempts, so this only spends wall time. Class A keeps its
+            // BASE single shot (byte identity).
+            for (let ord = 0; ord <= STAMP_SITE_RETRIES; ord++) {
+                const stampTrial = this._beginStampCrag(attempt, ord);
+                if (!stampTrial) break;
+                this.rng = makeRng(stampTrial.forkSeed);
+                outcome = evaluateAttempt();
+                // W3b RETENTION GUARD (class-B trials only): a stamped host
+                // whose mouth terrace is NOT on the stamped flood can never
+                // be carved — placeAlcove's candidate finder would reject it
+                // and the map would ship a bare rock bump with no secret
+                // (measured churn: 15/75 RUINS verticals before this guard).
+                // Forcing the trial unfair routes it through the standard
+                // UNDO path. Class A keeps BASE behaviour verbatim (its
+                // kept-no-carve rate was 2/137 and ships in the witness tree).
+                if (outcome.fair &&
+                    stampTrial.retentionKey !== undefined &&
+                    !this.reachableTiles.has(stampTrial.retentionKey)) {
+                    outcome = { valid: false, fair: false };
+                }
+                if (outcome.fair) {
+                    shippedStamp = stampTrial;
+                    break;
+                }
                 this._undoStampCrag(stampTrial);
                 this.rng = mainRng;
-                outcome = evaluateAttempt();
-            } else if (stampTrial) {
-                this.cragSite = stampTrial.site;
-                this.cragFilled = stampTrial.filled;
+                if (stampTrial.retentionKey === undefined) break;
+            }
+            if (shippedStamp) {
+                this.cragSite = shippedStamp.site;
+                this.cragFilled = shippedStamp.filled;
             } else {
+                this.rng = mainRng;
+                outcome = evaluateAttempt();
                 this.cragSite = null;
                 this.cragFilled = null;
             }
@@ -5018,8 +5066,8 @@ export class Level {
     // attempts, R6 economy rule), and every rng draw sits behind all other
     // consumers.
     /**
-     * R8 crag stamp — manufactures the ONE alcove host shape the pure-height
-     * grammar cannot produce (see CRAG_ header). FIX ROUND 1 protocol (no
+     * R8 crag stamp — manufactures the alcove hosts the pure-height grammar
+     * cannot produce (see CRAG_ header). FIX ROUND 1 protocol (no
      * main-stream rng, ever):
      *   1. enumerate legal host sites on the fresh grid (pure read);
      *   2. decide + pick via HASH32(seedResolved, attempt ordinal) — zero
@@ -5034,84 +5082,262 @@ export class Level {
      * Fills only air/solid rock cells — spike (2) and marker (4) cells are
      * never overwritten (a footprint touching one is rejected), and bridge
      * corridors stay untouched.
+     *
+     * W3b HOST CLASSES (owner ruling "RAISE alcove prevalence"):
+     *  A. VERTICAL WIDE-LEDGE BUMP (Task 6 original, VERBATIM): on vertical
+     *     maps only, flat five-column runs get a rock bump above the ledge
+     *     line. Enumerated FIRST and byte-identically — every seed/direction
+     *     where class A finds sites ships exactly what BASE shipped (same
+     *     roll position, same site list, same pick, same forkSeed).
+     *  B. FACE CHAMBER (new): a predicate-driven fill planner over EVERY
+     *     window (col, entryRow, h, side) the alcoveGeometryValid demands —
+     *     each demanded-rock cell must be natural rock or plain air
+     *     (fillable); floors and the terrace free cell must be NATURAL (the
+     *     mouth opens onto ground the player already walks, and no body can
+     *     lose support under a manufactured floor). On verticals the cap row
+     *     must additionally be natural rock (sub-surface chambers inside the
+     *     mesa stacks — protruding bumps seal the single climb corridor of
+     *     vertical routes and die in validation ~97% of trials, measured).
+     *     On horizontals the cap may be filled: mesa-step relief converts
+     *     cheaply into a side-carved shaft whose net surface delta is a
+     *     one-row trench plus a cap lip, both inside the movement model's
+     *     step budget. Score = fills needed; the min-fill tier is kept and
+     *     hash-picked (deterministic scan order). Columns inside a deck-
+     *     bridge void or an elevator chimney are excluded outright.
+     * Class B fires only when class A found nothing, so its churn is purely
+     * additive over BASE.
      */
-    _beginStampCrag(attempt) {
+    _beginStampCrag(attempt, siteOrd = 0) {
         // Inert guard FIRST: at chance 0 nothing here may even enumerate —
-        // byte identity vs BASE must hold for EVERY map.
-        if (CRAG_CHANCE <= 0) return null;
-        // Measured habitat study (Task 6 + fix round 1, full data in the
-        // report): horizontal flat-ground massifs and void-gap islands fail
-        // the validators structurally (single-file corridors sealed by the
-        // predicate's full-height far wall); VERTICAL wide ledges are the
-        // viable habitat (multi-path ascents, >= 5-column flats on every
-        // sampled map), so the stamp targets vertical maps only.
+        // byte identity vs BASE must hold for EVERY map of that world.
+        const chance = this.profile?.cragChance ?? CRAG_CHANCE;
+        if (chance <= 0) return null;
         if (tierIndexFor(this.levelNumber) < ALCOVE_TIER_MIN) return null;
-        if (this.direction !== 'vertical') return null;
+        const base = cragHash((this.seedResolved ^
+            Math.imul(attempt + 1, 0x9E3779B1)) >>> 0);
+        if (base / 0x100000000 >= chance) return null;
         const w = this.width, hgt = this.height, tiles = this.tiles;
-        const ground = new Array(w);
-        for (let x = 0; x < w; x++) {
-            let r = 0;
-            while (r < hgt && tiles[r][x] !== 1) r++;
-            ground[x] = r;
-        }
-        const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
-        const sites = [];
-        for (const side of [-1, 1]) {
-            for (let c = 2; c <= w - 3; c++) {
-                const tunnelX = side === -1 ? c - 1 : c + 2;
-                const terraceX = side === -1 ? c - 2 : c + 3;
-                const farX = side === -1 ? c + 2 : c - 1;
-                if (terraceX < 1 || terraceX > w - 2) continue;
-                const p = ground[c];
-                if (p >= hgt) continue;
-                if (ground[c + 1] !== p || ground[tunnelX] !== p ||
-                    ground[farX] !== p || ground[terraceX] !== p) continue;
-                const e = p - 1;                       // entry row
-                if (e < ALCOVE_H_MAX + 1) continue;    // cap headroom
-                for (let h = ALCOVE_H_MIN; h <= ALCOVE_H_MAX; h++) {
-                    let ok = true;
-                    for (let r = e - h; r <= e && ok; r++) {
-                        if (!fillable(r, c) || !fillable(r, c + 1)) ok = false;
-                    }
-                    for (let r = e - h + 1; r <= e && ok; r++) {
-                        if (!fillable(r, tunnelX) || !fillable(r, farX)) {
-                            ok = false;
+        // ── CLASS A: vertical wide-ledge bumps (BASE, verbatim) ────────────
+        if (this.direction === 'vertical') {
+            const ground = new Array(w);
+            for (let x = 0; x < w; x++) {
+                let r = 0;
+                while (r < hgt && tiles[r][x] !== 1) r++;
+                ground[x] = r;
+            }
+            const fillable = (r, x) => tiles[r][x] === 0 || tiles[r][x] === 1;
+            const sites = [];
+            for (const side of [-1, 1]) {
+                for (let c = 2; c <= w - 3; c++) {
+                    const tunnelX = side === -1 ? c - 1 : c + 2;
+                    const terraceX = side === -1 ? c - 2 : c + 3;
+                    const farX = side === -1 ? c + 2 : c - 1;
+                    if (terraceX < 1 || terraceX > w - 2) continue;
+                    const p = ground[c];
+                    if (p >= hgt) continue;
+                    if (ground[c + 1] !== p || ground[tunnelX] !== p ||
+                        ground[farX] !== p || ground[terraceX] !== p) continue;
+                    const e = p - 1;                       // entry row
+                    if (e < ALCOVE_H_MAX + 1) continue;    // cap headroom
+                    for (let h = ALCOVE_H_MIN; h <= ALCOVE_H_MAX; h++) {
+                        let ok = true;
+                        for (let r = e - h; r <= e && ok; r++) {
+                            if (!fillable(r, c) || !fillable(r, c + 1)) ok = false;
                         }
+                        for (let r = e - h + 1; r <= e && ok; r++) {
+                            if (!fillable(r, tunnelX) || !fillable(r, farX)) {
+                                ok = false;
+                            }
+                        }
+                        if (ok) sites.push({ col: c, entryRow: e, h, side });
                     }
-                    if (ok) sites.push({ col: c, entryRow: e, h, side });
+                }
+            }
+            if (sites.length > 0) {
+                const site = sites[cragHash((base ^ sites.length ^
+                    0xC0FFEE) >>> 0) % sites.length];
+                const { col: c, entryRow: e, h, side } = site;
+                const tunnelX = side === -1 ? c - 1 : c + 2;
+                const farX = side === -1 ? c + 2 : c - 1;
+                const saved = [];
+                for (let r = e - h; r <= e; r++) {
+                    for (const x of [c, c + 1]) {
+                        saved.push({ r, x, prev: tiles[r][x] });
+                        tiles[r][x] = 1;
+                    }
+                }
+                for (let r = e - h + 1; r <= e; r++) {
+                    for (const x of [tunnelX, farX]) {
+                        saved.push({ r, x, prev: tiles[r][x] });
+                        tiles[r][x] = 1;
+                    }
+                }
+                const filled = new Set(saved.map((s) => s.r * w + s.x));
+                return { site, saved, filled, forkSeed: cragHash((base ^ 0xF0DBAD) >>> 0) };
+            }
+        }
+        // ── CLASS B: face-chamber fill planner (W3b) ───────────────────────
+        const excl = (x) =>
+            (this.bridgeGap && x >= this.bridgeGap.a && x <= this.bridgeGap.b) ||
+            (this.shaftGap && x >= this.shaftGap.sx && x <= this.shaftGap.ex);
+        let best = [];
+        let bestFills = STAMP_FILL_BUDGET + 1;
+        for (let e = ALCOVE_H_MIN + 1; e <= hgt - 2; e++) {
+            for (let c = 1; c <= w - 3; c++) {
+                for (const side of [-1, 1]) {
+                    const tunnelX = side === -1 ? c - 1 : c + 2;
+                    const terraceX = side === -1 ? c - 2 : c + 3;
+                    const flankX = side === -1 ? c + 2 : c - 1;
+                    if (terraceX < 0 || terraceX > w - 1) continue;
+                    if (excl(c) || excl(c + 1) || excl(tunnelX) || excl(flankX)) continue;
+                    for (let h = ALCOVE_H_MIN; h <= ALCOVE_H_MAX; h++) {
+                        if (e - h < 0) continue;
+                        // Natural-only requirements: terrace standable free
+                        // cell on solid ground; tunnel + shaft floors.
+                        if (tiles[e][terraceX] !== 0 ||
+                            tiles[e + 1][terraceX] !== 1) continue;
+                        if (tiles[e + 1][tunnelX] !== 1) continue;
+                        if (tiles[e + 1][c] !== 1 || tiles[e + 1][c + 1] !== 1) continue;
+                        // Horizontal clearance belt-and-braces (W3b fix
+                        // round 1, honest wording): refuse windows whose
+                        // flank write would cap a NON-alcove standable cell
+                        // at y-1/y-2 (the level_motifs horizontal clearance
+                        // rule). Measured reality: current candidate grammar
+                        // never lets such a window WIN the min-fill pick —
+                        // cliff-edge flanks cost more fills than the clean
+                        // alternatives that always coexist, so removing this
+                        // guard changes zero shipped maps and NO shipped
+                        // test goes red (motif audit stays 0 violations even
+                        // with the guard deleted; 6411 rejections observed
+                        // over 3000 builds, none decisive). Kept as
+                        // defense-in-depth against future grammar drift;
+                        // see w3b-report.md FIX REPORT m-2.
+                        if (this.direction !== 'vertical') {
+                            if (e + 2 < hgt &&
+                                tiles[e + 1][flankX] === 0 &&
+                                tiles[e + 2][flankX] === 1) continue;
+                            if (e + 3 < hgt &&
+                                tiles[e + 2][flankX] === 0 &&
+                                tiles[e + 3][flankX] === 1) continue;
+                        }
+                        // Verticals: sub-surface chambers only (see header).
+                        if (this.direction === 'vertical' &&
+                            (tiles[e - h][c] !== 1 || tiles[e - h][c + 1] !== 1)) continue;
+                        let fills = 0;
+                        let ok = true;
+                        const need = (r, x) => {
+                            const t = tiles[r][x];
+                            if (t === 1) return;
+                            if (t === 0) { fills++; return; }
+                            ok = false; // spike/marker demand: reject site
+                        };
+                        need(e, tunnelX);                                   // mouth rock
+                        for (let r = e - h; r <= e && ok; r++) {            // shaft + cap
+                            need(r, c); need(r, c + 1);
+                        }
+                        // Flank wall ABOVE the mouth only (rows e-h+1..e-1):
+                        // re-scoring row e here would double-count the mouth
+                        // fill, and a double WRITE would poison _undoStampCrag
+                        // (the second save records prev=1, so an undone trial
+                        // leaks a rock cell — W3b code-review catch).
+                        for (let r = e - h + 1; r <= e - 1 && ok; r++) {
+                            need(r, tunnelX);
+                        }
+                        for (let r = e - h + 1; r <= e && ok; r++) {        // far wall
+                            need(r, flankX);
+                        }
+                        if (!ok) continue;
+                        if (fills > bestFills) continue;
+                        const site = { col: c, entryRow: e, h, side };
+                        if (fills < bestFills) { best = [site]; bestFills = fills; }
+                        else best.push(site);
+                    }
                 }
             }
         }
-        if (sites.length === 0) return null;           // zero everything
-        const base = cragHash((this.seedResolved ^
-            Math.imul(attempt + 1, 0x9E3779B1)) >>> 0);
-        if (base / 0x100000000 >= CRAG_CHANCE) return null;
-        const site = sites[cragHash((base ^ sites.length ^
-            0xC0FFEE) >>> 0) % sites.length];
-        const { col: c, entryRow: e, h, side } = site;
-        const tunnelX = side === -1 ? c - 1 : c + 2;
-        const farX = side === -1 ? c + 2 : c - 1;
-        const saved = [];
-        for (let r = e - h; r <= e; r++) {
-            for (const x of [c, c + 1]) {
+        if (best.length === 0) return null;            // zero everything
+        // Portal-survival retry (W3b fix round): min-fill scoring gravitates
+        // to thin-walled ledges that ARE the portal band on hollow CAVERNS
+        // maps, and those fills bury the band's last REACHABLE cell —
+        // pickPortalTile then returns null and the whole trial dies (measured
+        // 1427/1429 cavern B trials). Static proxies for "band still alive"
+        // all misfire (portals need REACHABLE cells, not standable or merely
+        // free ones), so pay one real computeReachable per BAND-TOUCHING
+        // candidate (capped) and skip the ones that kill the portal. Band
+        // ranges mirror inPortalBand: vertical rows 0..VERTICAL_PORTAL_MAX_Y,
+        // 'left' cols [2,4], else cols [w-4, w-2]. A clean (non-touching)
+        // candidate can never bury the band and short-circuits the BFS.
+        const bandA = this.direction === 'left' ? 2 : w - 4;
+        const bandB = this.direction === 'left' ? 4 : w - 2;
+        const nearBand = (site) => this.direction === 'vertical'
+            ? site.entryRow - site.h <= VERTICAL_PORTAL_MAX_Y
+            : (site.side === -1 ? site.col - 1 : site.col) <= bandB &&
+              (site.side === -1 ? site.col + 2 : site.col + 3) >= bandA;
+        const portalSurvives = () => {
+            // getSpawnTile is pure (no rng); this.spawnTile may still hold
+            // the PREVIOUS attempt's value while stamping runs.
+            const spawn = this.getSpawnTile();
+            const reach = computeReachable(
+                tiles, w, hgt, spawn,
+                this.direction === 'vertical', this.bridgeGap,
+                this.shaftGap, []
+            );
+            for (const k of reach) {
+                const x = k % w;
+                const y = (k - x) / w;
+                if (x === spawn.x && y === spawn.y) continue;
+                if (this.direction === 'vertical'
+                    ? y <= VERTICAL_PORTAL_MAX_Y
+                    : x >= bandA && x <= bandB) return true;
+            }
+            return false;
+        };
+        const pick0 = cragHash((base ^ best.length ^ 0xC0FFEE) >>> 0) % best.length;
+        let bfsBudget = 4;
+        // siteOrd walks the equal-min-fill rotation when an earlier site of
+        // THIS terrain already died in the real validator (see constructor):
+        // stamp-site retries cost zero generation attempts, so exploring a
+        // second/third candidate is free economy — only wall time.
+        for (let i = siteOrd; i < best.length; i++) {
+            const site = best[(pick0 + i) % best.length];
+            const { col: c, entryRow: e, h, side } = site;
+            const tunnelX = side === -1 ? c - 1 : c + 2;
+            const flankX = side === -1 ? c + 2 : c - 1;
+            const saved = [];
+            const put = (r, x) => {
                 saved.push({ r, x, prev: tiles[r][x] });
                 tiles[r][x] = 1;
+            };
+            put(e, tunnelX);
+            for (let r = e - h; r <= e; r++) { put(r, c); put(r, c + 1); }
+            // No duplicate writes anywhere (see undo-poisoning note above).
+            for (let r = e - h + 1; r <= e - 1; r++) put(r, tunnelX);
+            for (let r = e - h + 1; r <= e; r++) put(r, flankX);
+            if (!nearBand(site) || bfsBudget-- > 0 && portalSurvives()) {
+                const filled = new Set(saved.map((s) => s.r * w + s.x));
+                // Retention key (see constructor): terrace cell of this site.
+                const terraceX = side === -1 ? c - 2 : c + 3;
+                return {
+                    site, saved, filled,
+                    retentionKey: e * w + terraceX,
+                    forkSeed: cragHash((base ^ 0xF0DBAD) >>> 0)
+                };
             }
+            for (let j = saved.length - 1; j >= 0; j--)
+                tiles[saved[j].r][saved[j].x] = saved[j].prev;
         }
-        for (let r = e - h + 1; r <= e; r++) {
-            for (const x of [tunnelX, farX]) {
-                saved.push({ r, x, prev: tiles[r][x] });
-                tiles[r][x] = 1;
-            }
-        }
-        const filled = new Set(saved.map((s) => s.r * w + s.x));
-        return { site, saved, filled, forkSeed: cragHash((base ^ 0xF0DBAD) >>> 0) };
+        return null;
     }
 
     // Roll a failed stamp back exactly (every written cell restored to its
     // prior value); the grid becomes bit-identical to the pre-trial state.
+    // Reverse order so a duplicated cell entry (same cell saved twice) still
+    // restores the ORIGINAL pre-trial value, never an intermediate one.
     _undoStampCrag(trial) {
-        for (const s of trial.saved) this.tiles[s.r][s.x] = s.prev;
+        for (let i = trial.saved.length - 1; i >= 0; i--) {
+            const s = trial.saved[i];
+            this.tiles[s.r][s.x] = s.prev;
+        }
     }
 
     placeAlcove() {

@@ -96,7 +96,7 @@ test("onramp levels get the frozen MEADOW object by identity", () => {
 // DNA knobs and only exist on non-MEADOW worlds.
 // ---------------------------------------------------------------------------
 const NUMERIC_KNOBS = ["gapMul", "downBias", "bridgeChance", "shaftChance",
-    "vFlipMul", "padMul", "crateMul", "spikeMul", "decorScale"];
+    "vFlipMul", "padMul", "crateMul", "spikeMul", "decorScale", "cragChance"];
 const INT_KNOBS = ["segHoldMax", "markerSpikeBan", "vExtShift"];
 
 test("every world carries the full knob set with sane values", () => {
@@ -297,4 +297,28 @@ test("isWorldEntry fires on level 1 and every band edge only", () => {
     for (const bad of [0, -1, 3.5, NaN, undefined, null]) {
         expect(isWorldEntry(bad)).toBe(false);
     }
+});
+
+// ---------------------------------------------------------------------------
+// W3b cragChance (owner ruling "RAISE alcove prevalence"): per-world secret
+// concentration. MEADOWS stays 0 (open meadow semantics + byte-frozen
+// onramp); CAVERNS hosts everything it can ("secrets belong underground");
+// the shipped point sits on the W3b prevalence frontier (report) with the
+// ordering CAVERNS > CANYONS > RUINS > SKYWARD > MEADOWS.
+// ---------------------------------------------------------------------------
+test("cragChance follows the W3b concentration ruling", () => {
+    const byName = Object.fromEntries(WORLDS.map((w) => [w.name, w]));
+    expect(byName.MEADOWS.cragChance).toBe(0);
+    expect(byName.CAVERNS.cragChance).toBe(1);
+    for (const w of WORLDS) {
+        expect(w.cragChance, `${w.name}.cragChance`).toBeGreaterThanOrEqual(0);
+        expect(w.cragChance, `${w.name}.cragChance`).toBeLessThanOrEqual(1);
+    }
+    expect(byName.CAVERNS.cragChance)
+        .toBeGreaterThan(byName.CANYONS.cragChance);
+    expect(byName.CANYONS.cragChance)
+        .toBeGreaterThan(byName.RUINS.cragChance);
+    expect(byName.RUINS.cragChance)
+        .toBeGreaterThan(byName.SKYWARD.cragChance);
+    expect(byName.SKYWARD.cragChance).toBeGreaterThan(0);
 });

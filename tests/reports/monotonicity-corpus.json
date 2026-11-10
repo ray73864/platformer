@@ -2,7 +2,7 @@
  "format": "mono-corpus-v1",
  "description": "Recorded deterministic winning runs replayed through the CURRENT engine by scripts/monotonicity-check.js (`bun run mono`). Each entry replays key EVENTS (frame-indexed [frame, code, \"down\"|\"up\"], dispatched BEFORE that frame's fixed-dt update) from a staged standing cell (stage=[col,row], player teleported pre-frame-0; >=3 tiles clear of the portal, idle-safe) and must reproduce the recorded per-frame trajectory hash AND reach the portal rect. Win semantics follow the established mono convention: portal contact attests the run (the all-coins gate is generation fairness territory, not physics). Scripts use legacy keys only (arrows + Space) so pads/crates/dash stay pure-help witnesses.",
  "hashConvention": "FNV-1a (offset 0x811c9dc5, prime 0x01000193) over, per simulated frame: `${p.x},${p.y},${p.vx},${p.vy},${grounded?1:0}|${heldLeft?1:0}${heldRight?1:0}${jumpDownThisFrame?1:0}${dashDownThisFrame?1:0};` rendered hex.",
- "generatedAtHead": "07e1f97",
+ "generatedAtHead": "12f8667",
  "entries": [
   {
    "levelNumber": 2,
@@ -1190,8 +1190,8 @@
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 68,
-   "hash": "7daa67ed",
+   "frames": 48,
+   "hash": "bb27b1c0",
    "events": [
     [
      0,
@@ -1199,25 +1199,26 @@
      "down"
     ],
     [
-     3,
+     6,
      "Space",
      "down"
     ],
     [
-     68,
+     48,
      "Space",
      "up"
     ],
     [
-     68,
+     48,
      "ArrowRight",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "07e1f97",
+    "generatedAtHead": "12f8667",
     "generatedOn": "2026-11-10",
-    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop",
+    "note": "W3b fix round: re-recorded on the uncommitted W3b working tree at HEAD 12f8667 (map newly stamped by the alcove-prevalence wave; still-win proven by beam search on the corpus seed)."
    }
   },
   {
@@ -1231,44 +1232,55 @@
    "phase": 0,
    "outcome": "WIN",
    "winCheck": "portal-touch",
-   "frames": 109,
-   "hash": "938e8785",
+   "frames": 129,
+   "hash": "16845c51",
    "events": [
     [
-     0,
+     9,
      "Space",
      "down"
     ],
     [
-     43,
+     51,
      "ArrowLeft",
      "down"
     ],
     [
-     49,
+     57,
      "Space",
      "up"
     ],
     [
-     49,
+     57,
      "Space",
      "down"
     ],
     [
-     109,
+     112,
      "Space",
      "up"
     ],
     [
-     109,
+     112,
+     "Space",
+     "down"
+    ],
+    [
+     129,
+     "Space",
+     "up"
+    ],
+    [
+     129,
      "ArrowLeft",
      "up"
     ]
    ],
    "provenance": {
-    "generatedAtHead": "07e1f97",
+    "generatedAtHead": "12f8667",
     "generatedOn": "2026-11-10",
-    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
+    "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop",
+    "note": "W3b fix round: re-recorded on the uncommitted W3b working tree at HEAD 12f8667 (map newly stamped by the alcove-prevalence wave; still-win proven by beam search on the corpus seed)."
    }
   },
   {
@@ -1829,5 +1841,6 @@
     "method": "hopsearch-style staged beam search on an exact module-composition mirror; verified WIN through the shipped Game loop"
    }
   }
- ]
+ ],
+ "generatedAtHeadNote": "Per-entry provenance.generatedAtHead marks where each SCRIPT was authored/regenerated: 23 entries are the 07e1f97-era better-wave/W3a captures replayed green ever since; L29/L36 were re-recorded on the W3b working tree at HEAD 12f8667. The top-level generatedAtHead marks the LAST corpus assembly."
 }

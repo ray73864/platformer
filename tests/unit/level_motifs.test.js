@@ -282,12 +282,30 @@ test("no standable cell gains a ceiling within two rows (all horizontal motifs)"
     // generator owns this clearance (32px body + ~62.5px jump needs two free
     // rows). Canyon ceilings are the new threat: they must respect it, and
     // every other motif keeps the heightmap property that guarantees it.
+    // W3b EXEMPTION (documented): a shipped alcove's floor trio — tunnel
+    // mouth + the two shaft-floor cells — is deliberately capped. It is the
+    // entrance to a wall-jump CHIMNEY (the vertical mechanic), not a jump
+    // traversal surface: walking in/out and lateral escape stay open, and
+    // climbability through that exact capped geometry is pinned against the
+    // real engine in alcove_physics.test.js (both sides, h=3..5) and driven
+    // end-to-end in alcove_natural_loop.test.js. Class-B enumeration also
+    // refuses any site whose flank fill would cap NON-alcove standables
+    // (level.js clearance preconditions), so this exemption covers nothing
+    // beyond the manufactured footprint.
     for (let lvl = 12; lvl <= 100; lvl += 1) {
         for (const s of [5, 29]) {
             const level = new Level(lvl, T, lvl * 1000 + s);
             if (level.direction === "vertical") continue;
+            const a = level.getAlcove();
+            const exempt = new Set();
+            if (a) {
+                exempt.add(a.entryRow * level.width + a.tunnel.x);
+                exempt.add(a.entryRow * level.width + a.col);
+                exempt.add(a.entryRow * level.width + a.col + 1);
+            }
             for (let y = 1; y < level.height - 1; y++) {
                 for (let x = 0; x < level.width; x++) {
+                    if (exempt.has(y * level.width + x)) continue;
                     if (level.tiles[y][x] !== 0 ||
                         level.tiles[y + 1][x] !== 1) continue; // standable
                     expect(level.tiles[y - 1][x],

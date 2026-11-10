@@ -1,14 +1,16 @@
 // Unit: M4 secret-alcove generator pass — shipped-map invariants, base-BFS
 // delta discipline, determinism, and the R4 portal-gate exclusion.
 //
-// HONEST PREVALENCE NOTE (full numbers in the Task 6 report): the shipped
+// HONEST PREVALENCE NOTE (full numbers in the W3b report): the shipped
 // horizontal generator is a pure heightmap (surface steps <= 1 row), so NO
-// natural site hosts the R5 chimney geometry there; vertical massif maps
-// host geometric sites (~3%) whose terrace cells are essentially never on
-// the base-reachable climb route. Measured shipped prevalence across the
-// sweep below is therefore ~0%. Every invariant here is written to hold for
-// WHATEVER the sweep ships, and the fixture-driven carve assertions keep
-// the machinery non-vacuously covered regardless.
+// natural site hosts the R5 chimney geometry there; what hosts alcoves is
+// the crag STAMP. Since W3b the stamp runs on every tier>=2 world with a
+// per-world chance (js/worlds.js cragChance) and two host classes (vertical
+// wide-ledge bumps + face chambers carved into mesa-step relief), shipping
+// ~10-13% of CANYONS/CAVERNS/RUINS maps and ~4% of SKYWARD (MEADOWS stays
+// 0). Every invariant here is written to hold for WHATEVER the sweep ships,
+// and the fixture-driven carve assertions keep the machinery non-vacuously
+// covered regardless.
 import { test, expect } from "bun:test";
 import { Level, computeReachable, alcoveGeometryValid } from "../../js/level.js";
 import { Collectibles } from "../../js/collectibles.js";
