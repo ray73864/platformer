@@ -8220,10 +8220,13 @@ ${text}`;
     MUSIC_PRESETS: () => MUSIC_PRESETS,
     MUTE_STORAGE_KEY: () => MUTE_STORAGE_KEY,
     SFX_VOICES: () => SFX_VOICES,
+    URGENT_THRESHOLD_SEC: () => URGENT_THRESHOLD_SEC,
+    WORLD_MUSIC: () => WORLD_MUSIC,
     advanceScheduler: () => advanceScheduler,
     buildMelodyLoop: () => buildMelodyLoop,
     duckMusic: () => duckMusic,
     getState: () => getState,
+    hasContext: () => hasContext,
     init: () => init,
     isMuted: () => isMuted,
     listSfx: () => listSfx,
@@ -8232,10 +8235,12 @@ ${text}`;
     playSfx: () => playSfx,
     presetForLevel: () => presetForLevel,
     setMuted: () => setMuted,
+    setUrgent: () => setUrgent,
     shutdown: () => shutdown,
     startMusic: () => startMusic,
     stopMusic: () => stopMusic,
-    toggleMute: () => toggleMute
+    toggleMute: () => toggleMute,
+    worldArrangementFor: () => worldArrangementFor
   });
   var MUSIC_LEVEL = 0.35;
   var SFX_LEVEL = 0.6;
@@ -8250,6 +8255,115 @@ ${text}`;
   ];
   var TIER_CREEP_FIRST_LEVEL = 25;
   var TIER_CREEP_BPM = 6;
+  var WORLD_MUSIC = Object.freeze([
+    {
+      tag: "meadow",
+      bpmShift: 0,
+      scale: null,
+      leadWave: null,
+      leadFilterHz: 0,
+      melodyOctave: 0,
+      padOctave: 0,
+      delayBias: 0,
+      padDegrees: [0, 2, 4],
+      padForce: null,
+      bassForce: null,
+      densityNames: null,
+      progressions: null,
+      perc: { hatSteps: [1, 3, 5, 7], hatPeak: 0.022, hatBandHz: 7800, hatDur: 0.03 },
+      percEcho: 0,
+      bassExtra: { steps: [4], wave: "triangle", oct: 0, peak: 0.05, durMul: 1.2 }
+    },
+    {
+      tag: "canyon",
+      bpmShift: -4,
+      scale: null,
+      leadWave: null,
+      leadFilterHz: 0,
+      melodyOctave: 0,
+      padOctave: 0,
+      delayBias: 0,
+      padDegrees: [0, 3, 5],
+      padForce: null,
+      bassForce: null,
+      densityNames: null,
+      progressions: [[0, 4, 2, 4], [0, 3, 0, 4], [0, 5, 4, 3], [0, 4, 5, 4]],
+      perc: {
+        hatSteps: [2, 3, 6],
+        hatPeak: 0.03,
+        hatBandHz: 5200,
+        hatDur: 0.045,
+        snareSteps: [4],
+        snarePeak: 0.05,
+        snareBandHz: 1900
+      },
+      percEcho: 0,
+      bassExtra: { steps: [3], wave: "sine", oct: -1, peak: 0.09, durMul: 2.2 }
+    },
+    {
+      tag: "cavern",
+      bpmShift: -6,
+      scale: [0, 2, 3, 5, 7, 8, 10],
+      leadWave: "sine",
+      leadFilterHz: 0,
+      melodyOctave: 0,
+      padOctave: 0,
+      delayBias: 0.1,
+      padDegrees: [0, 2, 4],
+      padForce: null,
+      bassForce: "drone",
+      densityNames: ["sparse", "medium"],
+      progressions: [[0, 0, 3, 0], [0, 0, 4, 2], [0, 2, 0, 3], [0, 0, 2, 0]],
+      perc: { kickSteps: [0], kickEveryBars: 2, kickPeak: 0.14, dripStep: 7 },
+      percEcho: 0.5,
+      bassExtra: null
+    },
+    {
+      tag: "skyward",
+      bpmShift: 2,
+      scale: null,
+      leadWave: "sine",
+      leadFilterHz: 0,
+      melodyOctave: 1,
+      padOctave: 1,
+      delayBias: 0.06,
+      padDegrees: [0, 2, 4],
+      padForce: "arp",
+      bassForce: null,
+      densityNames: ["sparse", "medium"],
+      progressions: [[0, 2, 4, 5], [0, 4, 2, 5], [0, 3, 4, 5], [0, 2, 5, 4]],
+      perc: { shimmer: true, shimmerPeak: 0.018, tickSteps: [4], tickPeak: 0.02 },
+      percEcho: 0,
+      bassExtra: { steps: [4], wave: "sine", oct: -1, peak: 0.07, durMul: 1.2 }
+    },
+    {
+      tag: "ruins",
+      bpmShift: 8,
+      scale: [0, 1, 3, 5, 7, 8, 10],
+      leadWave: "sawtooth",
+      leadFilterHz: 1400,
+      melodyOctave: 0,
+      padOctave: 0,
+      delayBias: 0,
+      padDegrees: [0, 2, 4],
+      padForce: null,
+      bassForce: null,
+      densityNames: null,
+      progressions: [[0, 1, 0, 4], [0, 1, 3, 1], [0, 4, 1, 0], [0, 3, 1, 4]],
+      perc: {
+        snareSteps: [0, 2, 4, 6],
+        snarePeak: 0.025,
+        snareBandHz: 2100,
+        accentSteps: [0, 4],
+        kickSteps: [0],
+        kickPeak: 0.12
+      },
+      percEcho: 0,
+      bassExtra: { steps: [2, 4, 6], wave: "triangle", oct: -1, peak: 0.06, durMul: 1.4 }
+    }
+  ]);
+  var URGENT_THRESHOLD_SEC = 10;
+  var URGENT_STEP_MUL = 0.93;
   var STEPS_PER_BAR = 8;
   var LOOP_STEPS = STEPS_PER_BAR * 4;
   var PROGRESSION_VARIANTS = [
@@ -8288,6 +8402,9 @@ ${text}`;
   function musicSeedForLevel(levelNumber) {
     return (Math.imul(levelNumber, 2654435761) ^ 1369961139) >>> 0;
   }
+  function worldArrangementFor(levelNumber) {
+    return WORLD_MUSIC[worldOf(levelNumber) % WORLD_MUSIC.length];
+  }
   function presetForLevel(levelNumber) {
     if (!Number.isInteger(levelNumber) || levelNumber < 1) {
       console.warn("Invalid level number for music preset:", levelNumber, "- defaulting to level 1 preset");
@@ -8300,19 +8417,21 @@ ${text}`;
   }
   function musicVariantFor(levelNumber) {
     const { index, preset, bpm: baseBpm, seed } = presetForLevel(levelNumber);
+    const arr = worldArrangementFor(levelNumber);
     const rng = makeRng4((seed ^ 2052534697) >>> 0);
-    const progressions = PROGRESSION_VARIANTS[index];
+    const progressions = arr.progressions ?? PROGRESSION_VARIANTS[index];
     const progIndex = Math.floor(rng() * progressions.length);
     const melodyShift = MELODY_SHIFT_CHOICES[Math.floor(rng() * MELODY_SHIFT_CHOICES.length)];
-    const density = DENSITY_CHOICES[Math.floor(rng() * DENSITY_CHOICES.length)];
-    const padMode = PAD_MODES[Math.floor(rng() * PAD_MODES.length)];
-    const bassMode = BASS_MODES[Math.floor(rng() * BASS_MODES.length)];
+    const densityPool = arr.densityNames ? DENSITY_CHOICES.filter((d) => arr.densityNames.includes(d.name)) : DENSITY_CHOICES;
+    const density = densityPool[Math.floor(rng() * densityPool.length)];
+    const padMode = arr.padForce ?? PAD_MODES[Math.floor(rng() * PAD_MODES.length)];
+    const bassMode = arr.bassForce ?? BASS_MODES[Math.floor(rng() * BASS_MODES.length)];
     const bpmOffset = Math.floor(rng() * (2 * TEMPO_SWING_BPM + 1)) - TEMPO_SWING_BPM;
     return {
       index,
       preset,
       seed,
-      bpm: baseBpm + bpmOffset,
+      bpm: baseBpm + arr.bpmShift + bpmOffset,
       progression: progressions[progIndex],
       progIndex,
       melodyShift,
@@ -8322,19 +8441,31 @@ ${text}`;
       padMode,
       bassMode,
       bpmOffset,
-      signature: `${progIndex}+${melodyShift}+${density.name}+${padMode}+${bassMode}+${bpmOffset}`
+      tag: arr.tag,
+      scale: arr.scale ?? preset.scale,
+      leadWave: arr.leadWave ?? preset.melodyWave,
+      leadFilterHz: arr.leadFilterHz,
+      melodyOctave: arr.melodyOctave,
+      padOctave: arr.padOctave,
+      padDegrees: arr.padDegrees,
+      perc: arr.perc,
+      percEcho: arr.percEcho,
+      bassExtra: arr.bassExtra,
+      delayWetEff: Math.min(0.4, preset.delayWet + arr.delayBias),
+      signature: `${arr.tag}+${progIndex}+${melodyShift}+${density.name}+${padMode}+${bassMode}+${bpmOffset}`
     };
   }
   function buildMelodyLoop(presetIndex, levelNumber) {
     const preset = MUSIC_PRESETS[(presetIndex % MUSIC_PRESETS.length + MUSIC_PRESETS.length) % MUSIC_PRESETS.length];
     const variant = musicVariantFor(levelNumber);
+    const scale = variant.scale ?? preset.scale;
     const rng = makeRng4(musicSeedForLevel(levelNumber));
     const loop = new Array(LOOP_STEPS).fill(null);
-    let degree = Math.floor(rng() * preset.scale.length);
+    let degree = Math.floor(rng() * scale.length);
     let i = 0;
     while (i < LOOP_STEPS) {
       if (rng() < variant.densityProb) {
-        degree = Math.max(-2, Math.min(preset.scale.length + 3, degree + Math.floor(rng() * 5) - 2));
+        degree = Math.max(-2, Math.min(scale.length + 3, degree + Math.floor(rng() * 5) - 2));
         const oct = rng() < 0.25 ? 1 : 0;
         const len = Math.min(1 + Math.floor(rng() * variant.densityMaxLen), LOOP_STEPS - i);
         loop[i] = { deg: degree, oct, len };
@@ -8361,6 +8492,8 @@ ${text}`;
   }
   var ctx = null;
   var master = null;
+  var limiter = null;
+  var softClip = null;
   var sfxBus = null;
   var musicBus = null;
   var playback = null;
@@ -8370,6 +8503,7 @@ ${text}`;
   var muted = false;
   var muteLoaded = false;
   var ducked = false;
+  var urgent = false;
   function storageGet2(key) {
     try {
       return localStorage.getItem(key);
@@ -8407,7 +8541,29 @@ ${text}`;
       ctx = new Ctor;
       master = ctx.createGain();
       master.gain.value = muted ? 0 : 1;
-      master.connect(ctx.destination);
+      let tail = ctx.destination;
+      if (typeof ctx.createDynamicsCompressor === "function") {
+        limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -6;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 12;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.12;
+        limiter.connect(tail);
+        tail = limiter;
+      } else {
+        limiter = null;
+      }
+      if (typeof ctx.createWaveShaper === "function") {
+        softClip = ctx.createWaveShaper();
+        softClip.curve = softClipCurve();
+        softClip.oversample = "2x";
+        softClip.connect(tail);
+        tail = softClip;
+      } else {
+        softClip = null;
+      }
+      master.connect(tail);
       sfxBus = ctx.createGain();
       sfxBus.gain.value = SFX_LEVEL;
       sfxBus.connect(master);
@@ -8429,6 +8585,17 @@ ${text}`;
         data[i] = Math.random() * 2 - 1;
     }
     return noiseBuffer;
+  }
+  function softClipCurve() {
+    const N = 1024;
+    const knee = 0.7;
+    const curve = new Float32Array(N);
+    for (let i = 0;i < N; i++) {
+      const x = i / (N - 1) * 2 - 1;
+      const ax = Math.abs(x);
+      curve[i] = ax <= knee ? x : Math.sign(x) * (knee + (1 - knee) * Math.tanh((ax - knee) / (1 - knee)));
+    }
+    return curve;
   }
   function tone({ wave = "sine", freq, endFreq = 0, dur, peak, attack = 0.005, filterHz = 0, dest, when }) {
     const t = when ?? ctx.currentTime;
@@ -8454,7 +8621,7 @@ ${text}`;
     osc.start(t);
     osc.stop(t + dur + 0.05);
   }
-  function noiseBurst({ dur, peak, bandHz, endBandHz = 0, when }) {
+  function noiseBurst({ dur, peak, bandHz, endBandHz = 0, when, dest }) {
     const t = when ?? ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = cachedNoiseBuffer();
@@ -8468,7 +8635,7 @@ ${text}`;
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(bp);
     bp.connect(g);
-    g.connect(sfxBus);
+    g.connect(dest || sfxBus);
     src.start(t);
     src.stop(t + dur + 0.05);
   }
@@ -8485,7 +8652,10 @@ ${text}`;
     DASH: "dash",
     WALL_SLIDE: "wall_slide",
     PAD_BOUNCE: "pad_bounce",
-    CRATE_PUSH: "crate_push"
+    CRATE_PUSH: "crate_push",
+    UI_MOVE: "ui_move",
+    UI_TOGGLE: "ui_toggle",
+    UI_CONFIRM: "ui_confirm"
   });
   function listSfx() {
     return Object.keys(SFX);
@@ -8519,9 +8689,37 @@ ${text}`;
   var CRATE_PUSH_NOISE_DUR = 0.05;
   var CRATE_PUSH_NOISE_PEAK = 0.045;
   var CRATE_PUSH_BAND_HZ = 260;
+  var LAND_SOFT_BUCKET_D = 0.45;
+  var LAND_HEAVY_BUCKET_D = 0.75;
+  var LAND_SCUFF_PEAK = 0.025;
+  var LAND_SUB_HZ = 55;
+  var LAND_SUB_PEAK = 0.16;
+  var COIN_STREAK_SEMITONE_STEP = 2;
+  var COIN_STREAK_MAX_STEPS = 6;
+  var FANFARE_E7_HZ = 2637.02;
+  var FANFARE_G7_HZ = 3135.96;
   var SFX = {
     jump() {
-      tone({ wave: "square", freq: 220, endFreq: 600, dur: 0.12, peak: 0.28 });
+      const t = ctx.currentTime;
+      tone({
+        wave: "square",
+        freq: 220,
+        endFreq: 560,
+        dur: 0.13,
+        peak: 0.16,
+        attack: 0.012,
+        filterHz: 1800,
+        when: t
+      });
+      tone({
+        wave: "sine",
+        freq: 440,
+        endFreq: 1180,
+        dur: 0.16,
+        peak: 0.09,
+        attack: 0.02,
+        when: t
+      });
     },
     land(depth = 0.5) {
       const d = Math.min(1, Math.max(0.25, depth));
@@ -8533,11 +8731,29 @@ ${text}`;
         peak: 0.22 + 0.2 * d,
         filterHz: LAND_FILTER_HZ
       });
+      noiseBurst({
+        dur: 0.05 + 0.05 * d,
+        peak: (d < LAND_SOFT_BUCKET_D ? LAND_SCUFF_PEAK * 0.5 : LAND_SCUFF_PEAK) + 0.045 * d,
+        bandHz: 280 + 520 * d
+      });
+      if (d >= LAND_HEAVY_BUCKET_D) {
+        tone({
+          wave: "sine",
+          freq: LAND_SUB_HZ,
+          endFreq: 38,
+          dur: 0.18,
+          peak: LAND_SUB_PEAK,
+          attack: 0.008,
+          filterHz: 140
+        });
+      }
     },
-    coin() {
+    coin(streak = 0) {
+      const s = Math.min(COIN_STREAK_MAX_STEPS, Math.max(0, Number.isFinite(streak) ? Math.floor(streak) : 0));
+      const mul = Math.pow(2, s * COIN_STREAK_SEMITONE_STEP / 12);
       const t = ctx.currentTime;
-      tone({ wave: "sine", freq: 987.77, dur: 0.07, peak: 0.26, when: t });
-      tone({ wave: "sine", freq: 1318.51, dur: 0.16, peak: 0.26, when: t + 0.07 });
+      tone({ wave: "sine", freq: 987.77 * mul, dur: 0.07, peak: 0.26, when: t });
+      tone({ wave: "sine", freq: 1318.51 * mul, dur: 0.16, peak: 0.26, when: t + 0.07 });
     },
     stomp(step = 0) {
       const s = Math.min(STOMP_CHAIN_MAX_STEPS, Math.max(0, Number.isFinite(step) ? Math.floor(step) : 0));
@@ -8598,6 +8814,20 @@ ${text}`;
         peak: 0.12,
         when: t + 0.16
       });
+      tone({
+        wave: "triangle",
+        freq: FANFARE_E7_HZ,
+        dur: 0.09,
+        peak: 0.07,
+        when: t + 0.24
+      });
+      tone({
+        wave: "triangle",
+        freq: FANFARE_G7_HZ,
+        dur: 0.14,
+        peak: 0.06,
+        when: t + 0.3
+      });
     },
     dash() {
       noiseBurst({
@@ -8647,6 +8877,26 @@ ${text}`;
         peak: CRATE_PUSH_NOISE_PEAK,
         bandHz: CRATE_PUSH_BAND_HZ
       });
+    },
+    ui_move() {
+      tone({ wave: "sine", freq: 1180, dur: 0.035, peak: 0.05, attack: 0.004 });
+    },
+    ui_toggle() {
+      const t = ctx.currentTime;
+      tone({ wave: "sine", freq: 523.25, dur: 0.05, peak: 0.09, when: t });
+      tone({ wave: "sine", freq: 783.99, dur: 0.08, peak: 0.09, when: t + 0.05 });
+    },
+    ui_confirm() {
+      const t = ctx.currentTime;
+      tone({ wave: "triangle", freq: 587.33, dur: 0.07, peak: 0.14, when: t });
+      tone({
+        wave: "triangle",
+        freq: 880,
+        dur: 0.12,
+        peak: 0.14,
+        attack: 0.008,
+        when: t + 0.06
+      });
     }
   };
   function stopScheduler() {
@@ -8672,14 +8922,97 @@ ${text}`;
       advanceScheduler(playback.state, ctx.currentTime, LOOKAHEAD_SEC, playback.stepDur, (step, when) => playMusicStep(playback, step, when));
     }, SCHEDULER_INTERVAL_MS);
   }
+  function playPercussion(pb, step, when) {
+    const p = pb.variant.perc;
+    if (!p)
+      return;
+    const s = step % STEPS_PER_BAR;
+    const bar = Math.floor(step / STEPS_PER_BAR);
+    const jit = 0.75 + 0.5 * pb.vel[step];
+    const dest = pb.gain;
+    const echo = pb.delaySend && pb.variant.percEcho > 0;
+    if (p.hatSteps && p.hatSteps.includes(s)) {
+      noiseBurst({ dur: p.hatDur, peak: p.hatPeak * jit, bandHz: p.hatBandHz, dest });
+    }
+    if (p.shimmer && s === 0) {
+      noiseBurst({ dur: 0.3, peak: p.shimmerPeak * jit, bandHz: 9500, dest });
+    }
+    if (p.tickSteps && p.tickSteps.includes(s)) {
+      noiseBurst({ dur: 0.02, peak: p.tickPeak * jit, bandHz: 6800, dest });
+    }
+    if (p.snareSteps && p.snareSteps.includes(s)) {
+      const accent = p.accentSteps && p.accentSteps.includes(s);
+      noiseBurst({
+        dur: accent ? 0.06 : 0.035,
+        peak: (accent ? p.snarePeak * 2 : p.snarePeak) * jit,
+        bandHz: p.snareBandHz,
+        dest
+      });
+      tone({
+        wave: "triangle",
+        freq: 170,
+        endFreq: 120,
+        dur: 0.06,
+        peak: 0.045 * jit,
+        dest,
+        when
+      });
+    }
+    if (p.kickSteps && p.kickSteps.includes(s) && (!p.kickEveryBars || bar % p.kickEveryBars === 0)) {
+      tone({
+        wave: "sine",
+        freq: 95,
+        endFreq: 45,
+        dur: 0.22,
+        peak: p.kickPeak * jit,
+        attack: 0.006,
+        dest,
+        when
+      });
+      if (echo) {
+        tone({
+          wave: "sine",
+          freq: 95,
+          endFreq: 45,
+          dur: 0.22,
+          peak: p.kickPeak * pb.variant.percEcho * jit,
+          attack: 0.006,
+          dest: pb.delaySend,
+          when
+        });
+      }
+    }
+    if (p.dripStep !== undefined && s === p.dripStep && pb.vel[step] > 0.6) {
+      tone({
+        wave: "sine",
+        freq: 2400,
+        endFreq: 2100,
+        dur: 0.12,
+        peak: 0.05 * jit,
+        dest,
+        when
+      });
+      if (echo) {
+        tone({
+          wave: "sine",
+          freq: 2400,
+          endFreq: 2100,
+          dur: 0.12,
+          peak: 0.05 * pb.variant.percEcho * jit,
+          dest: pb.delaySend,
+          when
+        });
+      }
+    }
+  }
   function playMusicStep(pb, step, when) {
     const preset = pb.preset;
     const v = pb.variant;
     if (step % LOOP_STEPS === 0 && v.padMode === "sustained") {
       const chordRoot = v.progression[0];
       const dur = pb.stepDur * LOOP_STEPS + 2;
-      for (const offset of [0, 2, 4]) {
-        const freq = scaleNoteHz(preset, chordRoot + offset, 0);
+      for (const offset of v.padDegrees) {
+        const freq = scaleNoteHz(preset, chordRoot + offset, v.padOctave);
         for (const detune of [-6, 6]) {
           const osc = ctx.createOscillator();
           osc.type = "triangle";
@@ -8718,7 +9051,7 @@ ${text}`;
       if (v.padMode === "arp") {
         tone({
           wave: "triangle",
-          freq: scaleNoteHz(preset, chordRoot + [0, 2, 4][bar % 3], 0),
+          freq: scaleNoteHz(preset, chordRoot + v.padDegrees[bar % v.padDegrees.length], v.padOctave),
           dur: pb.stepDur * STEPS_PER_BAR + 0.6,
           peak: 0.07,
           attack: 0.3,
@@ -8751,16 +9084,47 @@ ${text}`;
         when
       });
     }
+    const extra = v.bassExtra;
+    if (extra && v.bassMode !== "drone" && extra.steps.includes(step % STEPS_PER_BAR)) {
+      const bar = Math.floor(step / STEPS_PER_BAR) % v.progression.length;
+      tone({
+        wave: extra.wave,
+        freq: scaleNoteHz(preset, v.progression[bar], extra.oct),
+        dur: pb.stepDur * extra.durMul,
+        peak: extra.peak * (0.75 + 0.5 * pb.vel[step]),
+        attack: 0.008,
+        dest: pb.gain,
+        when
+      });
+    }
+    playPercussion(pb, step, when);
+    if (urgent) {
+      const jit = 0.75 + 0.5 * pb.vel[step];
+      noiseBurst({ dur: 0.025, peak: 0.03 * jit, bandHz: 6500, dest: pb.gain });
+      if (step % STEPS_PER_BAR === 0) {
+        tone({
+          wave: "sine",
+          freq: 150,
+          endFreq: 50,
+          dur: 0.14,
+          peak: 0.12 * jit,
+          attack: 0.005,
+          dest: pb.gain,
+          when
+        });
+      }
+    }
     const note = pb.melody[step];
     if (note) {
       const dur = Math.min(note.len * pb.stepDur * 0.9, 1.6);
-      const freq = scaleNoteHz(preset, note.deg, note.oct + 1) * Math.pow(2, v.melodyShift / 12);
+      const freq = scaleNoteHz(preset, note.deg, note.oct + 1 + v.melodyOctave) * Math.pow(2, v.melodyShift / 12);
       tone({
         wave: preset.melodyWave,
         freq,
         dur,
         peak: 0.12,
         attack: 0.03,
+        filterHz: v.leadFilterHz,
         dest: pb.gain,
         when
       });
@@ -8788,8 +9152,13 @@ ${text}`;
     later(CROSSFADE_SEC * 1000 + 150, () => disconnectPlayback(pb));
   }
   function createPlayback(index, variant, levelNumber) {
-    const preset = MUSIC_PRESETS[index];
-    const stepDur = 60 / variant.bpm / 2;
+    const preset = {
+      ...MUSIC_PRESETS[index],
+      scale: variant.scale,
+      melodyWave: variant.leadWave,
+      delayWet: variant.delayWetEff
+    };
+    const stepDurBase = 60 / variant.bpm / 2;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, ctx.currentTime);
     gain.gain.linearRampToValueAtTime(1, ctx.currentTime + CROSSFADE_SEC);
@@ -8799,7 +9168,7 @@ ${text}`;
     let feedback = null;
     if (preset.delayWet > 0) {
       delayNode = ctx.createDelay(2);
-      delayNode.delayTime.value = stepDur * 3;
+      delayNode.delayTime.value = stepDurBase * 3;
       feedback = ctx.createGain();
       feedback.gain.value = 0.32;
       delaySend = ctx.createGain();
@@ -8814,7 +9183,15 @@ ${text}`;
       gain,
       preset,
       variant,
-      stepDur,
+      stepDurBase,
+      stepDur: urgent ? stepDurBase * URGENT_STEP_MUL : stepDurBase,
+      vel: (() => {
+        const vrng = makeRng4((variant.seed ^ 2654435769) >>> 0);
+        const arr = new Float32Array(LOOP_STEPS);
+        for (let i = 0;i < LOOP_STEPS; i++)
+          arr[i] = vrng();
+        return arr;
+      })(),
       melody: buildMelodyLoop(index, levelNumber),
       delaySend,
       delayNode,
@@ -8911,16 +9288,31 @@ ${text}`;
         startScheduler();
     }
   }
+  function setUrgent(on) {
+    const next = !!on;
+    if (next === urgent)
+      return;
+    urgent = next;
+    if (playback) {
+      playback.stepDur = playback.stepDurBase * (urgent ? URGENT_STEP_MUL : 1);
+    }
+  }
+  function hasContext() {
+    return !!ctx;
+  }
   function shutdown() {
     stopScheduler();
     for (const id of cleanupTimers)
       clearTimeout(id);
     cleanupTimers.clear();
     playback = null;
+    urgent = false;
     if (ctx) {
       const dying = ctx;
       ctx = null;
       master = null;
+      limiter = null;
+      softClip = null;
       sfxBus = null;
       musicBus = null;
       noiseBuffer = null;
@@ -8934,6 +9326,7 @@ ${text}`;
       contextState: ctx ? ctx.state : null,
       muted,
       ducked,
+      urgent,
       musicKey: playback ? playback.key : null
     };
   }
@@ -9139,6 +9532,8 @@ ${text}`;
       this._punchTime = 0;
       this._launchStretch = 0;
       this._landDepth = 0;
+      this._coinStreak = 0;
+      this._urgentArmed = false;
       this._prevFrameVx = 0;
       this._dashGhosts = [];
       this._lean = 0;
@@ -9224,9 +9619,18 @@ ${text}`;
         throw new Error("Game requires #start-btn, #retry-btn, #play-again-btn, " + "#pause-btn, #mute-btn, #resume-btn, #restart-level-btn and " + "#quit-menu-btn elements in the page");
       }
       const onClick = (el, fn) => el.addEventListener("click", fn, { signal: this._abort.signal });
-      onClick(startBtn, () => this.startGame());
-      onClick(retryBtn, () => this.retryLevel());
+      onClick(startBtn, () => {
+        init();
+        playSfx(SFX_VOICES.UI_CONFIRM);
+        this.startGame();
+      });
+      onClick(retryBtn, () => {
+        this._uiBlip(SFX_VOICES.UI_CONFIRM);
+        this.retryLevel();
+      });
       onClick(playAgainBtn, () => {
+        init();
+        playSfx(SFX_VOICES.UI_CONFIRM);
         if (this.startGame())
           this.ui.hideOverlay("game-complete-screen");
       });
@@ -9239,10 +9643,12 @@ ${text}`;
         muteBtn.blur();
       });
       onClick(resumeBtn, () => {
+        this._uiBlip(SFX_VOICES.UI_CONFIRM);
         this.togglePause();
         resumeBtn.blur();
       });
       onClick(restartLevelBtn, () => {
+        this._uiBlip(SFX_VOICES.UI_CONFIRM);
         this.restartCurrentLevel("pause-screen");
         restartLevelBtn.blur();
       });
@@ -9269,6 +9675,7 @@ ${text}`;
         saveShake(this.settings.shake);
         applySettings(this.settings);
         this.syncSettingsUI();
+        this._uiBlip(SFX_VOICES.UI_TOGGLE);
       });
       optionalClick("motion-toggle-btn", () => {
         const reducedNow = resolveReducedMotion(this.settings.reducedMotion, osReducedMotion());
@@ -9276,7 +9683,14 @@ ${text}`;
         saveReducedMotion(this.settings.reducedMotion);
         applySettings(this.settings);
         this.syncSettingsUI();
+        this._uiBlip(SFX_VOICES.UI_TOGGLE);
       });
+      document.addEventListener("focusin", (e) => {
+        const el = e.target;
+        if (el && el.tagName === "BUTTON") {
+          this._uiBlip(SFX_VOICES.UI_MOVE);
+        }
+      }, { signal: this._abort.signal });
       this.input.onJump(() => {
         if (this.state !== STATE.PLAYING || !this.player)
           return;
@@ -9417,8 +9831,13 @@ ${text}`;
     }
     toggleSound() {
       toggleMute();
+      this._uiBlip(SFX_VOICES.UI_TOGGLE);
       this.ui.setMuteLabel(isMuted());
       this.syncSettingsUI();
+    }
+    _uiBlip(voice) {
+      if (hasContext())
+        playSfx(voice);
     }
     syncSettingsUI() {
       if (!this.ui || !this.settings)
@@ -9446,6 +9865,7 @@ ${text}`;
     openSettings(from) {
       this.settingsOpen = true;
       this.settingsReturn = from;
+      this._uiBlip(SFX_VOICES.UI_MOVE);
       this.syncSettingsUI();
       this._setSettingsBackdrop(true);
       this.ui.showOverlay("settings-screen");
@@ -9453,6 +9873,7 @@ ${text}`;
     }
     closeSettings() {
       this.settingsOpen = false;
+      this._uiBlip(SFX_VOICES.UI_MOVE);
       this.ui.hideOverlay("settings-screen");
       this._setSettingsBackdrop(false);
       const active = document.activeElement;
@@ -9682,6 +10103,9 @@ ${text}`;
       this.resetEffectState();
       init();
       duckMusic(false);
+      this._coinStreak = 0;
+      this._urgentArmed = false;
+      setUrgent(false);
       startMusic(bandIndexForLevel(this.currentLevel, THEMES.length), this.currentLevel);
     }
     retryLevel() {
@@ -9722,6 +10146,8 @@ ${text}`;
         secretBonus: this.levelSecretPoints
       };
       this.setState(STATE.LEVEL_COMPLETE);
+      this._urgentArmed = false;
+      setUrgent(false);
       playSfx(SFX_VOICES.LEVEL_COMPLETE);
       this.ui.setPauseEnabled(false);
       this.levelCompleteTimer = 2;
@@ -9732,6 +10158,8 @@ ${text}`;
     }
     handleGameOver(cause) {
       this.setState(STATE.GAME_OVER);
+      this._urgentArmed = false;
+      setUrgent(false);
       this.deathsOnCurrentLevel++;
       stopMusic();
       playSfx(SFX_VOICES.DEATH);
@@ -9826,6 +10254,11 @@ ${text}`;
             return;
           }
         }
+        const wantUrgent = this.timerActive && isTimeUrgent(this.timer.getTimeRemaining());
+        if (wantUrgent !== this._urgentArmed) {
+          this._urgentArmed = wantUrgent;
+          setUrgent(wantUrgent);
+        }
         if (this.movingPlatforms && this.movingPlatforms.platforms.length) {
           this.movingPlatforms.updateAll(dt);
           const ridden = this._riding;
@@ -9882,6 +10315,7 @@ ${text}`;
         }
         if (this.player.grounded && !this._prevGrounded) {
           this.squashTimer = 0.12;
+          this._coinStreak = 0;
           this._landDepth = Math.min(1, Math.max(0.25, vyBeforeResolve / LAND_DEPTH_REF_VY));
           if (FX.dust) {
             const dTheme = THEMES[bandIndexForLevel(this.currentLevel, THEMES.length)];
@@ -10079,11 +10513,13 @@ ${text}`;
         if (pickups.count > 0) {
           const normalCount = pickups.count - pickups.secretCount;
           const coinPoints = normalCount * COIN_POINTS + pickups.secretCount * SECRET_COIN_SCORE;
-          if (normalCount > 0)
-            playSfx(SFX_VOICES.COIN);
+          if (normalCount > 0) {
+            playSfx(SFX_VOICES.COIN, this._coinStreak);
+          }
           if (pickups.secretCount > 0) {
             playSfx(SFX_VOICES.COIN_SECRET);
           }
+          this._coinStreak += pickups.count;
           spawnBurst(this.particles, this.player.x + this.player.width / 2, this.player.y + this.player.height / 2, COIN_BURST_COLOR, 12);
           this.score = Math.min(this.score + coinPoints, Number.MAX_SAFE_INTEGER);
           this.levelCoinPoints += coinPoints;

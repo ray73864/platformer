@@ -3,7 +3,7 @@ import { Physics } from './physics.js';
 import { Player, wallContactSide } from './player.js';
 import { Level } from './level.js';
 import { Camera } from './camera.js';
-import { UI } from './ui.js';
+import { UI, isTimeUrgent } from './ui.js';
 import { COIN_POINTS, SECRET_COIN_SCORE } from './collectibles.js';
 import { Difficulty, tierIndexFor } from './difficulty.js';
 import { Timer } from './timer.js';
@@ -502,6 +502,12 @@ export class Game {
         this._punchTime = 0;     // counts down from PUNCH_TIME on impacts
         this._launchStretch = 0; // counts down from LAUNCH_STRETCH_TIME
         this._landDepth = 0;     // 0..1 magnitude of the current landing thud
+        // W5 audio-depth seams (presentation-only bookkeeping, never read by
+        // generation/physics): coin pickups since last ground contact drive
+        // the rising coin-pitch ladder; _urgentArmed edge-detects the HUD
+        // urgency threshold so audio.setUrgent fires once per crossing.
+        this._coinStreak = 0;
+        this._urgentArmed = false;
         this._prevFrameVx = 0;   // end-of-frame vx snapshot (skid + lean input)
         this._dashGhosts = [];   // dash-streak snapshots (M2, FX.trails family)
         this._lean = 0;          // smoothed draw-time lean angle (rad)
@@ -685,9 +691,21 @@ export class Game {
         // otherwise resurrect state on a game whose loop no longer runs.
         const onClick = (el, fn) =>
             el.addEventListener('click', fn, { signal: this._abort.signal });
-        onClick(startBtn, () => this.startGame());
-        onClick(retryBtn, () => this.retryLevel());
+        onClick(startBtn, () => {
+            // W5: Start IS the autoplay gesture — init here lets the confirm
+            // blip be the run's first sound (publishLevel's init stays the
+            // idempotent backstop for programmatic callers).
+            audio.init();
+            audio.playSfx(audio.SFX_VOICES.UI_CONFIRM);
+            this.startGame();
+        });
+        onClick(retryBtn, () => {
+            this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
+            this.retryLevel();
+        });
         onClick(playAgainBtn, () => {
+            audio.init();
+            audio.playSfx(audio.SFX_VOICES.UI_CONFIRM);
             // Only close the complete screen when a new run actually started:
             // on generation failure startGame keeps its state, and the player
             // needs this screen (and its button) to try again.
@@ -715,10 +733,12 @@ export class Game {
         // or native Enter/Space activation of the focused option; blur in
         // every handler so focus never lingers on the overlay it just closed.
         onClick(resumeBtn, () => {
+            this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
             this.togglePause();
             resumeBtn.blur();
         });
         onClick(restartLevelBtn, () => {
+            this._uiBlip(audio.SFX_VOICES.UI_CONFIRM);
             this.restartCurrentLevel('pause-screen');
             restartLevelBtn.blur();
         });
@@ -753,6 +773,7 @@ export class Game {
             saveShake(this.settings.shake);
             applySettings(this.settings);
             this.syncSettingsUI();
+            this._uiBlip(audio.SFX_VOICES.UI_TOGGLE);
         });
         optionalClick('motion-toggle-btn', () => {
             // Two-state control over a tri-state store: the switch mirrors
@@ -765,7 +786,19 @@ export class Game {
             saveReducedMotion(this.settings.reducedMotion);
             applySettings(this.settings);
             this.syncSettingsUI();
+            this._uiBlip(audio.SFX_VOICES.UI_TOGGLE);
         });
+
+        // W5: button-focus ticks for keyboard AND coarse-pointer navigation
+        // (focus lands on buttons after taps too). Gated on hasContext so
+        // the pre-first-run menu stays silent per the autoplay doctrine,
+        // and on BUTTON targets so text/canvas focus never chirps.
+        document.addEventListener('focusin', (e) => {
+            const el = e.target;
+            if (el && el.tagName === 'BUTTON') {
+                this._uiBlip(audio.SFX_VOICES.UI_MOVE);
+            }
+        }, { signal: this._abort.signal });
 
         // Input listener. Every jump press routes through Player.pressJump():
         // immediate while grounded or inside the guarded coyote window,
@@ -1008,8 +1041,19 @@ export class Game {
     // preference for the next run's context).
     toggleSound() {
         audio.toggleMute();
+        // W5 confirmation blip: muted-at-trigger-time means the OFF flip is
+        // silent by construction (playSfx checks first), while the ON flip
+        // rings — exactly the feedback contract a toggle wants.
+        this._uiBlip(audio.SFX_VOICES.UI_TOGGLE);
         this.ui.setMuteLabel(audio.isMuted());
         this.syncSettingsUI();
+    }
+
+    // W5 UI blip seam: fires only once a run has booted the AudioContext
+    // (autoplay doctrine: no context exists before the Start gesture, and
+    // menu navigation must not drag a suspended one into existence).
+    _uiBlip(voice) {
+        if (audio.hasContext()) audio.playSfx(voice);
     }
 
     // --- Wave C settings overlay --------------------------------------------
@@ -1050,6 +1094,7 @@ export class Game {
     openSettings(from) {
         this.settingsOpen = true;
         this.settingsReturn = from;
+        this._uiBlip(audio.SFX_VOICES.UI_MOVE);
         this.syncSettingsUI();
         this._setSettingsBackdrop(true);
         this.ui.showOverlay('settings-screen');
@@ -1058,6 +1103,7 @@ export class Game {
 
     closeSettings() {
         this.settingsOpen = false;
+        this._uiBlip(audio.SFX_VOICES.UI_MOVE);
         this.ui.hideOverlay('settings-screen');
         // Backdrop first: an inert container would silently swallow the
         // restore-focus below (a focused control cannot live inside inert).
@@ -1471,6 +1517,14 @@ export class Game {
         // track (retry/recovery) crossfades nothing.
         audio.init();
         audio.duckMusic(false);
+        // W5: a fresh level starts neutral — no coin ladder carry-over, no
+        // stale urgency bed (the next update re-arms from the live clock if
+        // the carried time is already under the threshold). The crossfade in
+        // startMusic is what carries the OLD track out smoothly across a
+        // world boundary; nothing cuts mid-step.
+        this._coinStreak = 0;
+        this._urgentArmed = false;
+        audio.setUrgent(false);
         audio.startMusic(bandIndexForLevel(this.currentLevel, THEMES.length),
             this.currentLevel);
     }
@@ -1551,6 +1605,10 @@ export class Game {
             secretBonus: this.levelSecretPoints
         };
         this.setState(STATE.LEVEL_COMPLETE);
+        // W5: the clear disarms the urgency bed before its sting — the win
+        // beat plays over the calm loop that carries into the next level.
+        this._urgentArmed = false;
+        audio.setUrgent(false);
         // Win sting over the top of the still-running music: the transition
         // is a 2 s beat, not an ending, so the loop carries through to the
         // next level (crossfading only when its band/variation changes).
@@ -1571,6 +1629,9 @@ export class Game {
 
     handleGameOver(cause) {
         this.setState(STATE.GAME_OVER);
+        // W5: death disarms the urgency bed alongside the music stop.
+        this._urgentArmed = false;
+        audio.setUrgent(false);
         // Per-level "issues" counter feeding clearBonusFor (owner ruling
         // 2026-11-04): charged at the same once-per-death site as the score
         // penalty below. It survives the retry on purpose — restartCurrentLevel
@@ -1738,6 +1799,18 @@ export class Game {
                     return;
                 }
             }
+            // W5 intensity layer: arm exactly when the HUD chip goes urgent
+            // (same predicate, single source of truth) and nothing else.
+            // Edge-detected so audio sees one call per crossing; PAUSED never
+            // reaches this line, so pause holds the arm state (ruling: clock
+            // frozen = urgency paused, not cancelled) while duckMusic already
+            // silences the bed.
+            const wantUrgent = this.timerActive &&
+                isTimeUrgent(this.timer.getTimeRemaining());
+            if (wantUrgent !== this._urgentArmed) {
+                this._urgentArmed = wantUrgent;
+                audio.setUrgent(wantUrgent);
+            }
 
             // Moving decks advance on the run clock only (PAUSED freezes
             // them). A rider is carried with the deck BEFORE history capture
@@ -1875,6 +1948,9 @@ export class Game {
             // coyote window it waits for expires there.
             if (this.player.grounded && !this._prevGrounded) {
                 this.squashTimer = 0.12;
+                // W5: touching down closes the airborne coin chain — the
+                // rising-pitch ladder restarts at the classic ping.
+                this._coinStreak = 0;
                 // Wave B: thud magnitude rides the impact fall speed (soft
                 // taps stay shallow, big drops slam), and a ground-hugging
                 // dust puff marks the contact in the theme's dust colour —
@@ -2232,10 +2308,15 @@ export class Game {
                 // Wave D reward differentiation by ear: the plain ping for
                 // route coins, the richer three-tone for secrets — a mixed
                 // frame rings both (rare, and they layer cleanly).
-                if (normalCount > 0) audio.playSfx(audio.SFX_VOICES.COIN);
+                if (normalCount > 0) {
+                    audio.playSfx(audio.SFX_VOICES.COIN, this._coinStreak);
+                }
                 if (pickups.secretCount > 0) {
                     audio.playSfx(audio.SFX_VOICES.COIN_SECRET);
                 }
+                // W5: every banked pickup extends the airborne coin chain
+                // (audio.js clamps its ladder); only ground contact resets.
+                this._coinStreak += pickups.count;
                 // Sparkle at the player: pickups read as events, not silent
                 // counter bumps. The burst inherits the coin sheet's gold.
                 spawnBurst(this.particles,

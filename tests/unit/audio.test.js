@@ -100,15 +100,21 @@ describe("audio per-level music variants (musicVariantFor)", () => {
         }
     });
 
-    test("tempo swings at most ±4 BPM around the band base (tier creep included)", () => {
+    test("tempo swings at most ±4 BPM around band base + world shift (tier creep included)", () => {
+        // W5 re-pin: each WORLD carries a tempo character off the band base
+        // (WORLD_MUSIC.bpmShift — canyons lope slower, ruins march faster);
+        // the per-level swing stays ±4 on top of band base + shift + creep.
         const bases = [72, 66, 78];
         for (let level = 1; level <= 60; level++) {
             const v = audio.musicVariantFor(level);
             const creep = level >= 25 ? 6 : 0;
-            expect(Math.abs(v.bpm - (bases[v.index] + creep))).toBeLessThanOrEqual(4);
-            // Chill-range guard: dusk floor minus swing .. jungle ceiling plus
-            // creep plus swing.
-            expect(v.bpm).toBeGreaterThanOrEqual(62);
+            const shift = audio.worldArrangementFor(level).bpmShift;
+            expect(Math.abs(v.bpm - (bases[v.index] + creep + shift))).toBeLessThanOrEqual(4);
+            // Chill-range guard, W5-widened: canyon dusk floor (-4 shift)
+            // minus swing .. legend-day ceiling (+creep) plus swing. Ruins
+            // march at the top end but only over DUSK-band roots (66), so
+            // the historical 88 ceiling still holds.
+            expect(v.bpm).toBeGreaterThanOrEqual(56);
             expect(v.bpm).toBeLessThanOrEqual(88);
         }
     });
@@ -175,8 +181,112 @@ describe("audio per-level music variants (musicVariantFor)", () => {
     });
 });
 
-describe("audio scheduler step math (fake clock)", () => {
-    test("emits every step inside the lookahead window and advances the cursor", () => {
+// W5: per-WORLD musical identity. The arrangement table turns over with the
+// WORLDS profiles themselves, MEADOWS keeps the shipped DNA byte-for-byte,
+// and every other world is audibly its own place.
+describe("audio per-world musical identity (W5)", () => {
+    test("one arrangement per WORLD profile, in WORLDS order", () => {
+        expect(audio.WORLD_MUSIC.map(w => w.tag))
+            .toEqual(["meadow", "canyon", "cavern", "skyward", "ruins"]);
+        // Every level's variant carries its world's tag across full cycles.
+        for (let level = 1; level <= 60; level++) {
+            expect(audio.musicVariantFor(level).tag)
+                .toBe(audio.worldArrangementFor(level).tag);
+        }
+    });
+
+    test("MEADOWS DNA is untouched: pre-W5 variants reproduce exactly", () => {
+        // Signatures/bpm captured from HEAD before the W5 edits (the tag
+        // prefix is the only allowed addition). Any retune of the onramp
+        // groove goes red here.
+        const dna = [
+            ["meadow+0+0+sparse+sustained+drone+-3", 69],
+            ["meadow+0+12+medium+sustained+downbeat+2", 68],
+            ["meadow+3+0+medium+sustained+pulse+-3", 75],
+            ["meadow+3+12+fluid+sustained+pulse+-4", 68],
+            ["meadow+2+0+fluid+sustained+downbeat+-2", 64],
+            ["meadow+1+0+fluid+arp+drone+-1", 77],
+            ["meadow+2+0+medium+arp+pulse+0", 72],
+            ["meadow+3+12+medium+arp+pulse+1", 67],
+            ["meadow+0+7+fluid+sustained+downbeat+-4", 74],
+            ["meadow+2+12+medium+arp+downbeat+-4", 68]
+        ];
+        for (let level = 1; level <= 10; level++) {
+            const v = audio.musicVariantFor(level);
+            expect(v.signature).toBe(dna[level - 1][0]);
+            expect(v.bpm).toBe(dna[level - 1][1]);
+            // And the meadow base scale is the band scale verbatim.
+            expect(v.scale).toEqual(audio.MUSIC_PRESETS[v.index].scale);
+        }
+    });
+
+    test("modes: CAVERNS natural minor, RUINS phrygian (the b2 tension)", () => {
+        for (const level of [16, 17, 18, 19, 20]) {
+            expect(audio.musicVariantFor(level).tag).toBe("cavern");
+            expect(audio.musicVariantFor(level).scale).toEqual([0, 2, 3, 5, 7, 8, 10]);
+        }
+        for (const level of [26, 27, 28, 29, 30]) {
+            expect(audio.musicVariantFor(level).tag).toBe("ruins");
+            expect(audio.musicVariantFor(level).scale).toContain(1); // b2
+        }
+    });
+
+    test("timbre/register pins per world character", () => {
+        // SKYWARD: airy — sine lead one octave up, arpeggiated pad bed.
+        const sky = audio.musicVariantFor(21);
+        expect(sky.tag).toBe("skyward");
+        expect(sky.leadWave).toBe("sine");
+        expect(sky.melodyOctave).toBe(1);
+        expect(sky.padMode).toBe("arp");
+        // RUINS: filtered sawtooth lead (tension without sting).
+        const ruin = audio.musicVariantFor(26);
+        expect(ruin.leadWave).toBe("sawtooth");
+        expect(ruin.leadFilterHz).toBeGreaterThan(0);
+        // CAVERNS: drone-forced bass + echo bias on top of the band delay.
+        const cav = audio.musicVariantFor(16);
+        expect(cav.bassMode).toBe("drone");
+        expect(cav.delayWetEff).toBeGreaterThan(audio.MUSIC_PRESETS[cav.index].delayWet);
+        // CANYONS: open-interval chord bed ([0,3,5] scale degrees).
+        const can = audio.musicVariantFor(11);
+        expect(can.tag).toBe("canyon");
+        expect(can.padDegrees).toEqual([0, 3, 5]);
+        // MEADOWS: legacy triad spacing, no register lift.
+        const m = audio.musicVariantFor(1);
+        expect(m.padDegrees).toEqual([0, 2, 4]);
+        expect(m.melodyOctave).toBe(0);
+    });
+
+    test("world boundaries always swap the running key (smooth crossfade guaranteed)", () => {
+        // The publish-time crossfade fires on any key change; the world tag
+        // rides the signature, so a boundary can never silently keep the old
+        // track — the transition IS the audible segue, never a mid-step cut.
+        const keyFor = (level) => {
+            const v = audio.musicVariantFor(level);
+            return `${v.index}:${v.bpm}:${v.seed}:${v.signature}`;
+        };
+        for (const boundary of [11, 16, 21, 26, 31, 36, 41, 46]) {
+            expect(keyFor(boundary)).not.toBe(keyFor(boundary - 1));
+            expect(audio.musicVariantFor(boundary).tag)
+                .not.toBe(audio.musicVariantFor(boundary - 1).tag);
+        }
+    });
+
+    test("percussion tables are deterministic eighth-grid step sets", () => {
+        for (const arr of audio.WORLD_MUSIC) {
+            expect(arr.perc).toBeTruthy();
+            for (const key of Object.keys(arr.perc)) {
+                if (!key.endsWith("Steps")) continue;
+                for (const s of arr.perc[key]) {
+                    expect(Number.isInteger(s)).toBe(true);
+                    expect(s).toBeGreaterThanOrEqual(0);
+                    expect(s).toBeLessThan(8); // STEPS_PER_BAR
+                }
+            }
+        }
+    });
+});
+
+describe("audio scheduler step math (fake clock)", () => {    test("emits every step inside the lookahead window and advances the cursor", () => {
         const state = { step: 0, nextStepTime: 0 };
         const emitted = [];
         const count = audio.advanceScheduler(
