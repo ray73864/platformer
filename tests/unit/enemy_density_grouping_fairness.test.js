@@ -82,8 +82,12 @@ test("reported map L20/3906687302: portal shelf stays clear, capped cluster stay
     // lower run while the portal sits high on the chimney wall. Same
     // contracts pinned: exact deterministic layout, zero rule-A/B violations,
     // and never more than ONE patroller sharing the portal's run.
+    // F1 RE-PINNED 2026-11-10: the body's span is 3 walkable cols (< the
+    // steady hostile bar 4 measured on the FINAL span — the old solid-run
+    // metric overcounted here), so it stands down as a walker. Geometry,
+    // count and both rule contracts byte-stable; only the kind swapped.
     expect(bs).toEqual([
-        { col: 0, row: 12, left: 0, right: 2, kind: 'spiny' }
+        { col: 0, row: 12, left: 0, right: 2, kind: 'walker' }
     ]);
     expect(ruleAViolations(level)).toEqual([]);
     expect(ruleBViolations(level)).toEqual([]);
@@ -107,8 +111,12 @@ test("rule-B-only map L23/21924098: wide portal run keeps ONE patroller (cap alo
     // same columns of this deterministic map. The rule-B contract is
     // unchanged: exactly ONE body shares the portal's run and it keeps its
     // clearance (right 22 <= portal col 25 - 1 - CLEAR).
+    // F1 RE-PINNED 2026-11-10: that span is 2 walkable cols (< the steady
+    // hostile bar 4 measured on the FINAL span), so the body stands down as
+    // a walker. Columns, bounds and the rule-B clearance contract are
+    // byte-stable; only the kind swapped.
     expect(shelf.length).toBe(1);
-    expect(shelf[0]).toEqual({ col: 21, row: 14, left: 21, right: 22, kind: 'spiny' });
+    expect(shelf[0]).toEqual({ col: 21, row: 14, left: 21, right: 22, kind: 'walker' });
     expect(ruleBViolations(level)).toEqual([]);
 });
 

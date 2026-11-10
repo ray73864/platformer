@@ -137,6 +137,14 @@ const HOSTILE_ROUTE_MIN_RUN_ONRAMP = 8; // route-sweeping hostiles in-window
 // exactly onto/next to a stomp-immune moving body or die on the takeoff lip
 // below it; structural probe: 73/255 = 29% of hostile deployments sat on
 // runs <= 3 tiles, effectively unwinnable).
+// CORRECTION 2026-11-10 (F1, owner report L15 s4233801065): the gate now
+// measures the body's FINAL WALKABLE patrol span (see spawnEnemies), not the
+// solid run — and the measurements quoted above (this header's 73/255, the
+// onramp header's "support runs < 6", the gauntlet header's "spiny's run is
+// 4-wide") were taken under the old solid metric, which OVERCOUNTS wherever
+// rock/spikes block the walk row above a solid mass (mesa staircases). The
+// rulings they justified stay; their numbers describe a wider shelf than the
+// player actually saw.
 // WHY 4 is sufficient (and no ledge-touching-span ban is needed — every
 // patrol span ends at a wall or ledge BY CONSTRUCTION, banning those would
 // ban nearly every legal site): on a 4-tile shelf the player CAN traverse a
@@ -4269,10 +4277,39 @@ export class Level {
             // Bombardiers inherit this gate in full: they ARE hostile
             // (stomp-immune contact death like a spiny's body threat, dash
             // like a charger's) plus a gun on top.
+            // F1 fix 2026-11-10 (owner report L15 s4233801065): the width is
+            // the body's FINAL patrol span (s.left/s.right), NOT the solid
+            // run beneath the spawn. Those columns come from patrolSpan =
+            // walkRunExtent (clamped to band/bridge/shaft windows in
+            // deriveEnemySpawns) — the same extent every other fairness
+            // consumer agrees on, so gate == bounds: one definition, no
+            // drift. Honest nuance (review F1 m1): the span is the CLAMPED
+            // patrol interval, i.e. <= the maximal perceived walkable run —
+            // strictly conservative: a body whose perceived ledge meets the
+            // bar but whose patrol gets clipped by a fairness window still
+            // stands down. Measured clamp cost (t-f1 blast family, 1092
+            // tier>=2 maps): of 318 demotions, 198 genuine-narrow (perceived
+            // run < bar), 120 clamp-driven, 15 of those with perceived run
+            // >= 6 (e.g. L29 s29012432 spiny raw=6 span-clipped); the
+            // reviewer's independent sweep measured 322/188/134 with 24 at
+            // perceived >= 6 (L29 s23895201 raw=10 span=2). Accepted
+            // spectacle cost of choosing bounds-identical gating: the player
+            // never meets a hostile sweeping less than the width the gate
+            // sized. The old solidRunWidth read counted contiguous SOLID
+            // tiles even where rock or spikes block the walk row above them:
+            // on mesa staircases (CANYON grammar) a 2-col standable ledge
+            // measured runW=10 and silently bypassed both bars — the
+            // reported spiny guarding the sole traverse at col 18.
+            // Prevalence pre-fix: 8.0% of L11..40 maps hosted >=1 sub-bar
+            // hostile (t-f1 family scan: 73/594).
+            // Scoping decision: solidRunWidth itself stays — the walker
+            // gates that call it (ENEMY_MIN_RUN deploy filter, presence-
+            // fill seat check) legitimately want the solid view, and every
+            // owner shelf ruling behind this bar is HOSTILE-specific
+            // (walkers are stompable).
             const hostileMinRun = inOnrampWindow
                 ? HOSTILE_MIN_RUN_ONRAMP : HOSTILE_MIN_RUN;
-            const runW = solidRunWidth(
-                this.tiles, this.width, s.x, s.y + 1);
+            const runW = s.right - s.left + 1;
             if (kind !== 'walker' && runW < hostileMinRun) {
                 kind = 'walker';
             }

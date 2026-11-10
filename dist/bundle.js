@@ -3987,7 +3987,7 @@
           kind = "bombardier";
         }
         const hostileMinRun = inOnrampWindow ? HOSTILE_MIN_RUN_ONRAMP : HOSTILE_MIN_RUN;
-        const runW = solidRunWidth(this.tiles, this.width, s.x, s.y + 1);
+        const runW = s.right - s.left + 1;
         if (kind !== "walker" && runW < hostileMinRun) {
           kind = "walker";
         }

@@ -153,16 +153,24 @@ test("the bombardier band changes KINDS only — positions byte-stable vs a no-b
     }
 });
 
-// Review m5a (2026-11-04): gate ORDER pin — firing-lane demotion runs BEFORE
-// the shared-run key claim (level.js), so a bombardier roll that stands down
-// for want of a lane must NOT reserve the run: a later hostile roll on the
-// same support run may still deploy. Fixture convention follows
+// Review m5a (2026-11-04): gate ORDER pin — a hostile ROLL that stands down
+// must NOT reserve the shared-run key (level.js), so a later hostile roll on
+// the same support run may still deploy. Fixture convention follows
 // enemy_shared_run_fairness.test.js (hand-built grid swapped in AFTER
 // construction, spawnEnemies re-derived), plus a scripted rng so the exact
 // intent chain is asserted deterministically instead of seed-swept:
-// site #1 rolls BOMBARDIER -> fails the firing-lane gate -> walker, key
-// unclaimed; site #2 rolls CHARGER -> deploys hostile on that very run.
-function laneReclaimFixture(rolls, blockLane) {
+// site #1 rolls BOMBARDIER -> stands down for want of a legal shelf ->
+// walker, key unclaimed; site #2 rolls CHARGER -> deploys hostile on that
+// very support run.
+// F1 RE-PINNED 2026-11-10: the stand-down MECHANISM moved. The firing-lane
+// gate fires only when the final span is <= 3 cols (both flanks < 2 open),
+// which the corrected width gate (bar >= 4 on the FINAL span) now pre-empts
+// everywhere — the old fixture's buried-lane morphology can no longer reach
+// the lane check. Same ORDER property, new trigger: site #1 sits on a 3-col
+// walkable shelf (width-demoted), site #2 on a 4-col one (deploys). The
+// lane gate itself stays in level.js as defense-in-depth should bars ever
+// drop below 4.
+function laneReclaimFixture(rolls, narrowSiteOne) {
     // W3a re-pin: L61 -> L81. L61 now lives in CANYONS whose kindWeights
     // (charger x1.5) widen the charger band so the scripted roll 0.5 reads
     // CHARGER instead of BOMBARDIER. L81 sits in a MEADOWS rotation band at
@@ -178,27 +186,27 @@ function laneReclaimFixture(rolls, blockLane) {
     level.shaftGap = null;
     level.pathCells = null;
     const tiles = Array.from({ length: H }, () => Array(W).fill(0));
-    for (let c = 8; c <= 13; c++) {   // ONE support run, 6 wide (>= MIN_RUN 4)
+    for (let c = 8; c <= 15; c++) {   // ONE support run (shared run key)
         tiles[6][c] = 1;
         tiles[7][c] = 1;
     }
-    if (blockLane) {
-        // Walk-row walls flanking col 10 shrink site #1's span to {9,10}:
-        // x-left = 1 AND right-x = 0, both < 2 -> firing-lane gate demotes.
-        tiles[5][8] = 1;
+    if (narrowSiteOne) {
+        // Walk-row wall at col 11 splits the surface: site #1's span is
+        // {8,9,10} (3 < steady bar 4 -> width-gate stand-down), site #2's
+        // span {12..15} (4 -> legal).
         tiles[5][11] = 1;
     }
     tiles[5][10] = 4;                  // site #1
-    tiles[5][13] = 4;                  // site #2 (same run, span {12,13})
+    tiles[5][13] = 4;                  // site #2 (same support run)
     level.tiles = tiles;
     level.reachableTiles = new Set([5 * W + 10, 5 * W + 13]);
-    // L61 bands: spiny [0,0.25) | charger [0.25,0.45) | bombardier [0.45,0.60).
+    // L81 bands: spiny [0,0.25) | charger [0.25,0.45) | bombardier [0.45,0.60).
     level.rng = () => rolls.shift();
     level.spawnEnemies();
     return level;
 }
 
-test("firing-lane demotion never claims the run key: a later hostile still deploys (m5a)", () => {
+test("shelf-width stand-down never claims the run key: a later hostile still deploys (m5a)", () => {
     const rolls = [0.5, 0.3];          // #1 bombardier roll, #2 charger roll
     const level = laneReclaimFixture(rolls, true);
     const enemies = level.getEnemyManager().enemies;
@@ -209,7 +217,7 @@ test("firing-lane demotion never claims the run key: a later hostile still deplo
     expect(Math.round(enemies[0].x / T)).toBe(10);
     expect(Math.round(enemies[1].x / T)).toBe(13);
     // Intent chain, step by step:
-    // #1 rolled into the bombardier band but its buried lane demoted it...
+    // #1 rolled into the bombardier band but its 3-col shelf demoted it...
     expect(enemies[0].kind).toBe('walker');
     // ...that stand-down did NOT reserve the run...
     // #2 ...so the charger roll on the SAME run deploys hostile anyway.
@@ -223,11 +231,12 @@ test("firing-lane demotion never claims the run key: a later hostile still deplo
     expect(group.filter(e => e.kind !== 'walker').length).toBe(1);
 });
 
-test("control: the same rolls deploy the bombardier when the lane is open (m5a non-vacuity)", () => {
-    // Identical rolls, walk row unblocked: site #1 keeps its bombardier
-    // roll — proving roll 0.5 genuinely lands in the bombardier band and
-    // geometry (not some other gate) flipped the fixture above. The run key
-    // IS now claimed, so site #2's hostile roll demotes to walker instead.
+test("control: the same rolls deploy the bombardier on a legal shelf (m5a non-vacuity)", () => {
+    // Identical rolls, walk row unbroken (span 8 >= bar): site #1 keeps its
+    // bombardier roll — proving roll 0.5 genuinely lands in the bombardier
+    // band and geometry (not some other gate) flipped the fixture above.
+    // The run key IS now claimed, so site #2's hostile roll demotes to
+    // walker instead.
     const rolls = [0.5, 0.3];
     const level = laneReclaimFixture(rolls, false);
     const enemies = level.getEnemyManager().enemies;
